@@ -203,6 +203,34 @@ def t8_brain_plumbing():
     return "mock plan ok + 1 repair round + 4 providers registered"
 
 
+def t16_overlay_burn():
+    """Burn one card on a dark 4 s clip and read the pixels: the card must be VISIBLE mid-way
+    (before the -loop 1 fix every burned card was fully transparent)."""
+    import tempfile
+    import numpy as np
+    from PIL import Image
+    from ucf import config
+    from ucf.render_tt import TTRenderer
+    cfg = config.load()
+    rn = TTRenderer(cfg, {}, ROOT)
+    d = Path(tempfile.mkdtemp())
+    base = d / "base.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x101010:s=1920x1080:r=30:d=4",
+                    "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", "4", "-c:v", "libx264", "-pix_fmt",
+                    "yuv420p", "-c:a", "aac", str(base)], check=True)
+    out = rn._burn_overlays(base, [(1.0, 3.5, {"kind": "fact", "text": "Visible test card"})], d, ui=lambda *a: None)
+    probe = []
+    for t in (0.3, 2.0):
+        jpg = d / f"f{t}.jpg"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", str(t), "-i", str(out), "-frames:v", "1", str(jpg)],
+                       check=True)
+        a = np.asarray(Image.open(jpg).convert("L"))[870:950, 120:700]
+        probe.append(float(a.mean()))
+    assert probe[0] < 40, f"card visible before its start (mean {probe[0]:.0f})"
+    assert probe[1] > 120, f"card NOT visible while scheduled (mean {probe[1]:.0f}) - overlay burn is broken"
+    return f"card region brightness {probe[0]:.0f} before -> {probe[1]:.0f} during"
+
+
 def t15_hive_and_fallback():
     """Hive (OpenAI-dialect) SSE parsing, rejected-param retry, provider cfg switch and the Pass A
     fallback path - all offline with a fake urlopen."""
@@ -647,6 +675,7 @@ def main():
     check(13, "boundary engine", t13_boundary_engine)
     check(14, "overlay scheduler", t14_overlay_sched)
     check(15, "hive provider + fallback", t15_hive_and_fallback)
+    check(16, "overlay burn visible", t16_overlay_burn)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))

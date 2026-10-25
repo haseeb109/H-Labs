@@ -259,7 +259,9 @@ class TTRenderer(Renderer):
             self._overlay_card_png(o.get("kind", "fact"), o.get("text", ""), p)
             pngs.append((p, s, e))
         out = final.with_name(final.stem + "_ov.mp4")
-        inp = ["-i", str(final)] + sum([["-i", str(p)] for p, _s, _e in pngs], [])
+        # -loop 1: a PNG input is ONE frame at t=0; the fade-in then never starts and ffmpeg repeats that fully
+        # transparent frame, so every card was invisible (found on 03p3ATnv6dY, 2026-10-25).
+        inp = ["-i", str(final)] + sum([["-loop", "1", "-t", f"{e + 1:.2f}", "-i", str(p)] for p, _s, e in pngs], [])
         fc, prev = [], "0:v"
         for i, (p, s, e) in enumerate(pngs):
             k = i + 1
