@@ -68,14 +68,16 @@ def synth(text, cache_dir, cfg):
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
     order = cfg.get("tts_order", ["ai33", "voicestudio", "say"])
-    key = hashlib.sha1((order[0] + cfg.get("ai33_voice", "") + text).encode()).hexdigest()[:16]
-    wav = cache_dir / f"{key}.wav"
-    if wav.exists() and wav.stat().st_size > 1000:
-        return wav
-    tmp = cache_dir / f"tmp_{key}"
-    tmp.mkdir(exist_ok=True)
     errs = []
+    # One cache file per provider: a backup voice (e.g. macOS `say` while ai33 was down) is never reused
+    # once the preferred provider works again. The ai33 key is unchanged, so existing ai33 caches still hit.
     for name in order:
+        key = hashlib.sha1((name + cfg.get("ai33_voice", "") + text).encode()).hexdigest()[:16]
+        wav = cache_dir / f"{key}.wav"
+        if wav.exists() and wav.stat().st_size > 1000:
+            return wav
+        tmp = cache_dir / f"tmp_{key}"
+        tmp.mkdir(exist_ok=True)
         try:
             PROVIDERS[name](text, wav, cfg, tmp)
             if wav.exists() and wav.stat().st_size > 1000:
@@ -83,6 +85,7 @@ def synth(text, cache_dir, cfg):
                 return wav
         except Exception as e:  # noqa
             errs.append(f"{name}: {e}")
+        shutil.rmtree(tmp, ignore_errors=True)
     raise RuntimeError("all TTS providers failed -> " + " | ".join(errs))
 
 

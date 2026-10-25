@@ -85,10 +85,13 @@ def refine_case(case, ev, video_path, cfg, next_in=None):
     for fl in floors:
         if best < fl:
             best = min(fl, hi)
-    if wrap:
-        wtc = max(x["tc"] for x in wrap if x["tc"] <= hi)
-        if wtc > best - 20 and wtc <= hi:
-            best = min(wtc + 0.5, hi)                          # snap to wrap-up end
+    wl = [x for x in wrap if x["tc"] <= hi]
+    if wl:
+        last = max(wl, key=lambda x: x["tc"])
+        if last["tc"] > best - 20:                             # snap to the END of the wrap-up line, so the
+            best = min(max(last.get("end", last["tc"]), last["tc"]) + 0.5, hi)   # judge's last words stay in
+    if floors:
+        best = max(best, min(max(floors), hi))                 # the snap may never cut the ruling
     if next_in is not None:
         best = min(best, next_in - 1)
     best = max(best, a + 30)

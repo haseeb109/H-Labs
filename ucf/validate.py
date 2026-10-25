@@ -1,5 +1,6 @@
 """Programmatic version of the master prompt's FINAL LINE checklist.
 validate(plan, stream_len, segs=None, cfg=None) -> (errors, warnings). Errors block the render."""
+import json
 import re
 
 from . import timeline as TL
