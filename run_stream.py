@@ -193,7 +193,10 @@ def main():
             cfg["_source_file"] = source_file
             if not lines:
                 sys.exit("transcript is empty - mode all cannot run")
-            plan, errs = mode_all.build_plan(segs, lines, scan_text, stream_len, cfg, ui, work)
+            try:
+                plan, errs = mode_all.build_plan(segs, lines, scan_text, stream_len, cfg, ui, work)
+            except brain.BrainStop as e:
+                sys.exit(f"BRAIN STOPPED: {e}\n  replies: work/{sid}/brain_reply_*.txt")
             if plan is None or errs:
                 sys.exit(f"mode-all plan failed: {errs[:3] if errs else 'no plan'} - see work/{sid}/brain_reply_A_*.txt")
             save_json(plan_path, plan)
@@ -202,7 +205,10 @@ def main():
             if cfg["brain"] == "manual":
                 sys.exit(f"MANUAL BRAIN: paste {work / 'prompt_for_claude.txt'} into Claude, save its JSON reply as "
                          f"{work / 'plan.json'} and run again (or pass --plan file.json).")
-            plan, errs, warns = brain.make_plan(prompt, stream_len, segs, cfg, ui, save_dir=work)
+            try:
+                plan, errs, warns = brain.make_plan(prompt, stream_len, segs, cfg, ui, save_dir=work)
+            except brain.BrainStop as e:
+                sys.exit(f"BRAIN STOPPED: {e}\n  replies: work/{sid}/brain_reply_*.txt")
             if plan is None:
                 sys.exit(f"brain '{cfg['brain']}' never returned valid JSON - see work/*/brain_reply_*.txt")
             save_json(plan_path, plan)

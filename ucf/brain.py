@@ -167,8 +167,9 @@ def _stream_anthropic(messages, cfg, on_text=None):
                            "or use --brain manual (paste the prompt into Claude, save the JSON reply, pass --plan).")
     req_body = {"model": cfg["model"], "max_tokens": int(cfg["max_tokens"]), "system": SYSTEM,
                 "messages": messages, "stream": True}
-    if cfg.get("disable_thinking", True):
-        # on 5.x models the off-switch is "between_tools" ("disabled" is rejected by the API itself)
+    if cfg.get("disable_thinking", False):
+        # Off by default: the run of 2026-10-25 with "between_tools" spent all 32k output tokens and streamed
+        # zero text (x3 calls, $1.08). Runs without a thinking param (adaptive) returned full JSON plans.
         req_body["thinking"] = {"type": "between_tools"}
     if _temperature_ok(cfg["model"], cfg):
         req_body["temperature"] = 0.3
@@ -180,6 +181,7 @@ def _stream_anthropic(messages, cfg, on_text=None):
         "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"})
     out = []
     u = {"input": 0, "output": 0, "cache_write": 0, "cache_read": 0}
+    stop_reason = None
     try:
         with urllib.request.urlopen(req, timeout=1800) as r:
             for raw in r:
@@ -202,6 +204,7 @@ def _stream_anthropic(messages, cfg, on_text=None):
                     u["cache_read"] = mu.get("cache_read_input_tokens", 0) or 0
                     u["output"] = mu.get("output_tokens", 0) or 0
                 elif typ == "message_delta":
+                    stop_reason = (ev.get("delta") or {}).get("stop_reason") or stop_reason
                     du = ev.get("usage") or {}
                     if du.get("output_tokens") is not None:
                         u["output"] = du["output_tokens"]
@@ -224,7 +227,44 @@ def _stream_anthropic(messages, cfg, on_text=None):
     finally:
         if any(u.values()):
             record_usage(cfg, cfg["model"], u)
-    return "".join(out)
+    return _check_reply("".join(out), stop_reason, u.get("output", 0), cfg)
+
+
+class BrainStop(RuntimeError):
+    """A reply that a repair round cannot fix (empty, cut off, refused). Retrying would only spend money again,
+    so the run stops. `.text` holds whatever partial text arrived, so callers can still save it."""
+
+    def __init__(self, msg, text=""):
+        super().__init__(msg)
+        self.text = text
+
+
+def _check_reply(text, stop_reason, out_tokens, cfg):
+    model = cfg.get("model")
+    if stop_reason == "refusal":
+        raise BrainStop(f"{model} declined this request (stop_reason=refusal) - not retrying. "
+                        "Try --brain deepseek / --brain manual.", text)
+    if not text.strip():
+        raise BrainStop(f"{model} returned NO text ({out_tokens:,} output tokens, stop_reason={stop_reason}) - "
+                        "stopped instead of paying for the same call again. If config 'disable_thinking' is true, "
+                        "set it to false and rerun.", text)
+    if stop_reason == "max_tokens":
+        raise BrainStop(f"{model} hit max_tokens ({cfg.get('max_tokens')}) before finishing the JSON - raise "
+                        "'max_tokens' in config.json and rerun (the partial reply was saved).", text)
+    return text
+
+
+def stream_and_save(messages, cfg, save_path=None, on_text=None):
+    """_stream_any + always write the reply (even a partial one) to save_path before any error goes up."""
+    try:
+        txt = _stream_any(messages, cfg, on_text)
+    except BrainStop as e:
+        if save_path:
+            Path(save_path).write_text(e.text, encoding="utf-8")
+        raise
+    if save_path:
+        Path(save_path).write_text(txt, encoding="utf-8")
+    return txt
 
 
 _NO_TEMP = set()
@@ -301,8 +341,9 @@ def _stream_openai_compat(messages, cfg, on_text=None):
                     if on_text:
                         on_text(len(out))
                 if ch.get("finish_reason") == "length":
-                    raise RuntimeError("model hit max_tokens before finishing the JSON - raise config max_tokens")
-    return "".join(out)
+                    raise BrainStop("model hit max_tokens before finishing the JSON - raise config max_tokens",
+                                    "".join(out))
+    return _check_reply("".join(out), None, 0, cfg)
 
 
 def _stream_mock(messages, cfg, on_text=None):
@@ -340,9 +381,8 @@ def make_plan(prompt, stream_len, segs, cfg, ui=print, save_dir=None):
     for rnd in range(int(cfg["max_repair_rounds"]) + 1):
         ui(f"  asking {cfg.get('brain', 'anthropic')} ({cfg['model']}) round {rnd + 1}...")
         cfg["_usage_label"] = f"plan r{rnd + 1}"
-        txt = _stream_any(msgs, cfg, on_text=lambda n: n % 400 == 0 and ui(f"    ...{n} chunks"))
-        if save_dir:
-            (Path(save_dir) / f"brain_reply_{rnd + 1}.txt").write_text(txt, encoding="utf-8")
+        txt = stream_and_save(msgs, cfg, Path(save_dir) / f"brain_reply_{rnd + 1}.txt" if save_dir else None,
+                              on_text=lambda n: n % 400 == 0 and ui(f"    ...{n} chunks"))
         try:
             plan = extract_json(txt)
         except Exception as e:

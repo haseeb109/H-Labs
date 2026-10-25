@@ -143,9 +143,8 @@ def build_plan(segs, lines, scan_text, stream_len, cfg, ui=print, work=None, sca
     for rnd in range(int(cfg["max_repair_rounds"]) + 1):
         ui(f"  PASS A (inventory) {cfg.get('brain')} round {rnd + 1}...")
         cfg_a["_usage_label"] = f"pass A r{rnd + 1}"
-        txt = B._stream_any(msgs_a, cfg_a, on_text=lambda n: n % 400 == 0 and ui(f"    ...{n} chunks"))
-        if work:
-            (Path(work) / f"brain_reply_A_{rnd + 1}.txt").write_text(txt, encoding="utf-8")
+        txt = B.stream_and_save(msgs_a, cfg_a, Path(work) / f"brain_reply_A_{rnd + 1}.txt" if work else None,
+                                on_text=lambda n: n % 400 == 0 and ui(f"    ...{n} chunks"))
         try:
             plan = B.extract_json(txt)
         except Exception as e:
@@ -194,9 +193,9 @@ def build_plan(segs, lines, scan_text, stream_len, cfg, ui=print, work=None, sca
         vobj, berrs = None, []
         for rnd in range(int(cfg["max_repair_rounds"]) + 1):
             pb["_usage_label"] = f"pass B {c.get('name', '')[:10]} r{rnd + 1}"
-            txt = B._stream_any(msgs_b, pb, on_text=lambda n: n % 400 == 0 and ui(f"    ...{n} chunks"))
-            if work:
-                (Path(work) / f"brain_reply_B_{c['id']}_{rnd + 1}.txt").write_text(txt, encoding="utf-8")
+            txt = B.stream_and_save(msgs_b, pb,
+                                    Path(work) / f"brain_reply_B_{c['id']}_{rnd + 1}.txt" if work else None,
+                                    on_text=lambda n: n % 400 == 0 and ui(f"    ...{n} chunks"))
             try:
                 vobj = B.extract_json(txt).get("video", {})
             except Exception as e:
