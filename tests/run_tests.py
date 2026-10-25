@@ -679,7 +679,14 @@ def t10_end_to_end():
         shutil.rmtree(old)                     # cached parts would fake a pass
     for old in (ROOT / "work" / "lVQ79x0Hd_w").glob("*.mp4"):
         old.unlink()
-    cmd = [sys.executable, str(ROOT / "run_stream.py"),
+    # Same idea as _test_cfg(): the fixture is a v9 plan of 28:35, so pin the legacy band + title system instead
+    # of reading the owner's live config.json (its 50-70 min rule made this test fail regardless of the code).
+    owner = json.loads((ROOT / "config.json").read_text(encoding="utf-8")) if (ROOT / "config.json").exists() else {}
+    tcfg = ROOT / "work" / "_selftest" / "e2e_config.json"
+    tcfg.parent.mkdir(parents=True, exist_ok=True)
+    tcfg.write_text(json.dumps(dict(owner, runtime_min=20 * 60, runtime_max=30 * 60, title_system="v9"), indent=1),
+                    encoding="utf-8")
+    cmd = [sys.executable, str(ROOT / "run_stream.py"), "--config", str(tcfg),
            "--video-file", str(FIX / "r1.mp4"), "--stream-id", "lVQ79x0Hd_w",
            "--stream-length", "3:00:23", "--transcript-file", str(NEXLEV),
            "--plan", str(PLAN_FILE), "--brain", "manual", "--tts", "dummy", "--confirm-tts"]
