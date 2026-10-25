@@ -16,6 +16,18 @@ from .timeutil import parse_tc, fmt_tc, fmt_dur
 NORM = ("scale=1920:1080:force_original_aspect_ratio=decrease,"
         "pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=30,format=yuv420p")
 AUDIO_NORM = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
+# Court (Zoom) speech clean-up, measured on 03p3ATnv6dY (3 x 60 s): the gap between loud and quiet speakers
+# (p90-p50 of 100 ms levels) drops from 7-11 dB to 4.5-6.7 dB, the noise floor stays equal or drops 8-11 dB.
+# rumble/hiss band-limit -> even out judge vs defendant -> spectral denoise -> soft gate between sentences.
+COURT_CLEANUP = ("highpass=f=90,lowpass=f=7500,"
+                 "acompressor=threshold=-24dB:ratio=3:attack=10:release=250:makeup=2,"
+                 "afftdn=nr=12:nf=-45:tn=1,"
+                 "agate=threshold=0.003:ratio=2:range=0.25:attack=5:release=300")
+
+
+def court_audio(cfg):
+    """-af chain for court footage: clean-up (config "audio_cleanup", default on) + the shared format."""
+    return (COURT_CLEANUP + "," + AUDIO_NORM) if (cfg or {}).get("audio_cleanup", True) else AUDIO_NORM
 
 
 def run(cmd, quiet=True):

@@ -63,6 +63,16 @@ faster-whisper, av<16), HyperFrames + headless Chrome, key templates in `~/.conf
 If rebuilding elsewhere: `brew install ffmpeg node python@3.12`, create a venv, `pip install yt-dlp pillow
 numpy faster-whisper "av<16"`, `npm i -g hyperframes && hyperframes browser ensure`.
 
+## Captions, faces, court audio (added 2026-10-25)
+
+| Feature | Needs | Config (config.json) |
+|---|---|---|
+| **Word-by-word captions** under the footage strip (spoken word in gold; off during hook, intro and overlay cards) | `brew install ffmpeg-full` (libass, keg-only - does not replace your ffmpeg) + `.venv/bin/pip install mlx-whisper`; model `mlx-community/whisper-large-v3-turbo` (~1.6 GB, downloaded on first use) | `captions` (true), `caption_model`, `caption_font_size` (66), `caption_max_words` (4) |
+| **Face-aware thumbnails** (biggest sure face wins; defendant close-up when the court camera face is big enough; title text moves off the face) | `.venv/bin/pip install mediapipe` + `models/blaze_face_short_range.tflite` (230 KB, from storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/latest/) | `thumb_min_face_px` (90) |
+| **Court audio clean-up** (band-limit, even out loud/quiet speakers, denoise, soft gate) | nothing (ffmpeg) | `audio_cleanup` (true) |
+
+Each one switches itself off with a console message when its tool is missing - the video still renders.
+
 ## Run
 
 ```

@@ -279,6 +279,84 @@ def t17_zoom_layouts():
     return "4 layouts classified; every strip branch 1920x540 at 360p + 720p; mixed chain ok"
 
 
+def t18_audio_cleanup():
+    """Court clean-up chain runs; on real court audio (fixture) it evens out loud vs quiet speech."""
+    import numpy as np
+    from ucf.render import court_audio
+    assert court_audio({"audio_cleanup": False}).startswith("aresample"), "audio_cleanup=false must skip the chain"
+    clip = FIX / "r6.mp4"
+    inp = ["-i", str(clip), "-t", "120"] if clip.exists() else ["-f", "lavfi", "-i", "sine=f=220:d=3"]
+
+    def levels(af):
+        r = subprocess.run(["ffmpeg", "-v", "error", *inp, "-vn", "-af", af + ",aresample=16000", "-ac", "1",
+                            "-f", "f32le", "-"], capture_output=True)
+        assert r.returncode == 0, f"chain failed: {r.stderr.decode()[-300:]}"
+        x = np.frombuffer(r.stdout, np.float32)
+        db = 20 * np.log10(np.sqrt((x[: len(x) // 1600 * 1600].reshape(-1, 1600) ** 2).mean(1)) + 1e-9)
+        return float(np.percentile(db, 90) - np.percentile(db, 50))
+    raw, clean = levels("anull"), levels(court_audio({"audio_cleanup": True}))
+    if not clip.exists():
+        return "chain runs; speech-spread check SKIPPED (fixture clip missing)"
+    assert clean < raw - 1.0, f"speech level spread not reduced: {raw:.1f} dB -> {clean:.1f} dB"
+    return f"court speech level spread (p90-p50) {raw:.1f} dB -> {clean:.1f} dB"
+
+
+def t19_captions():
+    """Chunking, no caption inside a blocked window, and (if libass ffmpeg exists) text really burned in."""
+    import tempfile
+    import numpy as np
+    from PIL import Image
+    from ucf import captions as CAP
+    words = [(0.0, 0.3, "Your"), (0.3, 0.6, "BAC"), (0.6, 0.9, "was"), (0.9, 1.3, "0.317."),
+             (2.5, 2.8, "Nearly"), (2.8, 3.1, "four"), (3.1, 3.4, "times"), (3.4, 3.8, "over")]
+    ch = CAP.chunk_words(words)
+    assert [len(c) for c in ch] == [4, 4], f"chunks {[len(c) for c in ch]}"
+    d = Path(tempfile.mkdtemp())
+    n = CAP.build_ass(words, [(2.4, 4.0)], d / "c.ass")
+    body = (d / "c.ass").read_text()
+    assert n == 4 and "NEARLY" not in body, "caption shown inside a blocked window"
+    assert "\\c&H0032B4F0&" in body or "\c&H0032B4F0&" in body, "spoken word not highlighted"
+    ff = CAP.libass_ffmpeg({})
+    if not ff:
+        return f"chunks + blocks ok; burn-in SKIPPED (no libass ffmpeg - brew install ffmpeg-full)"
+    base = d / "base.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x101010:s=1920x1080:r=30:d=2",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", str(base)], check=True)
+    subprocess.run([ff, "-v", "error", "-y", "-i", str(base), "-vf",
+                    f"subtitles=filename='{d / 'c.ass'}':fontsdir='/System/Library/Fonts/Supplemental'",
+                    str(d / "cap.mp4")], check=True)
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", "0.7", "-i", str(d / "cap.mp4"), "-frames:v", "1",
+                    str(d / "f.png")], check=True)
+    band = np.asarray(Image.open(d / "f.png").convert("L"))[880:1030, 300:1620]
+    assert band.max() > 200, "no caption text in the band under the strip"
+    return f"chunks + blocks ok; burned with {Path(ff).parent.parent.name}"
+
+
+def t20_faces():
+    """Text placement + face crop maths always; real MediaPipe detection on a fixture frame when available."""
+    from ucf import faces as FC
+    assert FC.text_placement([{"x": .4, "y": .1, "w": .2, "h": .3, "score": .9}], "top") == "bottom"
+    assert FC.text_placement([{"x": .4, "y": .45, "w": .2, "h": .3, "score": .9}], "top") == "top"
+    assert FC.text_placement([], "top") == "top"
+    x0, y0, w, h = FC.face_crop_box({"x": .9, "y": .1, "w": .1, "h": .2, "score": 1}, 640, 360)
+    assert x0 + w <= 640 and y0 + h <= 360 and x0 >= 0 and y0 >= 0 and abs(w / h - 16 / 9) < 0.02, (x0, y0, w, h)
+    if not FC.available():
+        return "placement + crop maths ok; detection SKIPPED (mediapipe not installed)"
+    clip = FIX / "r6.mp4"          # judge on camera at 150 s (r1 opens on a dark judge tile)
+    if not clip.exists():
+        return "placement + crop maths ok; detection SKIPPED (fixture clip missing)"
+    import tempfile
+    png = Path(tempfile.mkdtemp()) / "judge.png"
+    from ucf import config
+    from ucf.render_tt import TTRenderer, THUMB_CROP
+    layout = TTRenderer(config.load(), {}, ROOT).layout_at(clip, 150)       # the judge tile moves with the layout
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", "150", "-i", str(clip), "-frames:v", "1",
+                    "-vf", f"crop={THUMB_CROP[layout]}", str(png)], check=True)
+    fs = FC.detect(png)
+    assert fs and fs[0]["score"] > 0.5, f"no face found in the judge tile: {fs}"
+    return f"placement + crop maths ok; judge face found (score {fs[0]['score']:.2f}, h {fs[0]['h']:.2f})"
+
+
 def t15_hive_and_fallback():
     """Hive (OpenAI-dialect) SSE parsing, rejected-param retry, provider cfg switch and the Pass A
     fallback path - all offline with a fake urlopen."""
@@ -733,6 +811,9 @@ def main():
     check(15, "hive provider + fallback", t15_hive_and_fallback)
     check(16, "overlay burn visible", t16_overlay_burn)
     check(17, "zoom layouts", t17_zoom_layouts)
+    check(18, "court audio cleanup", t18_audio_cleanup)
+    check(19, "captions", t19_captions)
+    check(20, "faces", t20_faces)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))

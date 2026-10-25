@@ -18,7 +18,7 @@ from . import ov_gfx as G
 from . import ov_layout as L
 from . import tts
 from . import timeline as TL
-from .render import AENC, AUDIO_NORM, TS, probe_dur, run, venc
+from .render import AENC, AUDIO_NORM, TS, court_audio, probe_dur, run, venc
 from .render_tt import TTRenderer, _thumb
 from .timeutil import fmt_dur, fmt_tc, parse_tc
 
@@ -215,7 +215,7 @@ class OVRenderer(TTRenderer):
             fc.append(f"[{widx}:a]adelay={ms}|{ms},apad,{AUDIO_NORM}{atail}[aout]")
             amap = ["-map", "[aout]"]
         else:
-            amap = ["-map", "1:a:0?", "-af", AUDIO_NORM + (f",afade=t=out:st={max(0, dr - 0.9):.2f}:d=0.9" if fade_out else "")]
+            amap = ["-map", "1:a:0?", "-af", court_audio(self.cfg) + (f",afade=t=out:st={max(0, dr - 0.9):.2f}:d=0.9" if fade_out else "")]
         cmd += ["-filter_complex", ";".join(fc), "-map", "[vout]", *amap, "-t", f"{dr:.3f}", *venc(self.enc), *AENC, *TS, out]
         run(cmd)
 

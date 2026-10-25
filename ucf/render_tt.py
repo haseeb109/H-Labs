@@ -24,7 +24,7 @@ from PIL import Image, ImageDraw
 
 from . import cards, hf, tts
 from . import timeline as TL
-from .render import AENC, AUDIO_NORM, NORM, TS, Renderer, probe_dur, run, venc
+from .render import AENC, AUDIO_NORM, NORM, TS, Renderer, court_audio, probe_dur, run, venc
 from .timeutil import fmt_dur, fmt_tc, parse_tc
 
 ASSETS = Path(__file__).resolve().parent.parent / "styles" / "trial_tales" / "assets"   # module default; TTRenderer uses the active style pack
@@ -64,6 +64,8 @@ LAYOUT_CHAIN = {
 # where the judge sits in each layout (crop for the thumbnail): (w, h, x, y) as fractions of the frame
 THUMB_CROP = {"2up": "iw/2:ih/2:iw/2:ih/4", "full3": "iw/2:ih/2:iw/2:0", "grid4": "iw/2:ih/2:iw/2:0",
               "solo": "iw:ih:0:0"}
+# the court camera tile in each layout (thumbnail face search)
+COURT_CROP = {"2up": "iw/2:ih/2:0:ih/4", "full3": "iw/2:ih/2:0:0", "grid4": "iw/2:ih/2:0:0", "solo": "iw:ih:0:0"}
 
 
 def _gray_frames(args):
@@ -239,7 +241,7 @@ class TTRenderer(Renderer):
             chain += f";[{last}][2:v]overlay=0:0:eof_action=pass:format=auto[b2]"
             last = "b2"
         chain += f";[{last}]format=yuv420p[vout]"
-        cmd += ["-filter_complex", chain, "-map", "[vout]", "-map", "1:a:0?", "-af", AUDIO_NORM, "-t", f"{d:.3f}",
+        cmd += ["-filter_complex", chain, "-map", "[vout]", "-map", "1:a:0?", "-af", court_audio(self.cfg), "-t", f"{d:.3f}",
                 *venc(self.enc), *AENC, *TS, out]
         run(cmd)
         return out
@@ -465,9 +467,9 @@ class TTRenderer(Renderer):
                      "wps": cfg.get("wps", 2.6), "final_min_hold": cfg.get("final_min_hold", 12.0)})
         tl = TL.build(video, by_id, tcfg, real)
         # v10 overlays: schedule inside cases, burn before QC
+        scheduled = []
         try:
             from . import overlay_sched as OS
-            scheduled = []
             if (self.cfg.get("overlays") or {}).get("enabled", True):
                 total = probe_dur(final)
                 busy = [(r["start"] + 0.3, r["start"] + 4.7) for r in rows if r["kind"] == "case"][:1]
@@ -484,6 +486,14 @@ class TTRenderer(Renderer):
                                                     for s, e, o in scheduled]
         except Exception as ex:  # noqa
             ui("  overlays skipped:", ex)
+        # word-by-word captions in the band under the strip; never over the hook/intro or an overlay card
+        try:
+            from . import captions as CAP
+            blocks = [(r["start"], r["start"] + r["dur"]) for r in rows if r["kind"] in ("hook", "intro")]
+            blocks += [(s - 0.3, e + 0.3) for s, e, _o in scheduled]
+            final = CAP.burn(final, blocks, work, self.cfg, venc(self.enc), ui)
+        except Exception as ex:  # noqa - captions are a bonus layer, never a reason to lose the video
+            ui("  captions skipped:", ex)
         for r in rows:
             s = self.sources.get(r.get("src", default_src)) or {}
             url = s.get("url", "")
@@ -504,22 +514,48 @@ def _thumb(self, plan, video, outdir):
     sname = by_id[cid].get("source_file") or plan["source_file"]
     cdir = Path(outdir) / "thumbnail_candidates"
     cdir.mkdir(parents=True, exist_ok=True)
-    cands = []
+    from . import faces as FC
+    from PIL import Image
+    min_face = int(self.cfg.get("thumb_min_face_px", 90))     # smaller court-camera faces upscale into mush
+    cands = []                                                # (score, path, faces)
+
+    def add(p):
+        fs = FC.detect(p)
+        # a big, confident face lifts a candidate; no face at all halves it (sharpness alone picked blank walls)
+        fw = min(1.0, fs[0]["h"] * 2.2) * fs[0]["score"] if fs else 0.0
+        cands.append((cards.sharpness(p) * (0.5 + fw), p, fs))
+
     n = 6
     for i in range(n):
         t = wa + (wb - wa) * i / max(1, n - 1)
         path, t0, _ = self.locate(sname, t, t + 0.1)
-        p = cdir / f"cand_{i + 1}_{_f(t).replace(':', '-')}.jpg"
-        # the thumbnail uses the judge's tile; where it sits depends on the Zoom layout of that very frame
-        crop = THUMB_CROP[self.layout_at(path, t0)]
+        stamp = _f(t).replace(':', '-')
+        layout = self.layout_at(path, t0)
+        # 1) the judge's tile; where it sits depends on the Zoom layout of that very frame
+        p = cdir / f"cand_{i + 1}_{stamp}.jpg"
         run(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{t0:.2f}", "-i", path, "-frames:v", "1",
-             "-vf", f"crop={crop},scale=1280:720:flags=lanczos", "-q:v", "2", p])
-        cands.append((cards.sharpness(p), p))
-    best = max(cands)[1]
+             "-vf", f"crop={THUMB_CROP[layout]},scale=1280:720:flags=lanczos", "-q:v", "2", p])
+        add(p)
+        # 2) the court camera, cropped onto the biggest face (usually the defendant) when it is big enough
+        if FC.available():
+            tile = cdir / f"court_{i + 1}_{stamp}.png"
+            run(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{t0:.2f}", "-i", path, "-frames:v", "1",
+                 "-vf", f"crop={COURT_CROP[layout]}", tile])
+            fs = FC.detect(tile)
+            if fs:
+                im = Image.open(tile)
+                if fs[0]["h"] * im.height >= min_face:
+                    x0, y0, w, h = FC.face_crop_box(fs[0], im.width, im.height)
+                    q = cdir / f"cand_{i + 1}_{stamp}_face.jpg"
+                    im.crop((x0, y0, x0 + w, y0 + h)).convert("RGB").resize((1280, 720), Image.LANCZOS).save(q, quality=92)
+                    add(q)
+            tile.unlink(missing_ok=True)
+    _score, best, best_faces = max(cands, key=lambda c: c[0])
     out = Path(outdir) / "thumbnail.jpg"
-    cards.thumbnail(best, th["text"], th["gold_word"], th["placement"], out)
-    for _, p in cands:
-        cards.thumbnail(p, th["text"], th["gold_word"], th["placement"], p.with_name(p.stem + "_text.jpg"))
+    cards.thumbnail(best, th["text"], th["gold_word"], FC.text_placement(best_faces, th["placement"]), out)
+    for _s, p, fs in cands:
+        cards.thumbnail(p, th["text"], th["gold_word"], FC.text_placement(fs, th["placement"]),
+                        p.with_name(p.stem + "_text.jpg"))
     return out
 
 
