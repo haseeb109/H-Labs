@@ -3,6 +3,7 @@ virality ranking, and the plan assembly that run_stream.py renders.
 Everything the brain writes is distrusted where it matters: totals, ranks, and title/backup_title are
 script-computed here (spec 5.2 / 10)."""
 import json
+import re
 from pathlib import Path
 
 from . import validate as VAL
@@ -185,10 +186,18 @@ def _pass_b_loop(c, pb, prompt_b, plan, judge, stream_len, segs, cfg, ui, work, 
             msgs_b += [{"role": "assistant", "content": txt}, {"role": "user", "content": berrs[0]}]
             continue
         probe = {"n": c["rank"], "schema": "v10", **vobj, "case_ids": [c["id"]], "bridges": vobj.get("bridges", [])}
+        # Judge THIS case only: its overlays come from this reply (the overlay rules read case.overlays), and
+        # other cases' overlays are left out - before, a finished case's overlay error was sent to every later
+        # case, which could never fix it (03p3ATnv6dY 2026-10-25: two cases failed and burned the fallback).
+        ovs = vobj.get("overlays") if isinstance(vobj.get("overlays"), list) else []
+        cases_v = [dict(x, overlays=ovs) if x["id"] == c["id"] else {k: v for k, v in x.items() if k != "overlays"}
+                   for x in plan["cases"]]
         try:
-            berrs, _w = VAL.validate({"schema": "v10", "mode": "all", "cases": plan["cases"], "videos": [probe],
+            berrs, _w = VAL.validate({"schema": "v10", "mode": "all", "cases": cases_v, "videos": [probe],
                                       "judge_name": judge, "gaps": plan.get("gaps", [])},
                                      stream_len, segs, dict(cfg, **{"_single_video": c["id"]}))
+            other = re.compile(r"^case (\d+)\b")
+            berrs = [e for e in berrs if not (other.match(e) and int(other.match(e).group(1)) != c["id"])]
         except Exception as ex:  # noqa: shape surprises become repairable, never crashes
             berrs = [f"validator could not read this video object ({ex}) - check field shapes against the schema"]
         if not berrs:
