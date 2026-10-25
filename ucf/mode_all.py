@@ -164,6 +164,15 @@ def _pass_a_loop(cfg_a, prompt_a, stream_len, segs, ui, work, tag=""):
     return plan, errs
 
 
+def _fill_titles(v):
+    """title = the primary of the 5 titles, backup_title = the best-ranked other one (script-filled)."""
+    ts = [t for t in (v.get("titles") or []) if isinstance(t, dict)]
+    v["title"] = next((t.get("text") for t in ts if t.get("primary")), "")
+    v["backup_title"] = next((t.get("text") for t in sorted(ts, key=lambda t: t.get("ctr_rank", 9))
+                              if not t.get("primary")), "")
+    return v
+
+
 def _pass_b_loop(c, pb, prompt_b, plan, judge, stream_len, segs, cfg, ui, work, tag=""):
     """Pass B for one case on ONE provider with validator repair rounds. -> (video object, errs)."""
     from . import brain as B
@@ -186,6 +195,7 @@ def _pass_b_loop(c, pb, prompt_b, plan, judge, stream_len, segs, cfg, ui, work, 
             msgs_b += [{"role": "assistant", "content": txt}, {"role": "user", "content": berrs[0]}]
             continue
         probe = {"n": c["rank"], "schema": "v10", **vobj, "case_ids": [c["id"]], "bridges": vobj.get("bridges", [])}
+        _fill_titles(probe)          # title/backup_title exist in the final plan, so check them here (thumbnail rule)
         # Judge THIS case only: its overlays come from this reply (the overlay rules read case.overlays), and
         # other cases' overlays are left out - before, a finished case's overlay error was sent to every later
         # case, which could never fix it (03p3ATnv6dY 2026-10-25: two cases failed and burned the fallback).
@@ -297,10 +307,7 @@ def build_plan(segs, lines, scan_text, stream_len, cfg, ui=print, work=None, sca
         vobj["n"] = c["rank"]
         vobj["rank"] = c["rank"]
         vobj["bridges"] = []
-        vobj["title"] = next((t.get("text") for t in vobj.get("titles", []) if t.get("primary")), "")
-        vobj["backup_title"] = next((t.get("text") for t in sorted(vobj.get("titles", []),
-                                                                  key=lambda t: t.get("ctr_rank", 9))
-                                     if not t.get("primary")), "")
+        _fill_titles(vobj)
         videos.append(vobj)
     plan["schema"] = "v10"
     plan["mode"] = "all"
