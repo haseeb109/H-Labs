@@ -70,6 +70,9 @@ DEFAULTS = {
                  "weights": {"next_call": 3.0, "wrap_up": 2.0, "tile_count": 1.5, "tile_label": 1.5,
                              "last_name": 1.0, "silence": 1.0, "before_ruling": -4.0, "call_inside": -5.0}},
     "brain_two_pass": "auto",              # auto (= on for mode all) | on | off
+    "brain_pass_a": "",                    # hybrid: provider for Pass A inventory ("" = same as brain)
+    "brain_pass_b": "",                    # hybrid: provider for Pass B packaging ("" = same as brain)
+    "brain_fallback": "anthropic",         # if the pass provider errors, this one takes over
     "reuse_guard": True,                   # warn when a case was already rendered on another style
     # --- voice ---
     "tts_order": ["ai33", "voicestudio", "say"],

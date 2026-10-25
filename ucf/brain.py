@@ -21,6 +21,10 @@ PRICES = {
     "claude-sonnet-4-5": (3.0, 15.0, 3.75, 0.30),
     "claude-opus-5-5":   (4.0, 20.0, 5.0, 0.20),
     "claude-haiku-4-5":  (1.0, 5.0, 1.25, 0.10),
+    # thehive.ai/pricing (checked 2026-10-25); no separate cache-write price
+    "deepseek-ai/deepseek-v4.1-flash-1017": (0.10, 0.35, 0.10, 0.003),
+    # api-docs.deepseek.com/quick_start/pricing, PEAK rate (off-peak is half; checked 2026-10-25)
+    "deepseek-flash": (0.30, 1.20, 0.30, 0.006),
 }
 USAGE = []      # one dict per API call: model, label, input, output, cache_write, cache_read, cost
 
@@ -297,55 +301,99 @@ def _friendly_api_error(ev):
 PROVIDERS = {
     "anthropic": {"key_env": "ANTHROPIC_API_KEY", "model": "claude-sonnet-5-5",
                   "base_url": "https://api.anthropic.com/v1/messages", "env_file": "anthropic.env"},
-    "deepseek": {"key_env": "DEEPSEEK_API_KEY", "model": "deepseek-chat",
+    "deepseek": {"key_env": "DEEPSEEK_API_KEY", "model": "deepseek-flash", "json_mode": True, "max_tokens": 64000,
                  "base_url": "https://api.deepseek.com/chat/completions", "env_file": "deepseek.env"},
     "openai": {"key_env": "OPENAI_API_KEY", "model": "gpt-4o",
                "base_url": "https://api.openai.com/v1/chat/completions", "env_file": "openai.env"},
+    # DeepSeek V4.1 Flash resold by Hive (docs.thehive.ai/docs/chat-completions-openai-compatible-llms).
+    # Smoke-tested 2026-10-25: max_tokens 64000, temperature, stream_options and json_object are accepted;
+    # the model always thinks (reasoning_content deltas), "thinking": disabled is ignored.
+    "hive": {"key_env": "HIVE_API_KEY", "model": "deepseek-ai/deepseek-v4.1-flash-1017", "json_mode": True,
+             "max_tokens": 64000, "base_url": "https://api-cdn.thehive.ai/api/v3/chat/completions",
+             "env_file": "hive.env"},
 }
 
+# params a provider may reject; dropped one at a time (and remembered) when the API answers 400 about them
+_OPTIONAL_PARAMS = ("response_format", "temperature", "stream_options")
+_DROPPED = {}
 
-def _stream_openai_compat(messages, cfg, on_text=None):
-    """Streaming chat-completions for DeepSeek / OpenAI (same SSE dialect)."""
+
+def cfg_for(cfg, provider):
+    """Config copy for one provider: brain + its model + its max_tokens. config "provider_models" wins over
+    the registry default, so an owner override in config.json still applies."""
+    prov = PROVIDERS.get(provider, {})
+    model = (cfg.get("provider_models") or {}).get(provider) or prov.get("model") or cfg.get("model")
+    mt = (cfg.get("provider_max_tokens") or {}).get(provider) or prov.get("max_tokens") or cfg.get("max_tokens")
+    return dict(cfg, brain=provider, model=model, max_tokens=mt)
+
+
+def _stream_openai_compat(messages, cfg, on_text=None, _attempt=0):
+    """Streaming chat-completions for Hive / DeepSeek / OpenAI (same SSE dialect)."""
+    import time
     prov = PROVIDERS[cfg["brain"]]
     key = os.environ.get(prov["key_env"])
     if not key:
         raise RuntimeError(f"{prov['key_env']} missing. Put it in ~/.config/umf/{prov['env_file']} as "
                            f"{prov['key_env']}=... or use --brain manual / --brain mock.")
     msgs = [{"role": "system", "content": SYSTEM}] + messages
-    body = json.dumps({"model": cfg["model"], "messages": msgs, "stream": True, "temperature": 0.3,
-                       "max_tokens": int(cfg["max_tokens"]), "stream_options": {"include_usage": True}}).encode()
-    req = urllib.request.Request(prov["base_url"], data=body, headers={
+    req_body = {"model": cfg["model"], "messages": msgs, "stream": True, "temperature": 0.3,
+                "max_tokens": int(cfg["max_tokens"]), "stream_options": {"include_usage": True}}
+    if prov.get("json_mode") and cfg.get("json_mode", True):
+        req_body["response_format"] = {"type": "json_object"}
+    for p in _DROPPED.get(cfg["brain"], set()):
+        req_body.pop(p, None)
+    req = urllib.request.Request(prov["base_url"], data=json.dumps(req_body).encode(), headers={
         "Authorization": f"Bearer {key}", "content-type": "application/json"})
     out = []
-    with urllib.request.urlopen(req, timeout=1800) as r:
-        for raw in r:
-            line = raw.decode("utf-8", "ignore").strip()
-            if not line.startswith("data:"):
-                continue
-            payload = line[5:].strip()
-            if payload == "[DONE]":
-                break
-            try:
-                ev = json.loads(payload)
-            except Exception:
-                continue
-            eu = ev.get("usage")
-            if eu:
-                cached = ((eu.get("prompt_tokens_details") or {}).get("cached_tokens")
-                          or eu.get("prompt_cache_hit_tokens") or 0)
-                record_usage(cfg, cfg["model"], {"input": (eu.get("prompt_tokens") or 0) - cached,
-                                                 "cache_read": cached, "output": eu.get("completion_tokens") or 0})
-            for ch in ev.get("choices", []) or []:
-                delta = ch.get("delta", {}) or {}
-                piece = delta.get("content")
-                if piece:
-                    out.append(piece)
-                    if on_text:
-                        on_text(len(out))
-                if ch.get("finish_reason") == "length":
-                    raise BrainStop("model hit max_tokens before finishing the JSON - raise config max_tokens",
-                                    "".join(out))
-    return _check_reply("".join(out), None, 0, cfg)
+    usage = None
+    finish = None
+    try:
+        with urllib.request.urlopen(req, timeout=1800) as r:
+            for raw in r:
+                line = raw.decode("utf-8", "ignore").strip()
+                if not line.startswith("data:"):
+                    continue
+                payload = line[5:].strip()
+                if payload == "[DONE]":
+                    break
+                try:
+                    ev = json.loads(payload)
+                except Exception:
+                    continue
+                if ev.get("usage"):
+                    usage = ev["usage"]           # some providers repeat it per chunk: keep the last, record once
+                for ch in ev.get("choices", []) or []:
+                    delta = ch.get("delta", {}) or {}
+                    piece = delta.get("content")
+                    if piece:
+                        out.append(piece)
+                        if on_text:
+                            on_text(len(out))
+                    finish = ch.get("finish_reason") or finish
+    except urllib.error.HTTPError as e:
+        msg = e.read().decode("utf-8", "ignore")[:400]
+        if e.code == 400:
+            bad = next((p for p in _OPTIONAL_PARAMS if p in req_body and p.split("_")[0] in msg.lower()), None)
+            if bad:
+                _DROPPED.setdefault(cfg["brain"], set()).add(bad)
+                return _stream_openai_compat(messages, cfg, on_text, _attempt)
+        if e.code == 429 and _attempt < 4:            # rate limit (Hive default 5 req/s): back off and retry
+            time.sleep(5 * (2 ** _attempt))
+            return _stream_openai_compat(messages, cfg, on_text, _attempt + 1)
+        if e.code in (402, 405) or "balance" in msg.lower():
+            raise RuntimeError(f"{cfg['brain']}: account out of balance - top up the {cfg['brain']} credit and "
+                               f"rerun ({msg})") from None
+        raise RuntimeError(f"{cfg['brain']} API error HTTP {e.code}: {msg}") from None
+    finally:
+        if usage:
+            cached = ((usage.get("prompt_tokens_details") or {}).get("cached_tokens")
+                      or usage.get("prompt_cache_hit_tokens") or 0)
+            record_usage(cfg, cfg["model"], {"input": (usage.get("prompt_tokens") or 0) - cached,
+                                             "cache_read": cached, "output": usage.get("completion_tokens") or 0})
+    if finish == "length":
+        raise BrainStop(f"{cfg['model']} hit max_tokens ({cfg['max_tokens']}) before finishing the JSON - raise "
+                        "max_tokens and rerun (the partial reply was saved).", "".join(out))
+    return _check_reply("".join(out), finish, (usage or {}).get("completion_tokens", 0), cfg)
 
 
 def _stream_mock(messages, cfg, on_text=None):
@@ -364,7 +412,7 @@ def _stream_any(messages, cfg, on_text=None):
     brain = cfg.get("brain", "anthropic")
     if brain == "anthropic":
         return _stream_anthropic(messages, cfg, on_text)
-    if brain in ("deepseek", "openai"):
+    if brain in ("hive", "deepseek", "openai"):
         return _stream_openai_compat(messages, cfg, on_text)
     if brain == "mock":
         return _stream_mock(messages, cfg, on_text)
@@ -377,13 +425,13 @@ def extract_json(text):
     return json.loads(s)
 
 
-def make_plan(prompt, stream_len, segs, cfg, ui=print, save_dir=None):
+def make_plan(prompt, stream_len, segs, cfg, ui=print, save_dir=None, tag=""):
     msgs = [{"role": "user", "content": prompt}]
     plan, errs, warns = None, [], []
     for rnd in range(int(cfg["max_repair_rounds"]) + 1):
         ui(f"  asking {cfg.get('brain', 'anthropic')} ({cfg['model']}) round {rnd + 1}...")
-        cfg["_usage_label"] = f"plan r{rnd + 1}"
-        txt = stream_and_save(msgs, cfg, Path(save_dir) / f"brain_reply_{rnd + 1}.txt" if save_dir else None,
+        cfg["_usage_label"] = f"plan {tag}r{rnd + 1}"
+        txt = stream_and_save(msgs, cfg, Path(save_dir) / f"brain_reply_{tag}{rnd + 1}.txt" if save_dir else None,
                               on_text=lambda n: n % 400 == 0 and ui(f"    ...{n} chunks"))
         try:
             plan = extract_json(txt)

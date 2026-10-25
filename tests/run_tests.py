@@ -199,8 +199,92 @@ def t8_brain_plumbing():
     plan2, errs2, _ = brain.make_plan(prompt, STREAM_LEN, _load_segs(), cfg)
     assert calls["n"] == 2 and not errs2, f"repair loop failed after {calls['n']} rounds: {errs2[:3]}"
     # provider registry sanity
-    assert set(brain.PROVIDERS) == {"anthropic", "deepseek", "openai"}
-    return "mock plan ok + 1 repair round + 3 providers registered"
+    assert set(brain.PROVIDERS) == {"anthropic", "deepseek", "openai", "hive"}
+    return "mock plan ok + 1 repair round + 4 providers registered"
+
+
+def t15_hive_and_fallback():
+    """Hive (OpenAI-dialect) SSE parsing, rejected-param retry, provider cfg switch and the Pass A
+    fallback path - all offline with a fake urlopen."""
+    import importlib
+    import io
+    import os
+    import urllib.error
+    import urllib.request
+    from ucf import brain, mode_all
+    importlib.reload(brain)                       # t8 monkeypatches brain._stream_any
+    importlib.reload(mode_all)
+    os.environ.setdefault("HIVE_API_KEY", "test")
+    cfg = _test_cfg()
+    h = brain.cfg_for(cfg, "hive")
+    assert h["brain"] == "hive" and h["model"].startswith("deepseek-ai/") and int(h["max_tokens"]) == 64000, h
+    assert brain.cfg_for(cfg, "anthropic")["model"].startswith("claude-"), "anthropic model not restored"
+
+    def sse(chunks, finish="stop", usage=None):
+        ev = [{"choices": [{"delta": {"reasoning_content": "thinking..."}}]}]
+        ev += [{"choices": [{"delta": {"content": c}}]} for c in chunks]
+        ev += [{"choices": [{"delta": {}, "finish_reason": finish}],
+                "usage": usage or {"prompt_tokens": 1000, "completion_tokens": 500,
+                                   "prompt_tokens_details": {"cached_tokens": 200}}}]
+        return [("data: " + json.dumps(e) + "\n").encode() for e in ev] + [b"data: [DONE]\n"]
+
+    class R(list):
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+
+    seen = []
+    script = []
+
+    def fake(req, timeout=None):
+        body = json.loads(req.data)
+        seen.append(body)
+        kind = script.pop(0)
+        if kind == "400_format":
+            raise urllib.error.HTTPError(req.full_url, 400, "bad", {}, io.BytesIO(b"response_format not supported"))
+        return R(kind)
+
+    real = urllib.request.urlopen
+    urllib.request.urlopen = fake
+    try:
+        brain.USAGE.clear()
+        script[:] = [sse(['{"ok":', ' 1}'])]
+        txt = brain._stream_any([{"role": "user", "content": "x"}], dict(h))
+        assert txt == '{"ok": 1}', txt
+        assert seen[-1]["model"] == h["model"] and seen[-1]["response_format"] == {"type": "json_object"}
+        assert len(brain.USAGE) == 1 and brain.USAGE[0]["cost"] is not None, "usage not recorded once with a price"
+        # rejected param -> dropped and retried once, then remembered
+        script[:] = ["400_format", sse(['{"ok": 2}'])]
+        assert brain._stream_any([{"role": "user", "content": "x"}], dict(h)) == '{"ok": 2}'
+        assert "response_format" not in seen[-1], "rejected param was not dropped"
+        brain._DROPPED.clear()
+        # empty reply / cut-off reply -> BrainStop
+        for chunks, fin in (([], "stop"), (['{"a"'], "length")):
+            script[:] = [sse(chunks, fin)]
+            try:
+                brain._stream_any([{"role": "user", "content": "x"}], dict(h))
+                raise AssertionError("BrainStop expected")
+            except brain.BrainStop:
+                pass
+        # Pass A: hive returns nothing -> with a fallback the loop hands over instead of stopping the run
+        ca = dict(h, brain_fallback="anthropic", max_repair_rounds=0)
+        script[:] = [sse([])]
+        plan, errs = mode_all._pass_a_loop(ca, "prompt", STREAM_LEN, _load_segs(), lambda *a: None, None)
+        assert plan is None and errs and "hive" in errs[0], errs
+        # ... and the fallback provider's loop produces the plan (mock replays the known-good plan)
+        cm = dict(_test_cfg(), brain="mock", mock_reply_file=str(PLAN_FILE), max_repair_rounds=0)
+        plan, errs = mode_all._pass_a_loop(cm, "prompt", STREAM_LEN, _load_segs(), lambda *a: None, None, tag="fb_")
+        assert plan and not errs, errs[:3]
+        # without a fallback the same empty reply stops the run (old behaviour)
+        script[:] = [sse([])]
+        try:
+            mode_all._pass_a_loop(dict(h, brain_fallback="", max_repair_rounds=0), "prompt", STREAM_LEN,
+                                  _load_segs(), lambda *a: None, None)
+            raise AssertionError("BrainStop expected without fallback")
+        except brain.BrainStop:
+            pass
+    finally:
+        urllib.request.urlopen = real
+    return "hive SSE + usage + param-drop retry + BrainStop + Pass A fallback hand-over"
 
 
 def t9_renderer_units():
@@ -561,6 +645,7 @@ def main():
     check(11, "v10 title validator", t11_title_validator_v10)
     check(13, "boundary engine", t13_boundary_engine)
     check(14, "overlay scheduler", t14_overlay_sched)
+    check(15, "hive provider + fallback", t15_hive_and_fallback)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))

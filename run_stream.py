@@ -63,7 +63,7 @@ def main():
     ap.add_argument("--stream-length", help="H:MM:SS (needed only when --video-file has no readable duration)")
     ap.add_argument("--only", help="video numbers to render, e.g. 1,3")
     ap.add_argument("--confirm-tts", action="store_true")
-    ap.add_argument("--brain", choices=["anthropic", "deepseek", "openai", "manual", "mock"])
+    ap.add_argument("--brain", choices=["hive", "anthropic", "deepseek", "openai", "manual", "mock"])
     ap.add_argument("--style", help="editing style id from styles/<id>/style.json (e.g. trial_tales)")
     ap.add_argument("--mode", help="run mode: 30 (20-40 min videos) | 60 (50-70 min) | all (one video per case, ranked)")
     ap.add_argument("--tts", help="force one TTS provider (ai33|voicestudio|say|dummy)")
@@ -72,14 +72,15 @@ def main():
     cfg = config.load(a.config, style=a.style)
     if a.brain:
         cfg["brain"] = a.brain
+        cfg["brain_pass_a"] = cfg["brain_pass_b"] = ""   # an explicit --brain runs every pass on that brain
     if a.tts:
         cfg["tts_order"] = [a.tts]
     mode = config.apply_mode(cfg, a.mode)
     band = (f"{cfg['runtime_min'] // 60}-{cfg['runtime_max'] // 60} min" if mode != "all"
             else f"one video per case >= {cfg.get('min_case_minutes', 8):.0f} min")
     # keep the active model in sync with the chosen provider unless the config pinned a custom one
-    if cfg["brain"] in ("deepseek", "openai") and cfg.get("model") == config.DEFAULTS["model"]:
-        cfg["model"] = cfg.get("provider_models", {}).get(cfg["brain"], cfg["model"])
+    if cfg["brain"] in brain.PROVIDERS and cfg.get("model") == config.DEFAULTS["model"]:
+        cfg.update(brain.cfg_for(cfg, cfg["brain"]))
     ui(f"style: {cfg['style']}  ({config.style_path(cfg)})  |  mode: {mode}  |  band: {band}")
     root = config.ROOT
     state = root / cfg["state_dir"]
@@ -205,10 +206,22 @@ def main():
             if cfg["brain"] == "manual":
                 sys.exit(f"MANUAL BRAIN: paste {work / 'prompt_for_claude.txt'} into Claude, save its JSON reply as "
                          f"{work / 'plan.json'} and run again (or pass --plan file.json).")
+            fb = cfg.get("brain_fallback") or ""
+            fb = fb if fb and fb != cfg["brain"] and cfg["brain"] != "mock" else ""
             try:
                 plan, errs, warns = brain.make_plan(prompt, stream_len, segs, cfg, ui, save_dir=work)
-            except brain.BrainStop as e:
-                sys.exit(f"BRAIN STOPPED: {e}\n  replies: work/{sid}/brain_reply_*.txt")
+            except (brain.BrainStop, RuntimeError) as e:
+                if not fb:
+                    sys.exit(f"BRAIN STOPPED: {e}\n  replies: work/{sid}/brain_reply_*.txt")
+                plan, errs, warns = None, [str(e)], []
+            if (plan is None or errs) and fb:
+                ui(f"  {cfg['brain']} could not produce a valid plan ({(errs or ['no plan'])[0][:100]}) "
+                   f"-> falling back to {fb}")
+                try:
+                    plan, errs, warns = brain.make_plan(prompt, stream_len, segs, brain.cfg_for(cfg, fb), ui,
+                                                        save_dir=work, tag="fb_")
+                except brain.BrainStop as e:
+                    sys.exit(f"BRAIN STOPPED: {e}\n  replies: work/{sid}/brain_reply_*.txt")
             if plan is None:
                 sys.exit(f"brain '{cfg['brain']}' never returned valid JSON - see work/*/brain_reply_*.txt")
             save_json(plan_path, plan)

@@ -112,6 +112,91 @@ def case_slice_lines(lines, a, b):
     return out
 
 
+def _provider_cfg(cfg, provider):
+    """cfg copy pointed at one provider (brain + its own model + max_tokens). mock/manual keep cfg as is."""
+    from . import brain as B
+    if provider in B.PROVIDERS:
+        return B.cfg_for(cfg, provider)
+    return dict(cfg, brain=provider)
+
+
+def _fallback_for(cfg, used):
+    """The provider to retry with, or None (no fallback set, same provider, or offline mock run)."""
+    fb = cfg.get("brain_fallback") or ""
+    return fb if fb and fb != used and used != "mock" else None
+
+
+def _pass_a_loop(cfg_a, prompt_a, stream_len, segs, ui, work, tag=""):
+    """Pass A with validator repair rounds on ONE provider. -> (plan, errs). A reply that cannot be repaired
+    (BrainStop: empty / cut off / refused) or an API error ends this provider's attempt; the caller decides
+    whether a fallback provider takes over (no fallback -> BrainStop goes up and stops the run)."""
+    from . import brain as B
+    msgs_a = [{"role": "user", "content": prompt_a}]
+    plan, errs = None, []
+    for rnd in range(int(cfg_a["max_repair_rounds"]) + 1):
+        ui(f"  PASS A (inventory) {cfg_a.get('brain')} round {rnd + 1}...")
+        cfg_a["_usage_label"] = f"pass A {tag}r{rnd + 1}"
+        try:
+            txt = B.stream_and_save(msgs_a, cfg_a,
+                                    Path(work) / f"brain_reply_A_{tag}{rnd + 1}.txt" if work else None,
+                                    on_text=lambda n: n % 400 == 0 and ui(f"    ...{n} chunks"))
+        except (B.BrainStop, RuntimeError) as e:
+            if not tag and not _fallback_for(cfg_a, cfg_a.get("brain")):
+                raise                                   # no fallback configured: stop the run (old behaviour)
+            return None, [f"{cfg_a.get('brain')}: {e}"]
+        try:
+            plan = B.extract_json(txt)
+        except Exception as e:
+            plan, errs = None, [f"Pass A: not valid JSON ({e})"]
+            msgs_a += [{"role": "assistant", "content": txt}, {"role": "user", "content": errs[0]}]
+            continue
+        errs, _w = VAL.validate(plan, stream_len, segs, cfg_a)
+        if not errs:
+            break
+        ui(f"  validator: {len(errs)} problem(s) -> sending back")
+        msgs_a += [{"role": "assistant", "content": txt},
+                   {"role": "user", "content": "The validator rejected this plan. Fix EVERY item and return the "
+                    "COMPLETE corrected JSON (same schema):\n- " + "\n- ".join(errs[:40])}]
+    return plan, errs
+
+
+def _pass_b_loop(c, pb, prompt_b, plan, judge, stream_len, segs, cfg, ui, work, tag=""):
+    """Pass B for one case on ONE provider with validator repair rounds. -> (video object, errs)."""
+    from . import brain as B
+    msgs_b = [{"role": "user", "content": prompt_b}]
+    vobj, berrs = None, []
+    for rnd in range(int(cfg["max_repair_rounds"]) + 1):
+        pb["_usage_label"] = f"pass B {c.get('name', '')[:10]} {tag}r{rnd + 1}"
+        try:
+            txt = B.stream_and_save(msgs_b, pb,
+                                    Path(work) / f"brain_reply_B_{c['id']}_{tag}{rnd + 1}.txt" if work else None,
+                                    on_text=lambda n: n % 400 == 0 and ui(f"    ...{n} chunks"))
+        except (B.BrainStop, RuntimeError) as e:
+            if not tag and not _fallback_for(cfg, pb.get("brain")):
+                raise                                   # no fallback configured: stop the run (old behaviour)
+            return None, [f"{pb.get('brain')}: {e}"]
+        try:
+            vobj = B.extract_json(txt).get("video", {})
+        except Exception as e:
+            vobj, berrs = None, [f"Pass B: not valid JSON ({e})"]
+            msgs_b += [{"role": "assistant", "content": txt}, {"role": "user", "content": berrs[0]}]
+            continue
+        probe = {"n": c["rank"], "schema": "v10", **vobj, "case_ids": [c["id"]], "bridges": vobj.get("bridges", [])}
+        try:
+            berrs, _w = VAL.validate({"schema": "v10", "mode": "all", "cases": plan["cases"], "videos": [probe],
+                                      "judge_name": judge, "gaps": plan.get("gaps", [])},
+                                     stream_len, segs, dict(cfg, **{"_single_video": c["id"]}))
+        except Exception as ex:  # noqa: shape surprises become repairable, never crashes
+            berrs = [f"validator could not read this video object ({ex}) - check field shapes against the schema"]
+        if not berrs:
+            break
+        ui(f"  validator: {len(berrs)} problem(s) -> sending back (first: {berrs[0][:110]})")
+        msgs_b += [{"role": "assistant", "content": txt},
+                   {"role": "user", "content": "The validator rejected this video. Fix EVERY item and return the "
+                    "COMPLETE corrected {\"video\": {...}} JSON:\n- " + "\n- ".join(berrs[:40])}]
+    return vobj, berrs
+
+
 def build_plan(segs, lines, scan_text, stream_len, cfg, ui=print, work=None, scan_rep=None, video_path=None):
     """Two-pass brain for mode "all". Returns (plan, errs). Uses brain._stream_any + the validator
     repair loop per pass. Saves every reply into work/ when given."""
@@ -130,38 +215,27 @@ def build_plan(segs, lines, scan_text, stream_len, cfg, ui=print, work=None, sca
         except Exception as e:  # noqa
             ui("evidence skipped:", e)
     # ---------- Pass A: inventory ----------
-    # mock_passA_replies set -> Pass A replays a saved brain reply (resume) while Pass B stays live
-    pass_a_brain = "mock" if cfg.get("mock_passA_replies") else cfg.get("brain", "anthropic")
-    cfg_a = dict(cfg, _cases_only=True, brain=pass_a_brain,
+    # mock_passA_replies set -> Pass A replays a saved brain reply (resume) while Pass B stays live.
+    # Hybrid: brain_pass_a (cheap) runs the inventory; brain_fallback takes over when it fails.
+    pass_a_brain = ("mock" if cfg.get("mock_passA_replies")
+                    else cfg.get("brain_pass_a") or cfg.get("brain", "anthropic"))
+    cfg_a = dict(_provider_cfg(cfg, pass_a_brain), _cases_only=True,
                  _mock_queue=list(cfg.get("mock_passA_replies") or []))
     prompt_a = B.build_prompt(
         {"source_file": cfg["_source_file"], "stream_length": fmt_tc(stream_len, False),
          "channel_name": cfg.get("channel_name", ""), "judge_name": judge}, scan_text, lines, [], cfg_a)
     if work:
         (Path(work) / "prompt_A.txt").write_text(prompt_a, encoding="utf-8")
-    msgs_a = [{"role": "user", "content": prompt_a}]
-    plan = None
-    errs = []
-    for rnd in range(int(cfg["max_repair_rounds"]) + 1):
-        ui(f"  PASS A (inventory) {cfg.get('brain')} round {rnd + 1}...")
-        cfg_a["_usage_label"] = f"pass A r{rnd + 1}"
-        txt = B.stream_and_save(msgs_a, cfg_a, Path(work) / f"brain_reply_A_{rnd + 1}.txt" if work else None,
-                                on_text=lambda n: n % 400 == 0 and ui(f"    ...{n} chunks"))
-        try:
-            plan = B.extract_json(txt)
-        except Exception as e:
-            errs = [f"Pass A: not valid JSON ({e})"]
-            msgs_a += [{"role": "assistant", "content": txt}, {"role": "user", "content": errs[0]}]
-            continue
-        errs, _w = VAL.validate(plan, stream_len, segs, cfg_a)
-        if not errs:
-            break
-        ui(f"  validator: {len(errs)} problem(s) -> sending back")
-        msgs_a += [{"role": "assistant", "content": txt},
-                   {"role": "user", "content": "The validator rejected this plan. Fix EVERY item and return the "
-                    "COMPLETE corrected JSON (same schema):\n- " + "\n- ".join(errs[:40])}]
+    plan, errs = _pass_a_loop(cfg_a, prompt_a, stream_len, segs, ui, work)
+    fb = _fallback_for(cfg, pass_a_brain)
+    if (plan is None or errs) and fb:
+        ui(f"  Pass A on {pass_a_brain} failed ({(errs or ['no plan'])[0][:100]}) -> falling back to {fb}")
+        cfg_a2 = dict(_provider_cfg(cfg, fb), _cases_only=True, _mock_queue=[])
+        plan, errs = _pass_a_loop(cfg_a2, prompt_a, stream_len, segs, ui, work, tag="fb_")
+        pass_a_brain = fb
     if plan is None or errs:
         return plan, errs or ["Pass A failed"]
+    plan["pass_a_brain"] = pass_a_brain
 
     judge = plan.get("judge_name") or judge          # the brain confirms/corrects the judge from the transcript
     for c in plan.get("cases", []):                  # overlays are a PASS B deliverable in mode all
@@ -187,36 +261,19 @@ def build_plan(segs, lines, scan_text, stream_len, cfg, ui=print, work=None, sca
     videos = []
     for c in used:
         ui(f"  PASS B (packaging) #{c['rank']} {c['name']}...")
-        pb = dict(cfg)
+        pass_b_brain = cfg.get("brain_pass_b") or cfg.get("brain", "anthropic")
+        pb = _provider_cfg(cfg, pass_b_brain)
         a, b = parse_tc(c["in"]), parse_tc(c["out"])
         prompt_b = case_prompt(c, pb, judge) + "\n\n" + "═" * 64 + \
             "\n TRANSCRIPT SLICE (this case only)\n" + "═" * 64 + "\n" + "\n".join(case_slice_lines(lines, a, b))
-        msgs_b = [{"role": "user", "content": prompt_b}]
-        vobj, berrs = None, []
-        for rnd in range(int(cfg["max_repair_rounds"]) + 1):
-            pb["_usage_label"] = f"pass B {c.get('name', '')[:10]} r{rnd + 1}"
-            txt = B.stream_and_save(msgs_b, pb,
-                                    Path(work) / f"brain_reply_B_{c['id']}_{rnd + 1}.txt" if work else None,
-                                    on_text=lambda n: n % 400 == 0 and ui(f"    ...{n} chunks"))
-            try:
-                vobj = B.extract_json(txt).get("video", {})
-            except Exception as e:
-                berrs = [f"Pass B: not valid JSON ({e})"]
-                msgs_b += [{"role": "assistant", "content": txt}, {"role": "user", "content": berrs[0]}]
-                continue
-            probe = {"n": c["rank"], "schema": "v10", **vobj, "case_ids": [c["id"]], "bridges": vobj.get("bridges", [])}
-            try:
-                berrs, _w = VAL.validate({"schema": "v10", "mode": "all", "cases": plan["cases"], "videos": [probe],
-                                          "judge_name": judge, "gaps": plan.get("gaps", [])},
-                                         stream_len, segs, dict(cfg, **{"_single_video": c["id"]}))
-            except Exception as ex:  # noqa: shape surprises become repairable, never crashes
-                berrs = [f"validator could not read this video object ({ex}) - check field shapes against the schema"]
-            if not berrs:
-                break
-            ui(f"  validator: {len(berrs)} problem(s) -> sending back (first: {berrs[0][:110]})")
-            msgs_b += [{"role": "assistant", "content": txt},
-                       {"role": "user", "content": "The validator rejected this video. Fix EVERY item and return the "
-                        "COMPLETE corrected {\"video\": {...}} JSON:\n- " + "\n- ".join(berrs[:40])}]
+        vobj, berrs = _pass_b_loop(c, pb, prompt_b, plan, judge, stream_len, segs, cfg, ui, work)
+        fb = _fallback_for(cfg, pass_b_brain)
+        if (vobj is None or berrs) and fb:
+            ui(f"  {c['name']}: {pass_b_brain} could not pass the validator -> retrying this case on {fb}")
+            vobj, berrs = _pass_b_loop(c, _provider_cfg(cfg, fb), prompt_b, plan, judge, stream_len, segs, cfg,
+                                       ui, work, tag="fb_")
+            pass_b_brain = fb
+        c["packaged_by"] = pass_b_brain
         if vobj is None or berrs:
             ui(f"  ! {c['name']} stays unrendered (needs_review) - see brain_reply_B_{c['id']}_*.txt")
             c["needs_review"] = True
@@ -262,6 +319,7 @@ def write_ranking(plan, outroot, cfg, sid):
                                         for k in ("judge_confrontation", "emotion", "surprise_ruling", "numbers",
                                                   "topic_click", "completeness", "av_quality")),
                f"Boundary: IN {c['in']}  OUT {c['out']}  (confidence {bd.get('confidence', '-')})",
+               f"Brain: cases by {plan.get('pass_a_brain', '-')} · packaging by {c.get('packaged_by', '-')}",
                "Titles:"]
         for i, t in enumerate(v.get("titles", [])):
             md.append(f"  {i + 1}. [{t.get('style')}]  {t.get('text')}"
