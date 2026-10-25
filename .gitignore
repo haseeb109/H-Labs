@@ -1,0 +1,28 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# Generated / large data (re-created by the pipeline)
+output/
+work/
+models/
+tests/fixtures/rv_clips/
+
+# Archives and old manual backups
+*.tgz
+*.tar
+*.tar.gz
+_backup_*/
+
+# Per-run launcher choices
+.brain
+.mode
+.style
+
+# Secrets must never live here (keys belong in ~/.config/umf/*.env)
+*.env
+cookies.txt

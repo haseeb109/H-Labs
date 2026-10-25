@@ -1,0 +1,86 @@
+{
+  "lVQ79x0Hd_w.mp4": {
+    "path": "/Users/haseeb/Desktop/Z Labs/H Labs/tests/fixtures/rv_clips/r1.mp4",
+    "url": "https://youtu.be/lVQ79x0Hd_w",
+    "clips": [
+      {
+        "in": 804.0,
+        "out": 1224.0,
+        "path": "/Users/haseeb/Desktop/Z Labs/H Labs/tests/fixtures/rv_clips/m1.mp4",
+        "piece": "m1"
+      },
+      {
+        "in": 3216.0,
+        "out": 3255.0,
+        "path": "/Users/haseeb/Desktop/Z Labs/H Labs/tests/fixtures/rv_clips/r1.mp4",
+        "piece": "r1"
+      },
+      {
+        "in": 4147.0,
+        "out": 4428.0,
+        "path": "/Users/haseeb/Desktop/Z Labs/H Labs/tests/fixtures/rv_clips/r2.mp4",
+        "piece": "r2"
+      },
+      {
+        "in": 5366.0,
+        "out": 5450.0,
+        "path": "/Users/haseeb/Desktop/Z Labs/H Labs/tests/fixtures/rv_clips/r3.mp4",
+        "piece": "r3"
+      },
+      {
+        "in": 6242.0,
+        "out": 6311.0,
+        "path": "/Users/haseeb/Desktop/Z Labs/H Labs/tests/fixtures/rv_clips/r4.mp4",
+        "piece": "r4"
+      },
+      {
+        "in": 7898.0,
+        "out": 7982.0,
+        "path": "/Users/haseeb/Desktop/Z Labs/H Labs/tests/fixtures/rv_clips/r5.mp4",
+        "piece": "r5"
+      },
+      {
+        "in": 8252.0,
+        "out": 8559.0,
+        "path": "/Users/haseeb/Desktop/Z Labs/H Labs/tests/fixtures/rv_clips/r6.mp4",
+        "piece": "r6"
+      },
+      {
+        "in": 8512.0,
+        "out": 8529.0,
+        "path": "/Users/haseeb/Desktop/Z Labs/H Labs/tests/fixtures/rv_clips/hook.mp4",
+        "piece": "hook"
+      },
+      {
+        "in": 9070.0,
+        "out": 9234.0,
+        "path": "/Users/haseeb/Desktop/Z Labs/H Labs/tests/fixtures/rv_clips/r7.mp4",
+        "piece": "r7"
+      },
+      {
+        "in": 9518.0,
+        "out": 9688.0,
+        "path": "/Users/haseeb/Desktop/Z Labs/H Labs/tests/fixtures/rv_clips/r8.mp4",
+        "piece": "r8"
+      },
+      {
+        "in": 10679.0,
+        "out": 10754.0,
+        "path": "/Users/haseeb/Desktop/Z Labs/H Labs/tests/fixtures/rv_clips/r9.mp4",
+        "piece": "r9"
+      }
+    ]
+  },
+  "N8HQ0Yrk80Q.mp4": {
+    "path": "/Users/haseeb/Desktop/Z Labs/H Labs/work/N8HQ0Yrk80Q/source.mp4",
+    "url": "https://www.youtube.com/watch?v=N8HQ0Yrk80Q"
+  },
+  "b2dSLNwHnmA.mp4": {
+    "path": "/Users/haseeb/Desktop/Z Labs/H Labs/work/b2dSLNwHnmA/source.mp4",
+    "url": "https://www.youtube.com/watch?v=b2dSLNwHnmA"
+  },
+  "03p3ATnv6dY.mp4": {
+    "path": "/Users/haseeb/Desktop/Z Labs/H Labs/work/03p3ATnv6dY/source.mp4",
+    "url": "https://www.youtube.com/watch?v=03p3ATnv6dY"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "runtime_min": 3000,
+  "runtime_max": 4200,
+  "_runtime_note": "Owner rule change (Oct 2026): videos now average 1 hour - the validator accepts 50-70 min. Edit these two numbers (seconds) to retune.",
+  "yt_dlp_extra_args": [
+    "--extractor-args",
+    "youtube:player_client=tv,android",
+    "--sleep-requests",
+    "1"
+  ],
+  "max_tokens": 64000
+}

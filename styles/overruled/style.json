@@ -1,0 +1,34 @@
+{
+  "id": "overruled",
+  "name": "Overruled",
+  "renderer": "tt",
+  "look": "ov",
+  "prompt_master": "prompts/master_v9.md",
+  "prompt_addendum": "prompts/json_addendum.md",
+  "prompt_extra": "prompts/overruled_extra.md",
+  "config": {
+    "channel_name": "Overruled",
+    "intro_seconds_tt": 10.0,
+    "vo_clip_max": 18.0,
+    "vo_clip_target": 17.0,
+    "hook_min": 10.0,
+    "hook_max": 15.0,
+    "ai33_voice": "elevenlabs_z9ihBMCAnrOeGUbPDiwi",
+    "court_line": "187th District Court · Judge Stephanie Boyd · Bexar County, Texas",
+    "base_tags": [
+      "overruled",
+      "courtroom explained",
+      "real court hearing",
+      "judge stephanie boyd",
+      "187th district court",
+      "bexar county",
+      "court case explained",
+      "courtroom commentary",
+      "sentencing hearing",
+      "jury trial"
+    ],
+    "channel_intro_file": "assets/channel_intro.mp4",
+    "logo_file": "assets/logo_transparent.png"
+  },
+  "title_rules": "prompts/title_rules.md"
+}

@@ -1,0 +1,443 @@
+{
+  "source_file": "HKURkJmb-K8.mp4",
+  "stream_length": "2:10:32",
+  "working_note": [
+    "Cases found: 12 - 5 used, 3 carried, 4 rejected (<2:00 of hearing). Plea-docket stream: most time is admonishments.",
+    "Minutes: found = used 27:53 + carried 7:13 + rejected 3:18; wasted 0:00",
+    "Rulings: Corona 2:08:04 · Elsinault 1:20:17 · Westcott 1:00:13 · Hamilton 0:22:14 · Serrano 0:13:15",
+    "Hook inside lead range: YES (2:07:34-2:07:48 in 2:01:41-2:09:07)"
+  ],
+  "pass1": [],
+  "gaps": [
+    {
+      "in": "0:00:00",
+      "out": "0:11:35",
+      "kind": "NON-CASE",
+      "label": "docket call, roll call and plea admonishments"
+    },
+    {
+      "in": "0:15:46",
+      "out": "0:20:29",
+      "kind": "NON-CASE",
+      "label": "roll call and plea admonishments"
+    },
+    {
+      "in": "0:24:16",
+      "out": "0:58:02",
+      "kind": "NON-CASE",
+      "label": "docket call, scheduling, recess, plea colloquy interrupted for attorney talk"
+    },
+    {
+      "in": "1:02:20",
+      "out": "1:07:41",
+      "kind": "NON-CASE",
+      "label": "interpreter oath and plea admonishments"
+    },
+    {
+      "in": "1:08:18",
+      "out": "1:13:35",
+      "kind": "NON-CASE",
+      "label": "docket call, scheduling, admonishments"
+    },
+    {
+      "in": "1:21:46",
+      "out": "1:22:14",
+      "kind": "NON-CASE",
+      "label": "banter"
+    },
+    {
+      "in": "1:24:28",
+      "out": "1:27:50",
+      "kind": "NON-CASE",
+      "label": "docket call, plea admonishments"
+    },
+    {
+      "in": "1:30:43",
+      "out": "1:41:36",
+      "kind": "NON-CASE",
+      "label": "recess, silence"
+    },
+    {
+      "in": "1:43:42",
+      "out": "1:51:15",
+      "kind": "NON-CASE",
+      "label": "docket call, trial settings, admonishments"
+    },
+    {
+      "in": "1:53:56",
+      "out": "1:58:02",
+      "kind": "NON-CASE",
+      "label": "docket call, admonishments"
+    },
+    {
+      "in": "1:58:51",
+      "out": "2:01:41",
+      "kind": "NON-CASE",
+      "label": "roll call and plea to violations"
+    },
+    {
+      "in": "2:09:07",
+      "out": "2:10:32",
+      "kind": "NON-CASE",
+      "label": "funeral motion, banter"
+    }
+  ],
+  "cases": [
+    {
+      "id": 1,
+      "name": "Frank Corona",
+      "cause_no": "2020 CR12086",
+      "in": "2:01:41",
+      "out": "2:09:07",
+      "remove": null,
+      "ruling_tc": "2:08:04",
+      "ruling_deferred": false,
+      "monetisation": "OK",
+      "score": 41,
+      "status": "used",
+      "reject_reason": null,
+      "what_it_is": "A probation revocation hearing for a man who stopped reporting.",
+      "charge": "Probation violation on a lawn mower theft case",
+      "facing": "Up to 2 years in state jail",
+      "question": "Will two years of missed check-ins cost him his freedom?",
+      "story": "At 17 he took a deferred adjudication deal for stealing a lawn mower, then stopped reporting for 26 months. The state asks for 18 months and the judge says she is thinking two years.",
+      "root_against": "Both sides: a scared teenager who grew up, and a victim who may have lost his work tool.",
+      "moment": "Judge: 'The state is asking for 18 months. I'm thinking about two.'",
+      "moment_tc": "2:03:46",
+      "ends_on": "Revoked, 18 months in state jail",
+      "result": {
+        "sentence": "18 months in state jail",
+        "conditions": "No contact with the lawn mower shop owner; credit for time served"
+      }
+    },
+    {
+      "id": 2,
+      "name": "Elijah Elsinault",
+      "cause_no": "2026 CR009853",
+      "in": "1:13:35",
+      "out": "1:21:46",
+      "remove": null,
+      "ruling_tc": "1:20:17",
+      "ruling_deferred": false,
+      "monetisation": "OK",
+      "score": 33,
+      "status": "used",
+      "reject_reason": null,
+      "what_it_is": "A no-contest plea to burglary after a vape deal went wrong.",
+      "charge": "Burglary of a home over a $120 vape dispute",
+      "facing": "2 to 20 years in prison",
+      "question": "Will a $120 vape dispute leave him with a felony record?",
+      "story": "He pays $120 for vapes, finds the cartridges empty, and ends up charged with burglary of a habitation. The judge walks him through what a jury trial would mean before he commits to the plea.",
+      "root_against": "Nobody; viewers will feel for a defendant who admits he does not understand the process.",
+      "moment": "Judge: 'This is so silly... you give somebody $120 for vapes.'",
+      "moment_tc": "1:19:25",
+      "ends_on": "2 years deferred adjudication",
+      "result": {
+        "sentence": "2 years deferred adjudication, $500 fine probated",
+        "conditions": "Proof of employment within 30 days; no contact with Gabriel Hall"
+      }
+    },
+    {
+      "id": 3,
+      "name": "Koren Westcott",
+      "cause_no": "2026 CR011371",
+      "in": "0:58:02",
+      "out": "1:02:20",
+      "remove": null,
+      "ruling_tc": "1:00:13",
+      "ruling_deferred": false,
+      "monetisation": "OK",
+      "score": 35,
+      "status": "used",
+      "reject_reason": null,
+      "what_it_is": "A plea hearing for a Navy veteran with PTSD charged with family violence.",
+      "charge": "Continuous violence against a family member",
+      "facing": "Up to 10 years in prison",
+      "question": "Will a Navy veteran with PTSD get a path back to her daughter?",
+      "story": "After 127 days in jail she asks the court to follow her plea deal. She tells the judge she has been diagnosed with PTSD three times and wants to get back to her daughter.",
+      "root_against": "The system that kept a veteran from her daughter's birthday; the family-violence finding.",
+      "moment": "Defendant: 'I've been diagnosed with PTSD three times in my life.'",
+      "moment_tc": "0:59:20",
+      "ends_on": "6 years deferred adjudication",
+      "result": {
+        "sentence": "6 years deferred adjudication",
+        "conditions": "Contact with the complainant through a parenting app only; VA referral and trauma assessment"
+      }
+    },
+    {
+      "id": 4,
+      "name": "Sammy Hamilton",
+      "cause_no": "2026 CR005345",
+      "in": "0:20:29",
+      "out": "0:24:16",
+      "remove": null,
+      "ruling_tc": "0:22:14",
+      "ruling_deferred": false,
+      "monetisation": "OK",
+      "score": 30,
+      "status": "used",
+      "reject_reason": null,
+      "what_it_is": "A sentencing for a man driving a car with a damaged steering column.",
+      "charge": "Unauthorized use of a vehicle",
+      "facing": "Up to 2 years in state jail",
+      "question": "Will the judge accept that he did not know the car was stolen?",
+      "story": "He says he paid $500 for the car and did not know it was stolen. The judge points out the damaged steering column and asks what he was thinking.",
+      "root_against": "The defendant, but his two small daughters pull sympathy.",
+      "moment": "Judge: 'Please don't come to me with nonsense about you didn't know it was stolen.'",
+      "moment_tc": "0:21:04",
+      "ends_on": "2 years state jail, probated for 4 years",
+      "result": {
+        "sentence": "2 years state jail, probated for 4 years",
+        "conditions": "$1,000 fine probated; restitution hearing on November 19"
+      }
+    },
+    {
+      "id": 5,
+      "name": "Nathan Serrano",
+      "cause_no": "2026 CR012917",
+      "in": "0:11:35",
+      "out": "0:15:46",
+      "remove": null,
+      "ruling_tc": "0:13:15",
+      "ruling_deferred": false,
+      "monetisation": "OK",
+      "score": 28,
+      "status": "used",
+      "reject_reason": null,
+      "what_it_is": "A sentencing for a 20-year-old who hurt family members.",
+      "charge": "Injury to an elderly person, with a family violence finding",
+      "facing": "Up to 10 years in prison",
+      "question": "Will alcohol be accepted as the reason he hurt his family?",
+      "story": "A 20-year-old blames alcohol for the incident and asks for part of his fine and service hours to be held back. The judge tells him violence is never the answer.",
+      "root_against": "The defendant; viewers will be split on whether he gets a second chance.",
+      "moment": "Judge: 'Alcohol doesn't cause you to hit everybody in the family.'",
+      "moment_tc": "0:12:25",
+      "ends_on": "3 years deferred adjudication",
+      "result": {
+        "sentence": "3 years deferred adjudication, $1,500 fine probated",
+        "conditions": "BIPP class; 200 community service hours with credits"
+      }
+    },
+    {
+      "id": 6,
+      "name": "Victor Montalvo",
+      "cause_no": "2026 CR011469",
+      "in": "1:27:50",
+      "out": "1:30:43",
+      "remove": null,
+      "ruling_tc": "1:28:27",
+      "ruling_deferred": false,
+      "monetisation": "OK",
+      "score": 14,
+      "status": "carried",
+      "reject_reason": null,
+      "source_file": "HKURkJmb-K8.mp4"
+    },
+    {
+      "id": 7,
+      "name": "Ronald Miller",
+      "cause_no": "",
+      "in": "1:22:14",
+      "out": "1:24:28",
+      "remove": null,
+      "ruling_tc": "1:23:26",
+      "ruling_deferred": false,
+      "monetisation": "OK",
+      "score": 10,
+      "status": "carried",
+      "reject_reason": null
+    },
+    {
+      "id": 8,
+      "name": "Carlos Estrada",
+      "cause_no": "",
+      "in": "1:41:36",
+      "out": "1:43:42",
+      "remove": null,
+      "ruling_tc": "1:43:38",
+      "ruling_deferred": false,
+      "monetisation": "OK",
+      "score": 12,
+      "status": "carried",
+      "reject_reason": null
+    },
+    {
+      "id": 9,
+      "name": "Luis Perez",
+      "cause_no": "2026 CR012162",
+      "in": "1:07:41",
+      "out": "1:08:18",
+      "remove": null,
+      "ruling_tc": "1:07:48",
+      "ruling_deferred": false,
+      "monetisation": "OK",
+      "score": 6,
+      "status": "rejected",
+      "reject_reason": "under 2:00 of hearing (sentencing only, 0:37)"
+    },
+    {
+      "id": 10,
+      "name": "Jose Gloria",
+      "cause_no": "2026 CR011385B",
+      "in": "1:51:15",
+      "out": "1:52:15",
+      "remove": null,
+      "ruling_tc": "1:51:20",
+      "ruling_deferred": false,
+      "monetisation": "OK",
+      "score": 8,
+      "status": "rejected",
+      "reject_reason": "under 2:00 of hearing (1:00)"
+    },
+    {
+      "id": 11,
+      "name": "Teresa Frias",
+      "cause_no": "2024 CR011808",
+      "in": "1:52:24",
+      "out": "1:53:56",
+      "remove": null,
+      "ruling_tc": "1:53:44",
+      "ruling_deferred": false,
+      "monetisation": "OK",
+      "score": 4,
+      "status": "rejected",
+      "reject_reason": "pure procedure - contested hearing reset (1:32)"
+    },
+    {
+      "id": 12,
+      "name": "Ruben Aprosiado",
+      "cause_no": "2025 CR006431",
+      "in": "1:58:02",
+      "out": "1:58:51",
+      "remove": null,
+      "ruling_tc": "1:58:10",
+      "ruling_deferred": false,
+      "monetisation": "OK",
+      "score": 6,
+      "status": "rejected",
+      "reject_reason": "under 2:00 of hearing (0:49)"
+    }
+  ],
+  "videos": [
+    {
+      "n": 1,
+      "case_ids": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "hook": {
+        "in": "2:07:34",
+        "out": "2:07:43",
+        "spoken": "",
+        "headline": "“No Need to Be Afraid of Me,” Says Judge"
+      },
+      "intro_seconds": 6,
+      "vo1": {
+        "text": "He was seventeen when he stole a lawn mower. Now he is back in court after skipping probation check-ins for twenty-six months. The state wants eighteen months. The judge is thinking two years."
+      },
+      "bridges": [
+        {
+          "after_case_id": 1,
+          "text": "Eighteen months in state jail for a lawn mower and two years of missed check-ins. Fair, or too harsh? Next, a man charged with burglary of a home, facing two to twenty years, over a hundred twenty dollar vape deal.",
+          "split_after_sentence": 2
+        },
+        {
+          "after_case_id": 2,
+          "text": "Two years of deferred adjudication over a vape dispute. Did he understand what he agreed to? Now, a Navy veteran diagnosed with PTSD three times, after one hundred twenty-seven days in jail, asks for a way back to her daughter.",
+          "split_after_sentence": 2
+        },
+        {
+          "after_case_id": 3,
+          "text": "Six years of supervision, and every rule revolves around her daughter. Was that mercy, or a leash? Next, a father says he paid five hundred dollars for a car and never knew it was stolen.",
+          "split_after_sentence": 2
+        },
+        {
+          "after_case_id": 4,
+          "text": "Four years of probation after the judge called his story nonsense. Would you have given him probation at all? Finally, a twenty-year-old blames alcohol for hurting his own family, and the judge answers him bluntly.",
+          "split_after_sentence": 2
+        }
+      ],
+      "vo_final": {
+        "text": "Five hearings, one afternoon, from a stolen lawn mower to a veteran's plea. Eighteen months for missing probation: half of you will call that fair, the other half will call it harsh. Which are you? Subscribe for more real Bexar County hearings, so you never miss the next ruling."
+      },
+      "quiz": {
+        "question": "How long was Frank Corona's state jail sentence?",
+        "options": {
+          "A": "6 months",
+          "B": "18 months",
+          "C": "24 months"
+        },
+        "answer": "B  18 months"
+      },
+      "thumbnail": {
+        "window_in": "2:07:28",
+        "window_out": "2:07:31",
+        "look_for": "downcast, scared expression while he says he was scared",
+        "text": "26 MONTHS MISSED",
+        "gold_word": "MISSED",
+        "placement": "top"
+      },
+      "title": "Vanished From Probation Over a Stolen Lawn Mower — Judge Boyd REVOKES It, Orders 18 Months",
+      "backup_title": "18 Months in Jail After 2 Years of Missed Reports — Judge Boyd REFUSES to Close It Early",
+      "description": {
+        "first_line": "Why did a man stop reporting to probation for two years, and what did Judge Boyd do about it?",
+        "what_happens": "Frank Corona took deferred adjudication at 17 for stealing a lawn mower. Years later he is in court for missing monthly reports in 2022, 2023 and 2024. The state asks for 18 months, the defense asks for mercy, and the judge explains what she is thinking. Four more hearings follow in this video.",
+        "pending_note": null,
+        "search_question": "What happens if you stop reporting to probation in Texas?",
+        "answer": "A judge can revoke deferred adjudication when a person fails to report to supervision as directed. In this hearing the defendant pleaded true to missing reports across three separate periods, which let the court find the violations true and sentence him within the original range of up to two years in state jail. Judges still hear explanations and weigh time served, completed classes and the victim's loss. As the judge says in this hearing, nobody can help anyone who does not show up. This is a summary of one court hearing, not legal advice.",
+        "related_question": "Was 18 months fair for missing probation? Tell us which side you are on."
+      },
+      "chapters": [
+        {
+          "tc": "2:01:41",
+          "label": "The state asks for 18 months"
+        },
+        {
+          "tc": "2:03:46",
+          "label": "The judge says she is thinking two years"
+        },
+        {
+          "tc": "1:13:35",
+          "label": "A burglary plea over a vape deal"
+        },
+        {
+          "tc": "0:58:02",
+          "label": "A Navy veteran asks for a way back to her daughter"
+        },
+        {
+          "tc": "0:20:29",
+          "label": "He says he paid $500 for the car"
+        },
+        {
+          "tc": "0:11:35",
+          "label": "Alcohol as the excuse"
+        }
+      ],
+      "tags": [
+        "frank corona",
+        "probation revoked",
+        "lawn mower theft",
+        "failure to report probation",
+        "deferred adjudication",
+        "state jail sentence",
+        "18 months state jail",
+        "texas probation violation",
+        "bexar county court",
+        "san antonio court",
+        "burglary of a habitation",
+        "navy veteran ptsd court",
+        "unauthorized use of a vehicle"
+      ],
+      "pinned_comment": "Eighteen months in state jail for a lawn mower stolen at 17 and 26 months of missed check-ins. Too harsh, or lucky it was not the full two years? Pick a side.",
+      "community_post": "New hearing video is up: a probation revocation over a stolen lawn mower, a Navy veteran asking for a way back to her daughter, and a $120 vape deal that became a felony. Which of the five hearings surprised you most? Tell us below.",
+      "publish": {
+        "slot": "9am ET"
+      },
+      "verdict_pending": false,
+      "followup_owed": null
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "id": "trial_tales",
+  "name": "Trial Tales",
+  "renderer": "tt",
+  "prompt_master": "prompts/master_v9.md",
+  "prompt_addendum": "prompts/json_addendum.md",
+  "config": {
+    "intro_seconds_tt": 7.47,
+    "vo_clip_max": 18.0,
+    "vo_clip_target": 17.0,
+    "use_hyperframes": true,
+    "logo_file": "assets/logo_source.jpg",
+    "logo_corner": "top-left",
+    "logo_size": 132,
+    "logo_opacity": 0.92,
+    "logo_on_intro": true,
+    "coming_up_tag": true,
+    "channel_intro_file": "assets/channel_intro.mp4",
+    "hook_min": 10.0,
+    "hook_max": 15.0
+  },
+  "title_rules": "prompts/title_rules.md"
+}
