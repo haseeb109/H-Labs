@@ -31,6 +31,8 @@ DEFAULTS = {
     "model": "claude-sonnet-5-5",          # active model; run_stream swaps in provider_models[brain] if left at the default
     "provider_models": {"anthropic": "claude-sonnet-5-5", "deepseek": "deepseek-chat", "openai": "gpt-4o"},
     "max_tokens": 32000,
+    "effort": "medium",                    # anthropic thinking depth: low | medium | high | xhigh | max | "" (= model default)
+                                           #   at the model default (high) Pass A spent ~59k of 64k tokens thinking
     "max_repair_rounds": 2,
     # --- stream handling ---
     "cookies_file": "",                    # ONLY a burner account's cookies.txt, and only if YouTube blocks downloads

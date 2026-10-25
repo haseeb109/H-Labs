@@ -171,6 +171,8 @@ def _stream_anthropic(messages, cfg, on_text=None):
         # Off by default: the run of 2026-10-25 with "between_tools" spent all 32k output tokens and streamed
         # zero text (x3 calls, $1.08). Runs without a thinking param (adaptive) returned full JSON plans.
         req_body["thinking"] = {"type": "between_tools"}
+    if cfg.get("effort"):
+        req_body["output_config"] = {"effort": cfg["effort"]}
     if _temperature_ok(cfg["model"], cfg):
         req_body["temperature"] = 0.3
     if cfg.get("prompt_cache", True):
