@@ -76,6 +76,9 @@ def case_prompt(case, cfg, judge):
     # video_schema.md: without the exact field shapes the model invented its own (tc_in, list options, string
     # vo_final) and every case failed validation on 03p3ATnv6dY (2026-10-25)
     parts = [_shared("packaging.md", cfg), _shared("video_schema.md", cfg), _shared("titles_core.md", cfg)]
+    from .brain import examples_on
+    if examples_on(cfg):
+        parts.insert(2, _shared("example_pass_b.md", cfg))
     tr = cfg.get("_title_rules")
     if tr:
         parts.append(style_path(cfg, tr).read_text(encoding="utf-8"))

@@ -110,6 +110,15 @@ OVERRIDES = """
 """
 
 
+def examples_on(cfg):
+    """Gold examples (prompts/shared/example_pass_*.md, cut from Claude's validated replies) help cheaper
+    models hit the schema and depth. "auto" = on for every brain except anthropic; true/false forces it."""
+    v = (cfg or {}).get("prompt_examples", "auto")
+    if v == "auto":
+        return (cfg or {}).get("brain", "anthropic") not in ("anthropic", "mock")
+    return bool(v)
+
+
 def _shared(name, cfg):
     """A v10 prompt module from prompts/shared/ (ROOT-level, shared by every style pack)."""
     p = ROOT / "prompts" / "shared" / name
@@ -128,6 +137,8 @@ def build_prompt(plan_inputs, scan_text, lines, carried, cfg=None):
     mods = [_shared("schema_v10.md", cfg), _shared("boundary_rules.md", cfg)]
     if cfg.get("mode") == "all":
         mods.append(_shared("mode_all.md", cfg))
+    if cfg.get("_cases_only") and examples_on(cfg):
+        mods.append(_shared("example_pass_a.md", cfg))
     # titles/overlays modules only when the run will actually package videos (Pass B) - Pass A stays lean
     if cfg.get("title_system", "v10") == "v10" and not cfg.get("_cases_only"):
         mods.append(_shared("titles_core.md", cfg))
