@@ -42,6 +42,54 @@ def _ensure_assets(style_assets):
 
 OVERLAY_Y = 860          # top of the in-case overlay card (tt look; safe band is y 840-1040)
 
+# ---------------------------------------------------------------- Zoom layouts
+# Measured on Boyd streams (2026-10-25) at 64x36 grey: 2up | full3 | grid4 | solo, see classify_layout().
+#   2up    court | judge band in the middle, black bars above and below
+#   full3  court | judge on top, ONE participant tile centred below (the original 3-tile grid)
+#   grid4  2x2: court | judge on top, two participant tiles below (e.g. two lawyers on Zoom)
+#   solo   one camera full screen (court room, no judge tile)
+LAYOUTS = ("2up", "full3", "grid4", "solo")
+_STRIP_FIT = "scale=1920:-2:flags=lanczos,pad=1920:540:0:(540-ih)/2:color=0x121212"
+LAYOUT_CHAIN = {
+    "2up": "crop=iw:ih/2:0:ih/4,scale=1920:540:flags=lanczos",
+    # court | judge (the 3/4 of its tile around her) | the participant tile, side by side to fill the strip
+    "full3": ("split=3[{t}a][{t}b][{t}c];[{t}a]crop=iw/2:ih/2:0:0[{t}C];[{t}b]crop=iw*3/8:ih/2:iw*9/16:0[{t}J];"
+              "[{t}c]crop=iw/2:ih/2:iw/4:ih/2[{t}W];[{t}C][{t}J][{t}W]hstack=3," + _STRIP_FIT),
+    # court | judge | the middle third of each lower tile (where the participant's camera picture sits)
+    "grid4": ("split=4[{t}a][{t}b][{t}c][{t}d];[{t}a]crop=iw/2:ih/2:0:0[{t}C];[{t}b]crop=iw*3/8:ih/2:iw*9/16:0[{t}J];"
+              "[{t}c]crop=iw/6:ih/2:iw/6:ih/2[{t}P];[{t}d]crop=iw/6:ih/2:iw*2/3:ih/2[{t}Q];"
+              "[{t}C][{t}J][{t}P][{t}Q]hstack=4," + _STRIP_FIT),
+    "solo": "scale=-2:540:flags=lanczos,pad=1920:540:(1920-iw)/2:0:color=0x121212",
+}
+# where the judge sits in each layout (crop for the thumbnail): (w, h, x, y) as fractions of the frame
+THUMB_CROP = {"2up": "iw/2:ih/2:iw/2:ih/4", "full3": "iw/2:ih/2:iw/2:0", "grid4": "iw/2:ih/2:iw/2:0",
+              "solo": "iw:ih:0:0"}
+
+
+def _gray_frames(args):
+    """ffmpeg input args -> (pts list, frames uint8 [n, 36, 64]) of tiny grey frames for layout measurement."""
+    import numpy as np
+    r = subprocess.run(["ffmpeg", "-hide_banner", *args, "-an", "-vf", "scale=64:36,format=gray,showinfo",
+                        "-fps_mode", "vfr", "-f", "rawvideo", "-"], capture_output=True)
+    pts = [float(x) for x in re.findall(rb"pts_time:([\d.]+)", r.stderr)]
+    frames = np.frombuffer(r.stdout, np.uint8)
+    frames = frames[: len(frames) // (36 * 64) * 36 * 64].reshape(-1, 36, 64)
+    return pts[: len(frames)], frames
+
+
+def classify_layout(f):
+    """One 64x36 grey frame -> layout. Thresholds from 03p3ATnv6dY, N8HQ0Yrk80Q and the Rendon fixtures:
+    top band  : 2up has a black bar above the band (mean 0), every grid/solo frame is bright (>150)
+    outer cols: full3 has black on both sides of the centred lower tile (0); grid4 / solo show picture (40-80)
+    lower mid : grid4 has the black gap between its two lower tiles (0-6); solo shows the room (30+)"""
+    top = f[0:7, 3:61].mean()
+    if top <= 24:
+        return "2up"
+    side_l, side_r = f[20:30, 5:15].mean(), f[20:30, 49:59].mean()
+    if max(side_l, side_r) < 15:
+        return "full3"
+    return "grid4" if f[20:30, 29:35].mean() < 12 else "solo"
+
 
 class TTRenderer(Renderer):
     def __init__(self, cfg, sources, root):
@@ -69,20 +117,18 @@ class TTRenderer(Renderer):
         raise RuntimeError(f"{sname}: no pre-cut clip covers {a:.1f}-{b:.1f}s - re-run the clip extraction")
 
     def layout_runs(self, path, a, b):
-        """Zoom gallery layouts switch while the hearing runs: 2-up (1280x360 band, black bars above/below) vs a full
-        grid (judge + court + witness tiles). Returns [(t0, t1, '2up'|'full')] in seconds from `a`."""
+        """Zoom gallery layouts switch while the hearing runs. Returns [(t0, t1, layout)] in seconds from `a`,
+        layout = one of LAYOUTS (see classify_layout). Keyframes only, read as 64x36 grey thumbnails."""
         key = (path, round(a, 1), round(b, 1))
         if key in self._layout:
             return self._layout[key]
         d = b - a
-        r = subprocess.run(["ffmpeg", "-hide_banner", "-skip_frame", "nokey", "-ss", f"{a:.2f}", "-t", f"{d:.2f}", "-i", path,
-                            "-an", "-vf", "crop=iw*0.9:ih*0.2:iw*0.05:0,signalstats,metadata=print:key=lavfi.signalstats.YAVG",
-                            "-f", "null", "-"], capture_output=True, text=True)
-        pts = [float(x) for x in re.findall(r"pts_time:([\d.]+)", r.stderr)]
-        ys = [float(x) for x in re.findall(r"YAVG=([\d.]+)", r.stderr)]
-        samples = [(t, "full" if y > 24 else "2up") for t, y in zip(pts, ys)]
-        if not samples:
-            runs = [(0.0, d, "2up")]
+        pts, frames = _gray_frames(["-skip_frame", "nokey", "-ss", f"{a:.2f}", "-t", f"{d:.2f}", "-i", str(path)])
+        samples = [(t, classify_layout(f)) for t, f in zip(pts, frames)]
+        if not samples:                       # no keyframe inside a short cut: classify the frame at `a` itself
+            samples = [(0.0, self.layout_at(path, a))]
+        if len(samples) == 1:
+            runs = [(0.0, d, samples[0][1])]
         else:
             runs = []
             for k, (t, cl) in enumerate(samples):
@@ -105,18 +151,30 @@ class TTRenderer(Renderer):
         self._layout[key] = runs
         return runs
 
+    def layout_at(self, path, t):
+        """Layout of the single frame at t (accurate seek) - for short cuts and thumbnails."""
+        _pts, frames = _gray_frames(["-ss", f"{max(0.0, t):.2f}", "-i", str(path), "-frames:v", "1"])
+        return classify_layout(frames[0]) if len(frames) else "2up"
+
     def strip_chain(self, src_label, out_label, runs, tag="st"):
-        """filter fragment: [src] -> 1920x540 strip [out]; 2-up crop by default, 'full' grid shown fitted where needed."""
-        two = "crop=iw:ih/2:0:ih/4,scale=1920:540:flags=lanczos"
-        # 3-tile Zoom grid (court | judge | witness) laid side by side so it fills the strip like the 2-up look
-        full = (f"split=3[{tag}1][{tag}2][{tag}3];[{tag}1]crop=640:360:0:0[{tag}c];[{tag}2]crop=480:360:720:0[{tag}j];"
-                f"[{tag}3]crop=640:360:320:360[{tag}w];[{tag}c][{tag}j][{tag}w]hstack=3,scale=1920:-2:flags=lanczos,pad=1920:540:0:(540-ih)/2:color=0x121212")
-        fulls = [(t0, t1) for t0, t1, cl in runs if cl == "full"]
-        if not fulls:
-            return f"[{src_label}]{two},setsar=1,fps=30[{out_label}]"
-        en = "+".join(f"between(t,{t0:.2f},{t1:.2f})" for t0, t1 in fulls)
-        return (f"[{src_label}]split=2[{tag}a][{tag}b];[{tag}a]{two},setsar=1,fps=30[{tag}A];"
-                f"[{tag}b]{full},setsar=1,fps=30[{tag}B];[{tag}A][{tag}B]overlay=0:0:enable='{en}'[{out_label}]")
+        """filter fragment: [src] -> 1920x540 strip [out]. The 2-up crop is the base; every other layout found in
+        `runs` is built on its own branch and overlaid only while that layout is on screen. All crops are fractions
+        of the frame, so 360p and 720p downloads give the same picture."""
+        base = LAYOUT_CHAIN["2up"]
+        others = [cl for cl in LAYOUTS if cl != "2up" and any(r[2] == cl for r in runs)]
+        if not others:
+            return f"[{src_label}]{base},setsar=1,fps=30[{out_label}]"
+        n = len(others) + 1
+        parts = [f"[{src_label}]split={n}" + "".join(f"[{tag}s{i}]" for i in range(n)),
+                 f"[{tag}s0]{base},setsar=1,fps=30[{tag}L0]"]
+        prev = f"{tag}L0"
+        for i, cl in enumerate(others, start=1):
+            en = "+".join(f"between(t,{t0:.2f},{t1:.2f})" for t0, t1, c in runs if c == cl)
+            parts.append(f"[{tag}s{i}]{LAYOUT_CHAIN[cl].format(t=f'{tag}{i}')},setsar=1,fps=30[{tag}L{i}]")
+            nxt = out_label if i == len(others) else f"{tag}M{i}"
+            parts.append(f"[{prev}][{tag}L{i}]overlay=0:0:enable='{en}'[{nxt}]")
+            prev = nxt
+        return ";".join(parts)
 
     # ---------- overlays (HyperFrames -> transparent webm, else static PNG) ----------
     def overlay(self, kind, text, dur, work):
@@ -452,9 +510,10 @@ def _thumb(self, plan, video, outdir):
         t = wa + (wb - wa) * i / max(1, n - 1)
         path, t0, _ = self.locate(sname, t, t + 0.1)
         p = cdir / f"cand_{i + 1}_{_f(t).replace(':', '-')}.jpg"
-        # the thumbnail uses the tile that carries the action: left 2-up tile is the courtroom, right is the speaker
+        # the thumbnail uses the judge's tile; where it sits depends on the Zoom layout of that very frame
+        crop = THUMB_CROP[self.layout_at(path, t0)]
         run(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{t0:.2f}", "-i", path, "-frames:v", "1",
-             "-vf", "crop=iw/2:ih/2:iw/2:ih/4,scale=1280:720:flags=lanczos", "-q:v", "2", p])
+             "-vf", f"crop={crop},scale=1280:720:flags=lanczos", "-q:v", "2", p])
         cands.append((cards.sharpness(p), p))
     best = max(cands)[1]
     out = Path(outdir) / "thumbnail.jpg"

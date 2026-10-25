@@ -238,6 +238,47 @@ def t16_overlay_burn():
     return f"card region brightness {probe[0]:.0f} before -> {probe[1]:.0f} during; long card {w}x{h} fits"
 
 
+def t17_zoom_layouts():
+    """Layout classifier on drawn 64x36 frames + every strip branch at 360p and 720p -> a 1920x540 strip.
+    (Before: the 3-tile crop used 1280x720 pixel numbers, so 360p downloads repeated tiles; 2x2 and
+    full-screen solo layouts were not known at all.)"""
+    import numpy as np
+    from ucf import config
+    from ucf.render_tt import TTRenderer, classify_layout, LAYOUTS
+    def frame(kind):
+        f = np.zeros((36, 64), np.uint8)
+        if kind == "2up":
+            f[9:27, :] = 120
+        elif kind == "solo":
+            f[:, :] = 110
+        else:
+            f[0:18, :] = 170                       # court | judge row on top
+            if kind == "full3":
+                f[18:36, 26:38] = 90               # one participant picture, centred
+            else:
+                f[18:36, 10:22] = 90               # two participant pictures, one per lower tile
+                f[18:36, 43:55] = 90
+        return f
+    for kind in LAYOUTS:
+        got = classify_layout(frame(kind))
+        assert got == kind, f"drawn {kind} frame classified as {got}"
+    rn = TTRenderer(config.load(), {}, ROOT)
+    for w, h in ((640, 360), (1280, 720)):
+        for kind in LAYOUTS:
+            chain = rn.strip_chain("0:v", "out", [(0.0, 1.0, kind)])
+            r = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", f"testsrc=s={w}x{h}:d=1:r=30",
+                                "-filter_complex", chain, "-map", "[out]", "-frames:v", "1", "-f", "rawvideo",
+                                "-pix_fmt", "gray", "-"], capture_output=True)
+            assert r.returncode == 0, f"{kind} @ {w}x{h}: ffmpeg failed: {r.stderr.decode()[-300:]}"
+            assert len(r.stdout) == 1920 * 540, f"{kind} @ {w}x{h}: strip is {len(r.stdout)} px, not 1920x540"
+    # a cut that switches layouts builds one chain with every branch
+    mixed = rn.strip_chain("0:v", "out", [(0, 5, "2up"), (5, 9, "grid4"), (9, 14, "full3"), (14, 20, "solo")])
+    r = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=s=640x360:d=20:r=30",
+                        "-filter_complex", mixed, "-map", "[out]", "-f", "null", "-"], capture_output=True)
+    assert r.returncode == 0, f"mixed-layout chain failed: {r.stderr.decode()[-300:]}"
+    return "4 layouts classified; every strip branch 1920x540 at 360p + 720p; mixed chain ok"
+
+
 def t15_hive_and_fallback():
     """Hive (OpenAI-dialect) SSE parsing, rejected-param retry, provider cfg switch and the Pass A
     fallback path - all offline with a fake urlopen."""
@@ -336,7 +377,8 @@ def t9_renderer_units():
     f, a, b = rn.locate(SNAME, 2 * 3600 + 21 * 60 + 54, 2 * 3600 + 22 * 60 + 7)   # hook window
     assert Path(f).exists(), "hook window did not resolve to a fixture clip"
     runs = rn.layout_runs(f, a, b)
-    assert runs and all(cl in ("2up", "full") for _, _, cl in runs), f"bad layout runs: {runs}"
+    from ucf.render_tt import LAYOUTS
+    assert runs and all(cl in LAYOUTS for _, _, cl in runs), f"bad layout runs: {runs}"
     work = ROOT / "work" / "_selftest"
     work.mkdir(parents=True, exist_ok=True)
     ov = work / "ov_test.webm"
@@ -683,6 +725,7 @@ def main():
     check(14, "overlay scheduler", t14_overlay_sched)
     check(15, "hive provider + fallback", t15_hive_and_fallback)
     check(16, "overlay burn visible", t16_overlay_burn)
+    check(17, "zoom layouts", t17_zoom_layouts)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))
