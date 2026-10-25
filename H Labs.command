@@ -9,7 +9,7 @@ PY="$DIR/.venv/bin/python3"
 [[ -x "$PY" ]] || PY="$(command -v python3)"
 
 BRAIN_FILE="$DIR/.brain"
-[[ -f "$BRAIN_FILE" ]] || echo "anthropic" > "$BRAIN_FILE"
+[[ -f "$BRAIN_FILE" ]] || echo "hive" > "$BRAIN_FILE"
 STYLE_FILE="$DIR/.style"
 MODE_FILE="$DIR/.mode"
 [[ -f "$MODE_FILE" ]] || echo "60" > "$MODE_FILE"
@@ -63,17 +63,19 @@ pick_style() {
 set_brain() {
   echo
   echo "Choose the brain provider (writes the plan JSON from the transcript):"
-  echo "  1) Anthropic (Claude)   - recommended quality"
-  echo "  2) DeepSeek             - cheapest"
-  echo "  3) OpenAI (GPT)"
-  echo "  4) manual               - pipeline writes the prompt, you paste it into any chat, run again with the plan"
-  printf "Pick 1-4: "
+  echo "  1) Hive - DeepSeek V4.1 Flash   - default, ~\$0.01/video, Claude fixes the cases it cannot"
+  echo "  2) Anthropic (Claude)           - best quality, ~\$0.34/video"
+  echo "  3) DeepSeek direct              - backup if Hive is down"
+  echo "  4) OpenAI (GPT)"
+  echo "  5) manual                       - pipeline writes the prompt, you paste it into any chat, run again with the plan"
+  printf "Pick 1-5: "
   read -r b
   case "$b" in
-    1) echo "anthropic" > "$BRAIN_FILE";;
-    2) echo "deepseek"   > "$BRAIN_FILE";;
-    3) echo "openai"     > "$BRAIN_FILE";;
-    4) echo "manual"     > "$BRAIN_FILE";;
+    1) echo "hive"      > "$BRAIN_FILE";;
+    2) echo "anthropic" > "$BRAIN_FILE";;
+    3) echo "deepseek"  > "$BRAIN_FILE";;
+    4) echo "openai"    > "$BRAIN_FILE";;
+    5) echo "manual"    > "$BRAIN_FILE";;
     *) echo "keeping current: $(cat "$BRAIN_FILE")"; return;;
   esac
   echo "Brain set to: $(cat "$BRAIN_FILE")"
@@ -129,9 +131,9 @@ while true; do
       echo; read -r "?Press Enter..."
       ;;
     3) set_brain;;
-    4) "$EDITOR" "$HOME/.config/umf/anthropic.env" "$HOME/.config/umf/deepseek.env" \
+    4) "$EDITOR" "$HOME/.config/umf/hive.env" "$HOME/.config/umf/anthropic.env" "$HOME/.config/umf/deepseek.env" \
          "$HOME/.config/umf/openai.env" "$HOME/.config/umf/ai33.env" 2>/dev/null \
-       || open -e "$HOME/.config/umf/anthropic.env" "$HOME/.config/umf/deepseek.env" \
+       || open -e "$HOME/.config/umf/hive.env" "$HOME/.config/umf/anthropic.env" "$HOME/.config/umf/deepseek.env" \
                 "$HOME/.config/umf/openai.env" "$HOME/.config/umf/ai33.env";;
     5) open "$DIR/output" 2>/dev/null || open "$DIR";;
     6) "$PY" tests/run_tests.py; echo; read -r "?Press Enter...";;

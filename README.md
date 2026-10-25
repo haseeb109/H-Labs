@@ -12,15 +12,26 @@ Double-click **`H Labs.command`** to run everything from a menu.
 
 ## Brain providers (pick one, switch any time)
 
-| Provider | Key file | Default model | Cost / 1 h stream |
+| Provider | Key file | Default model | Price per 1M tokens (in / out) |
 |---|---|---|---|
-| **Anthropic** (recommended) | `~/.config/umf/anthropic.env` | `claude-sonnet-5-5` | ~$0.25–0.50 (mode 60) · ~$0.6–1.0 (mode all) |
-| **DeepSeek** (cheapest) | `~/.config/umf/deepseek.env` | `deepseek-chat` | ~$0.01 |
-| **OpenAI (GPT)** | `~/.config/umf/openai.env` | `gpt-4o` | ~$0.10–0.40 |
+| **Hive** (default) | `~/.config/umf/hive.env` (`HIVE_API_KEY`) | `deepseek-ai/deepseek-v4.1-flash-1017` | $0.10 / $0.35 |
+| **Anthropic** (fallback) | `~/.config/umf/anthropic.env` | `claude-sonnet-5-5` | $2 / $10 (~$0.34 per video measured) |
+| **DeepSeek direct** (backup) | `~/.config/umf/deepseek.env` | `deepseek-flash` | $0.30 / $1.20 peak, half off-peak |
+| **OpenAI (GPT)** | `~/.config/umf/openai.env` | `gpt-4o` | — |
 | manual | none | — | free (paste prompt into any chat, run with `--plan`) |
 
-Paste your key after the `=` in the env file and save. Switch with `--brain anthropic|deepseek|openai|manual`
-or menu option 3. The validator + repair loop protect you from any provider's weak plans.
+Prices checked 2026-10-25 (thehive.ai/pricing, api-docs.deepseek.com). Every run prints `BRAIN USAGE` with
+real dollars and saves it to `work/<id>/usage.json`.
+
+**How the brain runs:** every pass goes to the chosen brain (default Hive). The validator checks each reply
+and sends mistakes back (up to 2 repair rounds). A case that still fails - or an API failure - is retried on
+`brain_fallback` (default `anthropic`), so only the hard cases cost Claude money. `ranking.md` shows which
+brain built each case. Set `"brain_fallback": ""` in `config.json` for 100% cheap brain. Non-Claude brains
+also get gold examples in the prompt (`prompts/shared/example_pass_a.md`, `example_pass_b.md`;
+`"prompt_examples"`: auto / true / false).
+
+Paste your key after the `=` in the env file and save. Switch with `--brain hive|anthropic|deepseek|openai|manual`
+or menu option 3 (an explicit `--brain` runs every pass on that brain).
 
 ## What every video looks like (locked)
 

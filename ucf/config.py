@@ -25,11 +25,12 @@ DEFAULTS = {
     "work_dir": "work",
     "state_dir": "state",
     # --- brain (Master Prompt v9) ---
-    "brain": "anthropic",                  # anthropic | deepseek | openai | manual | mock
+    "brain": "hive",                       # hive (DeepSeek V4.1 Flash via Hive) | anthropic | deepseek | openai | manual | mock
                                            #   manual = you paste the prompt into Claude and give --plan
                                            #   mock   = offline replay (tests only)
     "model": "claude-sonnet-5-5",          # active model; run_stream swaps in provider_models[brain] if left at the default
-    "provider_models": {"anthropic": "claude-sonnet-5-5", "deepseek": "deepseek-chat", "openai": "gpt-4o"},
+    "provider_models": {"hive": "deepseek-ai/deepseek-v4.1-flash-1017", "anthropic": "claude-sonnet-5-5",
+                        "deepseek": "deepseek-flash", "openai": "gpt-4o"},
     "max_tokens": 32000,
     "effort": "medium",                    # anthropic thinking depth: low | medium | high | xhigh | max | "" (= model default)
                                            #   at the model default (high) Pass A spent ~59k of 64k tokens thinking
@@ -72,7 +73,9 @@ DEFAULTS = {
     "brain_two_pass": "auto",              # auto (= on for mode all) | on | off
     "brain_pass_a": "",                    # hybrid: provider for Pass A inventory ("" = same as brain)
     "brain_pass_b": "",                    # hybrid: provider for Pass B packaging ("" = same as brain)
-    "brain_fallback": "anthropic",         # if the pass provider errors, this one takes over
+    "brain_fallback": "anthropic",         # a case the pass brain cannot get past the validator (or an API
+                                           #   failure) is retried on this brain; "" = no fallback (100% cheap brain)
+    "prompt_examples": "auto",             # gold Pass A/B examples in the prompt: auto = every brain except anthropic
     "reuse_guard": True,                   # warn when a case was already rendered on another style
     # --- voice ---
     "tts_order": ["ai33", "voicestudio", "say"],

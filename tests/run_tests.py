@@ -284,6 +284,7 @@ def t15_hive_and_fallback():
             pass
     finally:
         urllib.request.urlopen = real
+        brain.USAGE.clear()                      # fake calls must not show up as spend
     return "hive SSE + usage + param-drop retry + BrainStop + Pass A fallback hand-over"
 
 
