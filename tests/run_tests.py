@@ -228,7 +228,14 @@ def t16_overlay_burn():
         probe.append(float(a.mean()))
     assert probe[0] < 40, f"card visible before its start (mean {probe[0]:.0f})"
     assert probe[1] > 120, f"card NOT visible while scheduled (mean {probe[1]:.0f}) - overlay burn is broken"
-    return f"card region brightness {probe[0]:.0f} before -> {probe[1]:.0f} during"
+    # a long card keeps all its words (<= 2 lines) and stays inside the safe band
+    from ucf.render_tt import OVERLAY_Y
+    long_png = d / "long.png"
+    rn._overlay_card_png("coming_up", "Coming up: the judge explains why smashing the phone doesn't erase the "
+                         "video at all today", long_png)
+    w, h = Image.open(long_png).size
+    assert OVERLAY_Y + h <= 1040 and 54 + w <= 1866, f"card {w}x{h} escapes the safe band"
+    return f"card region brightness {probe[0]:.0f} before -> {probe[1]:.0f} during; long card {w}x{h} fits"
 
 
 def t15_hive_and_fallback():

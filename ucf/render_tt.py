@@ -40,6 +40,9 @@ def _ensure_assets(style_assets):
                        check=True, env=env)
 
 
+OVERLAY_Y = 860          # top of the in-case overlay card (tt look; safe band is y 840-1040)
+
+
 class TTRenderer(Renderer):
     def __init__(self, cfg, sources, root):
         super().__init__(cfg, sources, root)
@@ -223,29 +226,47 @@ class TTRenderer(Renderer):
         look = self.cfg.get("_look") or "tt"
         rect = OS.card_rect(look, text)
         OS.assert_safe(look, rect)
-        x0, y0, x1, y1 = rect
-        W, H = x1 - x0, y1 - y0
+        zx0, zy0, zx1, zy1 = OS.safe_zone(look)
+        max_w = zx1 - zx0 - 8
+        max_h = zy1 - OVERLAY_Y                    # the card is placed at y=OVERLAY_Y inside the safe band
+        measure = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
+
+        def wrap(px, width):
+            f = C.font(px)
+            lines, cur = [], ""
+            for w in text.split():
+                t = (cur + " " + w).strip()
+                if cur and measure.textlength(t, font=f) > width - 80:
+                    lines.append(cur)
+                    cur = w
+                else:
+                    cur = t
+            lines.append(cur)
+            return f, lines
+
+        # Fit ALL the text in <= 2 lines inside the band: widen first, then shrink the font. (Before, the box
+        # was sized from a char-count guess: descenders were cut and a third line was silently dropped.)
+        W = rect[2] - rect[0]
+        for px in (54, 48, 42, 36):
+            for width in (W, max_w):
+                f_t, lines = wrap(px, width)
+                H = 52 + int(px * 1.25) * len(lines) + 16
+                if len(lines) <= 2 and H <= max_h:
+                    break
+            else:
+                continue
+            break
+        W = min(max_w, max(W, int(max(measure.textlength(ln, font=f_t) for ln in lines)) + 90))
         im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
         d = ImageDraw.Draw(im)
         d.rectangle([0, 0, W - 1, H - 1], fill=(255, 255, 255, 235))
         d.rectangle([0, 0, 36, H - 1], fill=(226, 118, 27, 255))          # orange bar #e2761b
         kicker = OS.KIND_KICKER.get(kind, "FACT").upper()
-        f_k = C.font(30)
-        d.text((56, 10), kicker, font=f_k, fill=(226, 118, 27, 255))
-        f_t = C.font(54)
-        words, lines, cur = text.split(), [], ""
-        for w in words:
-            t = (cur + " " + w).strip()
-            if d.textlength(t, font=f_t) > W - 80:
-                lines.append(cur)
-                cur = w
-            else:
-                cur = t
-        lines.append(cur)
+        d.text((56, 10), kicker, font=C.font(30), fill=(226, 118, 27, 255))
         y = 52
         for ln in lines[:2]:
             d.text((56, y), ln, font=f_t, fill=(15, 15, 18, 255))
-            y += int(54 * 1.25)
+            y += int(px * 1.25)
         im.save(out_png)
         return out_png
 
@@ -266,7 +287,7 @@ class TTRenderer(Renderer):
         for i, (p, s, e) in enumerate(pngs):
             k = i + 1
             fc.append(f"[{k}:v]format=rgba,fade=in:st={s:.2f}:d=0.5:alpha=1,fade=out:st={max(s, e - 0.5):.2f}:d=0.5:alpha=1[ov{i}]")
-            fc.append(f"[{prev}][ov{i}]overlay=x=54:y=860:enable='between(t,{s:.2f},{e:.2f})'[v{i}]")
+            fc.append(f"[{prev}][ov{i}]overlay=x=54:y={OVERLAY_Y}:enable='between(t,{s:.2f},{e:.2f})'[v{i}]")
             prev = f"v{i}"
         run(["ffmpeg", "-y", "-loglevel", "error", *inp, "-filter_complex", ";".join(fc),
              "-map", f"[{prev}]", "-map", "0:a?", *venc(self.enc), *AENC, "-movflags", "+faststart", out])
