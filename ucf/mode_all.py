@@ -73,7 +73,9 @@ def _tb(c):
 
 def case_prompt(case, cfg, judge):
     """Pass B prompt: packaging system + titles + overlays + the style's extras + THIS case + transcript slice."""
-    parts = [_shared("packaging.md", cfg), _shared("titles_core.md", cfg)]
+    # video_schema.md: without the exact field shapes the model invented its own (tc_in, list options, string
+    # vo_final) and every case failed validation on 03p3ATnv6dY (2026-10-25)
+    parts = [_shared("packaging.md", cfg), _shared("video_schema.md", cfg), _shared("titles_core.md", cfg)]
     tr = cfg.get("_title_rules")
     if tr:
         parts.append(style_path(cfg, tr).read_text(encoding="utf-8"))
