@@ -54,6 +54,7 @@ DEFAULTS = {
     "vo_lead": 0.35,
     "vo_tail": 0.6,
     "loudness_lufs": -14,
+    "burn_captions": False,                # word-by-word captions burned into the video (ucf/captions.py) - off by owner choice
     "audio_cleanup": True,                 # court speech: band-limit + even out speakers + denoise + soft gate
     # --- v10: run modes, titles, overlays, boundary, reports ---
     "mode": "60",                          # "30" | "60" | "all" (preset bands below; legacy custom band if unset)

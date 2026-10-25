@@ -123,7 +123,7 @@ def build_ass(words, blocks, out, cfg=None):
 def burn(final, blocks, work, cfg, venc_args, ui=print):
     """Transcribe `final`, build captions and burn them in (video re-encoded, audio copied). Returns the path of
     the captioned video (same name), or `final` untouched when captions are off or a tool is missing."""
-    if not cfg.get("captions", True):
+    if not cfg.get("burn_captions", False):      # off by default (owner, 2026-10-25); "captions" is the transcript source
         return final
     ff = libass_ffmpeg(cfg)
     if not ff:
