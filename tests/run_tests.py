@@ -315,6 +315,13 @@ def t19_captions():
     n = CAP.build_ass(words, [(2.4, 4.0)], d / "c.ass")
     body = (d / "c.ass").read_text()
     assert n == 4 and "NEARLY" not in body, "caption shown inside a blocked window"
+    # no two caption events on screen at once (a chunk ends before the next one starts)
+    ov = [(0.0, 0.3, "A"), (0.3, 0.5, "B."), (0.55, 0.9, "C"), (0.9, 1.2, "D")]
+    CAP.build_ass(ov, [], d / "o.ass")
+    import re as _re
+    ev = sorted((float(m[0]) * 3600 + float(m[1]) * 60 + float(m[2]), float(m[3]) * 3600 + float(m[4]) * 60 + float(m[5]))
+                for m in _re.findall(r"Dialogue: 0,(\d+):(\d+):([\d.]+),(\d+):(\d+):([\d.]+)", (d / "o.ass").read_text()))
+    assert all(ev[i][1] <= ev[i + 1][0] + 1e-6 for i in range(len(ev) - 1)), f"overlapping caption events: {ev}"
     assert "\\c&H0032B4F0&" in body or "\c&H0032B4F0&" in body, "spoken word not highlighted"
     ff = CAP.libass_ffmpeg({})
     if not ff:

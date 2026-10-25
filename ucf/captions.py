@@ -98,10 +98,19 @@ def build_ass(words, blocks, out, cfg=None):
             f"120,120,{margin_v},1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, "
             "Effect, Text\n")
     lines = []
-    for ch in chunk_words(words, int(cfg.get("caption_max_words", 4))):
+    chunks = chunk_words(words, int(cfg.get("caption_max_words", 4)))
+    prev_end = 0.0
+    for k, ch in enumerate(chunks):
+        # a line never outlives the start of the next one, and never starts before the previous one ended
+        # (whisper's word times sometimes overlap - two lines would stack on screen)
+        limit = chunks[k + 1][0][0] if k + 1 < len(chunks) else float("inf")
         for i, (s, e, _w) in enumerate(ch):
             nxt = ch[i + 1][0] if i + 1 < len(ch) else max(e, ch[0][0] + 0.7)
-            a, b = s, max(nxt, s + 0.08)
+            a = max(s, prev_end)
+            b = min(max(nxt, a + 0.08), limit)
+            if b - a < 0.04:
+                continue
+            prev_end = b
             if _blocked(a, b, blocks):
                 continue
             txt = " ".join((f"{{\\c{GOLD}}}{_esc(x[2]).upper()}{{\\c{WHITE}}}" if j == i else _esc(x[2]).upper())
@@ -128,8 +137,9 @@ def burn(final, blocks, work, cfg, venc_args, ui=print):
     work = Path(work)
     key = hashlib.md5(((work / "concat.txt").read_text(encoding="utf-8") if (work / "concat.txt").exists()
                        else str(final)).encode()).hexdigest()[:10]
-    ui("  captions: transcribing words (mlx-whisper)...")
-    words = transcribe_words(final, cfg, cache=work / f"caption_words_{key}.json")
+    cache = work / f"caption_words_{key}.json"
+    ui("  captions: word timings from cache" if cache.exists() else "  captions: transcribing words (mlx-whisper)...")
+    words = transcribe_words(final, cfg, cache=cache)
     ass = work / "captions.ass"
     n = build_ass(words, blocks, ass, cfg)
     if not n:
