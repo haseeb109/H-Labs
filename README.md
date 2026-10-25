@@ -1,5 +1,7 @@
 # H Labs — UMF Case Factory
 
+*Auto Editing Tool Created by Claude, powered by DeepSeek API.*
+
 One YouTube link in → finished 20–30 min Trial Tales videos out, edited exactly like your own video
 (`youtu.be/kDtxYp0YiMY`). Runs **100% on this Mac**; the only network calls are the stream download and
 the brain provider you choose. Part of **Z Labs** (`~/Desktop/Z Labs`).
