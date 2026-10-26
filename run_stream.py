@@ -312,7 +312,14 @@ def main():
     outroot = root / cfg["output_dir"] / f"{stamp}_{sid}"
     outroot.mkdir(parents=True, exist_ok=True)
     by_id = {c["id"]: c for c in plan["cases"]}
-    if cfg.get("_look") == "ov":
+    _sj = json.loads((config.style_path(cfg) / "style.json").read_text(encoding="utf-8"))
+    if _sj.get("renderer_module"):          # a style pack that ships its own renderer (e.g. Court Beacon TV)
+        import importlib.util
+        _spec = importlib.util.spec_from_file_location("style_renderer", config.style_path(cfg, _sj["renderer_module"]))
+        _mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        rn = getattr(_mod, _sj.get("renderer_class", "Renderer"))(cfg, sources, root)
+    elif cfg.get("_look") == "ov":
         from ucf.render_ov import OVRenderer
         rn = OVRenderer(cfg, sources, root)
     else:
