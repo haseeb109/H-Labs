@@ -158,14 +158,14 @@ STYLES["test_style_3"] = dict(
 # --------------------------------------------------------------------------- 4. Cinematic Documentary
 STYLES["test_style_4"] = dict(
     name="Test Style - 4", look="Cinematic Documentary",
-    footage=dict(mode="cine", x=0, y=138, w=1920, h=804, grade="eq=contrast=1.08:saturation=0.75:gamma=0.95,vignette=PI/5"),
+    footage=dict(mode="band", x=0, y=250, w=1920, h=540, grade="eq=contrast=1.08:saturation=0.75:gamma=0.95,vignette=PI/5"),
     captions=dict(mode="hook", max_words=6),
     emph=["scared", "afraid"],
     css="""
 :root{--blk:#0A0A0A;--bone:#EDE6D6;--amber:#C8963E;--ash:#5A5A5A}
 .cg{font-family:'Cormorant Garamond',serif}
 .it{font-family:'Inter Tight',sans-serif}
-.cap{left:50%;transform:translateX(-50%);top:968px;font-family:'Cormorant Garamond';font-style:italic;font-weight:500;font-size:54px;color:#EDE6D6;white-space:nowrap}
+.cap{left:50%;transform:translateX(-50%);top:856px;font-family:'Cormorant Garamond';font-style:italic;font-weight:500;font-size:54px;color:#EDE6D6;white-space:nowrap}
 .cap em{color:var(--amber)}
 """,
     bg="""<div class="a" style="inset:0;background:#0A0A0A"></div>""",
@@ -179,10 +179,10 @@ STYLES["test_style_4"] = dict(
 <div class="a it" style="left:0;right:0;top:430px;text-align:center;color:#C8963E;font-size:30px;letter-spacing:14px;font-weight:600">CHAPTER ONE</div>
 <div class="a cg" style="left:0;right:0;top:480px;text-align:center;color:#EDE6D6;font-size:110px;font-weight:600">The Missing Years</div>''',
         counter='<div class="a it" style="right:80px;top:52px;color:#EDE6D6;font-size:24px;letter-spacing:8px;opacity:.8">CH. 1 / 4 &nbsp;·&nbsp; 2:07 PM</div>',
-        mid='<div class="a cg" style="left:80px;top:962px;color:#EDE6D6;font-size:52px;font-style:italic">The State asks for eighteen months.</div>',
-        mid2='<div class="a cg" style="right:80px;top:962px;color:#C8963E;font-size:52px;font-style:italic">“There’s no need to be afraid of me.”</div>',
-        sub='<div class="a it" style="left:80px;top:964px;display:flex;align-items:center;gap:16px;color:#C8963E;font-size:28px;letter-spacing:8px;font-weight:600"><span style="border:2px solid #C8963E;padding:6px 18px">SUBSCRIBE</span><span style="color:#EDE6D6;letter-spacing:4px;font-weight:400">for the next story</span></div>',
-        ruling='<div class="a cg" style="left:0;right:0;top:956px;text-align:center;color:#C8963E;font-size:60px;font-weight:600">“The court is going to revoke.”</div>',
+        mid='<div class="a cg" style="left:80px;top:850px;color:#EDE6D6;font-size:52px;font-style:italic">The State asks for eighteen months.</div>',
+        mid2='<div class="a cg" style="right:80px;top:850px;color:#C8963E;font-size:52px;font-style:italic">“There’s no need to be afraid of me.”</div>',
+        sub='<div class="a it" style="left:80px;top:852px;display:flex;align-items:center;gap:16px;color:#C8963E;font-size:28px;letter-spacing:8px;font-weight:600"><span style="border:2px solid #C8963E;padding:6px 18px">SUBSCRIBE</span><span style="color:#EDE6D6;letter-spacing:4px;font-weight:400">for the next story</span></div>',
+        ruling='<div class="a cg" style="left:0;right:0;top:846px;text-align:center;color:#C8963E;font-size:60px;font-weight:600">“The court is going to revoke.”</div>',
         recap='''<div class="a it" style="left:0;right:0;top:300px;text-align:center;color:#C8963E;font-size:30px;letter-spacing:14px;font-weight:600">EPILOGUE</div>
 <div class="a cg" style="left:300px;width:1320px;top:370px;text-align:center;color:#EDE6D6;font-size:58px;line-height:1.35;font-style:italic">He was seventeen when he made the deal. Two years of silence later, fear was his only answer. The judge revoked his probation.</div>''',
         end='''<div class="a" style="inset:0;background:#0A0A0A"></div>
@@ -194,19 +194,19 @@ STYLES["test_style_4"] = dict(
 # --------------------------------------------------------------------------- 5. Legal Explainer
 STYLES["test_style_5"] = dict(
     name="Test Style - 5", look="Legal Explainer",
-    footage=dict(mode="full", x=50, y=150, w=1280, h=720),
+    footage=dict(mode="band", x=50, y=250, w=1320, h=372),
     captions=dict(mode="full", max_words=6),
     emph=LEGAL,
     css="""
 :root{--board:#24352E;--chalk:#F4F1E8;--yel:#F2D16B;--coral:#E07A5F}
 .k{font-family:'Kalam',cursive;font-weight:700}
 .ss{font-family:'Source Sans 3',sans-serif}
-.cap{left:690px;transform:translateX(-50%);top:905px;font-family:'Source Sans 3';font-weight:700;font-size:50px;color:#F4F1E8;white-space:nowrap}
+.cap{left:710px;transform:translateX(-50%);top:660px;font-family:'Source Sans 3';font-weight:700;font-size:50px;color:#F4F1E8;white-space:nowrap}
 .cap em{font-style:normal;color:#24352E;background:var(--yel);padding:0 8px;border-radius:4px}
 """,
     bg="""<div class="a" style="inset:0;background:radial-gradient(circle at 30% 20%,#2F463B,#1C2A24 75%)"></div>
 <div class="a" style="inset:0;background:radial-gradient(circle at 70% 60%,rgba(255,255,255,.05),transparent 30%),radial-gradient(circle at 20% 80%,rgba(255,255,255,.04),transparent 25%)"></div>
-<div class="a" style="left:40px;top:140px;width:1300px;height:740px;border:4px dashed rgba(244,241,232,.7);border-radius:10px"></div>
+<div class="a" style="left:38px;top:238px;width:1336px;height:388px;border:4px dashed rgba(244,241,232,.7);border-radius:10px"></div>
 <div class="a" style="left:1380px;top:150px;width:3px;height:720px;background:rgba(244,241,232,.25)"></div>""",
     intro="""<div class="a" style="inset:0;background:#24352E"></div>
 <div class="a k" style="left:0;right:0;top:450px;text-align:center;color:#F4F1E8;font-size:90px">[ channel intro ]</div>
@@ -214,7 +214,7 @@ STYLES["test_style_5"] = dict(
     el=dict(
         hook_label='<div class="a k" style="left:1420px;top:170px;color:#F2D16B;font-size:44px;width:460px">TODAY’S QUESTION</div>',
         hook_head='<div class="a k" style="left:1420px;top:240px;color:#F4F1E8;font-size:52px;line-height:1.2;width:460px">Can a judge send you to jail for missing probation meetings?</div>',
-        case_label='<div class="a k" style="left:230px;top:40px;color:#F4F1E8;font-size:56px">Case 1 · <span style="color:#F2D16B">Probation Revocation Hearing</span></div>',
+        case_label='<div class="a k" style="left:50px;top:150px;color:#F4F1E8;font-size:56px">Case 1 · <span style="color:#F2D16B">Probation Revocation Hearing</span></div>',
         counter='''<div class="a k" style="left:1420px;top:160px;width:470px;font-size:32px;color:rgba(244,241,232,.55);line-height:1.6;white-space:nowrap">
 <div>① Arraignment ✓</div><div>② Plea deal ✓</div><div style="color:#F2D16B;font-size:38px">③ Revocation hearing ◀</div><div>④ Sentence ?</div></div>''',
         mid='''<div class="a" style="left:1410px;top:420px;width:420px;background:#F2D16B;color:#24352E;padding:20px 24px;border-radius:6px;transform:rotate(-1.5deg)">
