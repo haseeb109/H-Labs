@@ -1,7 +1,7 @@
-"""Render 60-second style samples for the 8 Test Styles, all on the same court clip.
+"""Render 60-second style samples for the approved Test Styles (2 and 7), all on the same court clip.
 
-    .venv/bin/python3 tools/style_samples/render.py                    # all 8, downloads the clip with yt-dlp
-    .venv/bin/python3 tools/style_samples/render.py --styles 2 5       # only Test Style 2 and 5
+    .venv/bin/python3 tools/style_samples/render.py                    # both styles, downloads the clip with yt-dlp
+    .venv/bin/python3 tools/style_samples/render.py --styles 7         # only Test Style 7
     .venv/bin/python3 tools/style_samples/render.py --source clip.mp4  # use a clip you already have
 
 Clip: Judge Boyd stream HKURkJmb-K8, 2:07:05-2:08:10 (Frank Corona probation hearing). Captions come from
@@ -182,8 +182,10 @@ class Painter:
         self.browser = self.pw.chromium.launch(**kw)
         self.page = self.browser.new_page(viewport={"width": W, "height": H})
 
-    def png(self, css, body, out: Path, opaque=False, crop=True):
-        html = (f'<html><head><link rel="stylesheet" href="{FONTS}"><style>html,body{{margin:0;width:{W}px;height:{H}px;'
+    def png(self, css, body, out: Path, opaque=False, crop=True, width=W):
+        """width > 1920 is for the news ticker, which scrolls in from beyond the right edge."""
+        self.page.set_viewport_size({"width": width, "height": H})
+        html = (f'<html><head><link rel="stylesheet" href="{FONTS}"><style>html,body{{margin:0;width:{width}px;height:{H}px;'
                 f'background:transparent;overflow:hidden}}.a{{position:absolute}}{css}</style></head><body>{body}</body></html>')
         self.page.set_content(html, wait_until="networkidle")
         self.page.evaluate("document.fonts.ready")
@@ -198,7 +200,7 @@ class Painter:
         if not box:
             return None
         x0, y0 = max(0, box[0] - 2) & ~1, max(0, box[1] - 2) & ~1
-        x1, y1 = min(W, box[2] + 2), min(H, box[3] + 2)
+        x1, y1 = min(im.width, box[2] + 2), min(H, box[3] + 2)
         x1 -= (x1 - x0) % 2
         y1 -= (y1 - y0) % 2
         im.crop((x0, y0, x1, y1)).save(out)
@@ -252,7 +254,7 @@ def render_segment(i, seg, style, src, bg, intro, work):
         return out
     ss = s0 - SRC0
     if kind == "recap":
-        vf = (f"[1:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},gblur=sigma=28,"
+        vf = (f"[1:v]crop=iw:ih/2:0:ih/4,scale=-2:{H},crop={W}:{H},gblur=sigma=28,"
               f"eq=brightness=-0.18:saturation=0.6,setsar=1,fps=30[f];[0:v][f]overlay=0:0[v];[1:a]volume=0.25[a]")
     else:
         punch = style.get("punch", 1.0) if kind == "ruling" else 1.0
@@ -265,8 +267,8 @@ def render_segment(i, seg, style, src, bg, intro, work):
 
 
 def anim_xy(kind, x, y, s):
-    if kind == "scroll":           # news ticker: moves left 140 px per second
-        return f"{x}-140*(t-{s})", str(y)
+    if kind == "scroll":           # news ticker: moves left 75 px per second
+        return f"{x}-75*(t-{s})", str(y)
     if kind == "slide":
         return f"if(lt(t\\,{s}+0.35)\\,{x - 80}+80*(t-{s})/0.35\\,{x})", str(y)
     if kind == "drop":
@@ -297,7 +299,7 @@ def render_style(sid, style, src, words, painter, outdir: Path, keep=False):
     for name, html in style["el"].items():
         s, e, anim = SCHEDULE[name]
         p = work / f"el_{name}.png"
-        xy = painter.png(css, html, p)
+        xy = painter.png(css, html, p, width=8000 if name == "ticker" else W)
         if xy:
             layers.append((p, *xy, s, e, anim))
 
@@ -372,7 +374,7 @@ def render_style(sid, style, src, words, painter, outdir: Path, keep=False):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--styles", nargs="*", help="numbers 1-8 or ids (default: all 8)")
+    ap.add_argument("--styles", nargs="*", help="style numbers (2, 7) or ids (default: all)")
     ap.add_argument("--source", help="local clip of stream HKURkJmb-K8 starting at 2:07:05 (else yt-dlp download)")
     ap.add_argument("--transcript", default=str(ROOT / "tests/sample_boyd_2026-10-19_nexlev.json"))
     ap.add_argument("--out", default=str(ROOT / "output/style_samples"))
