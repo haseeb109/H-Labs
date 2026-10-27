@@ -9,7 +9,7 @@
   "title_rules": "prompts/title_rules.md",
   "config": {
     "channel_name": "Court Beacon TV",
-    "intro_seconds_tt": 10.0,
+    "intro_seconds_tt": 6.25,
     "channel_intro_file": "assets/channel_intro.mp4",
     "logo_file": "assets/logo_transparent.png",
     "vo_clip_max": 18.0,

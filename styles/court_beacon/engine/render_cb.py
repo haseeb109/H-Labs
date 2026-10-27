@@ -2,7 +2,7 @@
 
 Same locked structure as every H Labs style:
   1. HOOK        10-15 s teaser from the lead case: cinema letterbox, "FROM THE COURT RECORD", typed headline
-  2. INTRO       the owner's 10 s Court Beacon animation (styles/court_beacon/assets/channel_intro.mp4), its own sound
+  2. INTRO       the owner's 6.25 s Court Beacon animation (Oct 2026) (styles/court_beacon/assets/channel_intro.mp4), its own sound
   3. CASE n      first 4 s: EVIDENCE BOARD insert - the live footage keeps playing inside a taped polaroid, case data
                  and an OPEN stamp. Then the CINEMA layout: active Zoom tile full width (y 64-928), top bar with logo,
                  case label and hearing steps (CALLED > PLEA > TESTIMONY > RULING > CLOSED, driven by case.phases),

@@ -22,7 +22,7 @@ Windows package: copy this folder to `H Labs Windows Package/H Labs/styles/court
 ## Folder
 ```
 style.json     id court_beacon, renderer "tt" (structure family) + look "cb", renderer_module engine/render_cb.py
-assets/        channel_intro.mp4 (owner's 10 s animation, plays after the hook with its sound)
+assets/        channel_intro.mp4 (owner's 6.25 s animation, 1920x1080, plays after the hook with its sound)
                logo_transparent.png (circle cut-out used in the top bar, closing board, thumbnail)
                logo_source.png (original 1254x1254 artwork)
 hf/fonts/      Oswald 600/700, IBM Plex Mono 500/600, Source Serif 4 600i/700, Inter 600/800 (SIL OFL)
