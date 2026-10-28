@@ -16,14 +16,18 @@ if errorlevel 1 (
   exit /b 1
 )
 
-rem python: the Microsoft Store stub also answers to "python", so test that it really runs
-python --version >nul 2>nul
-if errorlevel 1 (
+rem python: "python" may be missing from PATH or be the Microsoft Store stub, so also try the "py" launcher
+set PYCMD=
+python --version >nul 2>nul && set PYCMD=python
+if not defined PYCMD (
+  py -3 --version >nul 2>nul && set PYCMD=py -3
+)
+if not defined PYCMD (
   echo [install] Python 3.12
   winget install -e --id Python.Python.3.12 --accept-package-agreements --accept-source-agreements
   set NEED_RESTART=1
 ) else (
-  echo [ok] python
+  echo [ok] python via %PYCMD%
 )
 where ffmpeg >nul 2>nul
 if errorlevel 1 (
@@ -60,7 +64,7 @@ if "!NEED_RESTART!"=="1" (
 
 if not exist ".venv\Scripts\python.exe" (
   echo [setup] creating .venv
-  python -m venv .venv
+  %PYCMD% -m venv .venv
   if errorlevel 1 ( echo [!] could not create .venv & pause & exit /b 1 )
 )
 set PY=.venv\Scripts\python.exe
