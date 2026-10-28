@@ -106,7 +106,7 @@ All 10 green = the machine is healthy. `--quick` skips the long render.
 * Burner-account `cookies.txt` only, and only if YouTube blocks downloads.
 
 ## Styles (one pack per channel)
-`styles/trial_tales/` (Trial Tales) and `styles/overruled/` (Overruled: courtroom commentary look for a 40-60 audience, same locked structure).
+`styles/trial_tales/` (Trial Tales), `styles/justice_served/` (Justice Served: sports-scoreboard look, no channel intro, corner logo) and `styles/overruled/` (Overruled: courtroom commentary look for a 40-60 audience, same locked structure).
 The launcher asks which style to use per run; CLI: `--style trial_tales|overruled`. Overruled needs
 `pip install playwright numpy pillow` + `playwright install chromium` inside `.venv`. See `styles/overruled/README.md`.
 

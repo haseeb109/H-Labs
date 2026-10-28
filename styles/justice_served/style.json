@@ -1,0 +1,37 @@
+{
+  "id": "justice_served",
+  "name": "Justice Served",
+  "renderer": "tt",
+  "look": "js",
+  "prompt_master": "prompts/master_v9.md",
+  "prompt_addendum": "prompts/json_addendum.md",
+  "prompt_extra": "prompts/justice_served_extra.md",
+  "title_rules": "prompts/title_rules.md",
+  "config": {
+    "channel_name": "Justice Served",
+    "intro_seconds_tt": 0,
+    "logo_file": "assets/logo_transparent.png",
+    "vo_clip_max": 18.0,
+    "vo_clip_target": 17.0,
+    "hook_min": 10.0,
+    "hook_max": 15.0,
+    "ai33_voice": "elevenlabs_z9ihBMCAnrOeGUbPDiwi",
+    "court_line": "187th District Court · Judge Stephanie Boyd · Bexar County, Texas",
+    "base_tags": [
+      "justice served",
+      "judge boyd",
+      "judge stephanie boyd",
+      "187th district court",
+      "bexar county",
+      "real court case",
+      "courtroom explained",
+      "court case breakdown",
+      "sentencing hearing",
+      "jury trial",
+      "courtroom footage",
+      "true crime court"
+    ]
+  },
+  "renderer_module": "engine/render_js.py",
+  "renderer_class": "JSRenderer"
+}
