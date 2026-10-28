@@ -37,6 +37,47 @@ def run(cmd, quiet=True):
     return r
 
 
+def _hms(sec):
+    sec = int(max(0, sec))
+    h, r = divmod(sec, 3600)
+    m, s = divmod(r, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def run_progress(cmd, total, label="    rendering", every=20.0, ui=None):
+    """Like run(), but prints progress while ffmpeg works (percent, position, speed, ETA) so a long render (a 1-hour case can take
+    an hour or more) is never mistaken for a hang. `total` = seconds of OUTPUT video this command produces."""
+    import threading
+    import time
+    cmd = [str(c) for c in cmd]
+    say = ui or (lambda m: print(m, flush=True))
+    p = subprocess.Popen(cmd[:1] + ["-progress", "pipe:1", "-nostats"] + cmd[1:], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    err = []
+    t = threading.Thread(target=lambda: err.extend(p.stderr.readlines()), daemon=True)
+    t.start()
+    start = last = time.time()
+    pos, speed = 0.0, ""
+    for line in p.stdout:
+        k, _, v = line.strip().partition("=")
+        if k == "out_time_us":
+            try:
+                pos = int(v) / 1e6
+            except ValueError:
+                pass
+        elif k == "speed":
+            speed = v.strip()
+        if k == "progress" and time.time() - last >= every:
+            last = time.time()
+            done = min(1.0, pos / total) if total else 0
+            eta = (time.time() - start) * (1 - done) / done if done > 0.01 else 0
+            say(f"{label}: {int(done * 100):3d}%  {_hms(pos)} of {_hms(total)}  speed {speed or '?'}" + (f"  ~{_hms(eta)} left" if eta else ""))
+    p.wait()
+    t.join(timeout=5)
+    if p.returncode != 0:
+        raise RuntimeError("ffmpeg failed:\n" + " ".join(cmd)[:600] + "\n" + "".join(err)[-1800:])
+    say(f"{label}: done in {_hms(time.time() - start)}")
+
+
 def probe_dur(p):
     return tts.dur(p)
 

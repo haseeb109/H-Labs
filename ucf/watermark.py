@@ -66,9 +66,14 @@ def apply(src, dst, text, *, opacity=0.25, size=34, every=9.0, fade=0.8, margin=
         cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(src), "-loop", "1", "-framerate", "30", "-i", str(png),
                "-filter_complex", filter_graph(opacity, every, fade, margin, seed), "-map", "[v]", "-map", "0:a?",
                *_encoder_args(enc), "-c:a", "copy", "-movflags", "+faststart", str(dst)]
-        r = subprocess.run(cmd, capture_output=True, text=True)
-        if r.returncode != 0:
-            raise RuntimeError("watermark failed:\n" + r.stderr[-1500:])
+        from .render import probe_dur, run_progress
+        total = probe_dur(src)
+        if total > 60:                    # long video: print progress (this pass re-encodes the whole file)
+            run_progress(cmd, total, "    watermark")
+        else:
+            r = subprocess.run(cmd, capture_output=True, text=True)
+            if r.returncode != 0:
+                raise RuntimeError("watermark failed:\n" + r.stderr[-1500:])
     return dst
 
 

@@ -18,7 +18,7 @@ from . import ov_gfx as G
 from . import ov_layout as L
 from . import tts
 from . import timeline as TL
-from .render import AENC, AUDIO_NORM, TS, court_audio, probe_dur, run, venc
+from .render import AENC, AUDIO_NORM, TS, court_audio, probe_dur, run, run_progress, venc
 from .render_tt import TTRenderer, _thumb
 from .timeutil import fmt_dur, fmt_tc, parse_tc
 
@@ -221,7 +221,10 @@ class OVRenderer(TTRenderer):
         else:
             amap = ["-map", "1:a:0?", "-af", court_audio(self.cfg) + (f",afade=t=out:st={max(0, dr - 0.9):.2f}:d=0.9" if fade_out else "")]
         cmd += ["-filter_complex", ";".join(fc), "-map", "[vout]", *amap, "-t", f"{dr:.3f}", *venc(self.enc), *AENC, *TS, out]
-        run(cmd)
+        if dr > 90:                       # long cut: show progress so it is never mistaken for a hang
+            run_progress(cmd, dr, f"    rendering {Path(out).name}")
+        else:
+            run(cmd)
 
     # ------------------------------------------------------------------ fixed segments
     def _asset(self, key):
