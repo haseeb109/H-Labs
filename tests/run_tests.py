@@ -326,15 +326,14 @@ def t19_captions():
     ev = sorted((float(m[0]) * 3600 + float(m[1]) * 60 + float(m[2]), float(m[3]) * 3600 + float(m[4]) * 60 + float(m[5]))
                 for m in _re.findall(r"Dialogue: 0,(\d+):(\d+):([\d.]+),(\d+):(\d+):([\d.]+)", (d / "o.ass").read_text()))
     assert all(ev[i][1] <= ev[i + 1][0] + 1e-6 for i in range(len(ev) - 1)), f"overlapping caption events: {ev}"
-    assert "\\c&H0032B4F0&" in body or "\c&H0032B4F0&" in body, "spoken word not highlighted"
+    assert "\\c&H0032B4F0&" in body, "spoken word not highlighted"
     ff = CAP.libass_ffmpeg({})
     if not ff:
         return f"chunks + blocks ok; burn-in SKIPPED (no libass ffmpeg - brew install ffmpeg-full)"
     base = d / "base.mp4"
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x101010:s=1920x1080:r=30:d=2",
                     "-c:v", "libx264", "-pix_fmt", "yuv420p", str(base)], check=True)
-    subprocess.run([ff, "-v", "error", "-y", "-i", str(base), "-vf",
-                    f"subtitles=filename='{d / 'c.ass'}':fontsdir='/System/Library/Fonts/Supplemental'",
+    subprocess.run([ff, "-v", "error", "-y", "-i", str(base), "-vf", CAP.subtitles_filter(d / "c.ass"),
                     str(d / "cap.mp4")], check=True)
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", "0.7", "-i", str(d / "cap.mp4"), "-frames:v", "1",
                     str(d / "f.png")], check=True)
@@ -454,6 +453,8 @@ def t15_hive_and_fallback():
 
 
 def t9_renderer_units():
+    if not (FIX / "r1.mp4").exists():
+        return "SKIPPED (test clips tests/fixtures/rv_clips are not in the repo - Mac dev machine only)"
     r = subprocess.run([sys.executable, str(ROOT / "tests" / "make_sources.py")],
                        capture_output=True, text=True, cwd=ROOT)
     assert r.returncode == 0, f"make_sources failed: {r.stdout[-300:]} {r.stderr[-300:]}"
@@ -818,6 +819,8 @@ def t18_regressions():
 
 
 def t10_end_to_end():
+    if not (FIX / "r1.mp4").exists():
+        return "SKIPPED (test clips tests/fixtures/rv_clips are not in the repo - Mac dev machine only)"
     out_root = ROOT / "output"
     for old in out_root.glob("2026-*_lVQ79x0Hd_w"):
         shutil.rmtree(old)                     # cached parts would fake a pass

@@ -8,6 +8,7 @@ Needs: `pip install mlx-whisper` (Apple silicon) and an ffmpeg built with libass
 Anything missing -> captions are skipped with a message, the video still renders.
 """
 import hashlib
+import sys
 import json
 import os
 import re
@@ -120,6 +121,24 @@ def build_ass(words, blocks, out, cfg=None):
     return len(lines)
 
 
+def default_font_dir():
+    """Where the OS keeps its fonts (libass needs a font folder for the caption text)."""
+    if sys.platform == "darwin":
+        return "/System/Library/Fonts/Supplemental"
+    if os.name == "nt":
+        return "C:/Windows/Fonts"
+    return "/usr/share/fonts"
+
+
+def _flt_path(p):
+    """ffmpeg filter-option escaping: forward slashes, and the drive colon of a Windows path escaped (C\\:/dir/file)."""
+    return str(p).replace("\\", "/").replace(":", "\\:")
+
+
+def subtitles_filter(ass, font_dir=None):
+    return f"subtitles=filename='{_flt_path(ass)}':fontsdir='{_flt_path(font_dir or default_font_dir())}'"
+
+
 def burn(final, blocks, work, cfg, venc_args, ui=print):
     """Transcribe `final`, build captions and burn them in (video re-encoded, audio copied). Returns the path of
     the captioned video (same name), or `final` untouched when captions are off or a tool is missing."""
@@ -146,8 +165,7 @@ def burn(final, blocks, work, cfg, venc_args, ui=print):
         ui("  captions skipped: no words")
         return final
     out = Path(final).with_name(Path(final).stem + "_cap.mp4")
-    font_dir = cfg.get("caption_font_dir") or "/System/Library/Fonts/Supplemental"
-    vf = f"subtitles=filename='{ass}':fontsdir='{font_dir}'"
+    vf = subtitles_filter(ass, cfg.get("caption_font_dir"))
     subprocess.run([ff, "-y", "-loglevel", "error", "-i", str(final), "-vf", vf, *venc_args, "-c:a", "copy",
                     "-movflags", "+faststart", str(out)], check=True)
     if out.exists() and out.stat().st_size > 1000:

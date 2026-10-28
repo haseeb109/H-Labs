@@ -258,7 +258,7 @@ def main():
             (ROOT / "output").mkdir(exist_ok=True)
             open_path(ROOT / "output")
         elif pick == "6":
-            subprocess.run([sys.executable, "tests/run_tests.py"], cwd=ROOT)
+            subprocess.run([sys.executable, "tests/run_tests.py", "--quick"], cwd=ROOT)
             ask("\nPress Enter...")
         elif pick == "7":
             doctor()
