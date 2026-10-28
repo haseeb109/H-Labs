@@ -107,6 +107,14 @@ All 10 green = the machine is healthy. `--quick` skips the long render.
 * Keys never go in this folder, the repo, or chat — only `~/.config/umf/*.env` (chmod 600).
 * Burner-account `cookies.txt` only, and only if YouTube blocks downloads.
 
+## Watermark (every style, on by default)
+Every finished video gets the channel name burned in as an anti-copy watermark: white, 25% opacity, small, one place at a
+time, jumping to a new place every 9 s with a soft fade (a different place sequence for every video). Text = the style's
+`channel_name`. Code: `ucf/watermark.py` (one extra ffmpeg pass after the render, audio untouched; the video is re-encoded once).
+Knobs in `config.json` / `style.json -> config`: `watermark` (true), `watermark_text`, `watermark_opacity` (0.25), `watermark_size` (34),
+`watermark_every` (9), `watermark_fade`, `watermark_margin`. Off for one run: `--no-watermark`. Stand-alone: `python tools/watermark.py video.mp4 "Name"`.
+`qc.json` records `"watermark"`; a failed watermark flags QC as CHECK and keeps the un-watermarked video.
+
 ## Styles (one pack per channel)
 `styles/trial_tales/` (Trial Tales), `styles/justice_served/` (Justice Served: sports-scoreboard look, no channel intro, corner logo) and `styles/overruled/` (Overruled: courtroom commentary look for a 40-60 audience, same locked structure).
 The launcher asks which style to use per run; CLI: `--style trial_tales|overruled`. Overruled needs

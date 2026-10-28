@@ -854,6 +854,51 @@ def t10_end_to_end():
     return f"{dur/60:.1f} min, QC ok, {len(rows)-1} footage rows"
 
 
+def t22_watermark():
+    """Anti-copy watermark: text PNG, filter graph, a real 12 s clip gets a visible, moving, 25% watermark; audio + length unchanged."""
+    import numpy as np
+    from PIL import Image
+    from ucf import config, watermark as WM
+    from ucf.render import probe_dur as probe
+    tmp = Path(tempfile.mkdtemp(prefix="wmtest_"))
+    try:
+        png = tmp / "wm.png"
+        w, h = WM.render_text_png("Trial Tales", png, 34)
+        assert 100 < w < 400 and 30 < h < 90, f"text png size {w}x{h}"
+        assert "geq=" in WM.filter_graph() and "overlay=" in WM.filter_graph()
+        src = tmp / "src.mp4"
+        r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=0x303030:s=1920x1080:r=30:d=12",
+                            "-f", "lavfi", "-i", "sine=f=440:d=12", "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(src)],
+                           capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr[-300:]
+        cfg = dict(config.load(style="trial_tales"))
+        assert cfg["watermark"] is True and WM.text_for(cfg) == "Trial Tales", "default must be ON with the channel name"
+        dst = tmp / "wm.mp4"
+        shutil.copy(src, dst)
+        assert WM.apply_in_place(dst, dict(cfg, watermark_every=4.0), "teststream:1", "libx264", lambda *_: None) == "Trial Tales"
+        d0, d1 = probe(src), probe(dst)
+        assert abs(d0 - d1) < 0.2, f"length changed {d0} -> {d1}"
+        a1 = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_name", "-of", "csv=p=0", str(dst)],
+                            capture_output=True, text=True).stdout.strip()
+        assert a1 == "aac", f"audio not copied: {a1!r}"
+        spots = []
+        for t in (2.0, 6.0, 10.0):                  # the middle of three different 4 s slots (fully faded in)
+            f = tmp / f"f{int(t)}.png"
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", str(t), "-i", str(dst), "-frames:v", "1", str(f)], check=True)
+            im = np.asarray(Image.open(f).convert("L")).astype(int)
+            ys, xs = np.where(im > 0x30 + 12)       # brighter than the 0x30 background = watermark pixels
+            assert len(xs) > 40, f"no watermark visible at {t}s"
+            spots.append((int(xs.mean()) // 100, int(ys.mean()) // 100))
+            peak = im.max()
+            assert peak < 0x30 + 100, f"watermark too strong ({peak}) - should be ~25%"
+        assert len(set(spots)) >= 2, f"watermark never moved: {spots}"
+        # switch off
+        assert WM.apply_in_place(dst, dict(cfg, watermark=False), "x", "libx264", lambda *_: None) is None
+        return f"visible at 3 times, moved {spots}, audio copied, length {d1:.1f}s"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main():
     print("H Labs self-test matrix")
     check(1, "environment", t1_environment)
@@ -882,6 +927,7 @@ def main():
     check(19, "captions", t19_captions)
     check(20, "faces", t20_faces)
     check(21, "regressions", t18_regressions)
+    check(22, "watermark", t22_watermark)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))

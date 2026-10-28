@@ -67,6 +67,7 @@ def main():
     ap.add_argument("--style", help="editing style id from styles/<id>/style.json (e.g. trial_tales)")
     ap.add_argument("--mode", help="run mode: 30 (20-40 min videos) | 60 (50-70 min) | all (one video per case, ranked)")
     ap.add_argument("--tts", help="force one TTS provider (ai33|voicestudio|say|dummy)")
+    ap.add_argument("--no-watermark", action="store_true", help="skip the anti-copy watermark for this run")
     a = ap.parse_args()
 
     cfg = config.load(a.config, style=a.style)
@@ -75,6 +76,8 @@ def main():
         cfg["brain_pass_a"] = cfg["brain_pass_b"] = ""   # an explicit --brain runs every pass on that brain
     if a.tts:
         cfg["tts_order"] = [a.tts]
+    if a.no_watermark:
+        cfg["watermark"] = False
     mode = config.apply_mode(cfg, a.mode)
     band = (f"{cfg['runtime_min'] // 60}-{cfg['runtime_max'] // 60} min" if mode != "all"
             else f"one video per case >= {cfg.get('min_case_minutes', 8):.0f} min")
@@ -337,6 +340,13 @@ def main():
         ui(f"VIDEO {v['n']}: {[by_id[i]['name'] for i in v['case_ids']]}")
         rn.log = []
         res = rn.render_video(plan, v, folder, work / "tts", ui)
+        wm_text, wm_err = None, None
+        try:
+            from ucf import watermark as WM
+            wm_text = WM.apply_in_place(res["final"], cfg, f"{sid}:{v['n']}", rn.enc, ui)   # channel name, 25%, moving; same file name
+        except Exception as e:                       # never lose the render over a watermark problem, but flag it
+            wm_err = str(e).splitlines()[0][:160] if str(e) else repr(e)
+            ui(f"  WATERMARK FAILED: {wm_err}  (video.mp4 is the un-watermarked render)")
         thumb = rn.thumbnail(plan, v, folder)
         tl = res["timeline"]
         (folder / "edit_sheet.txt").write_text(sheets.edit_sheet(plan, v, tl, res["durs"]), encoding="utf-8")
@@ -350,6 +360,10 @@ def main():
             qc["ai_clips_ok"] = max(res["ai_clips"]) <= cfg.get("vo_clip_max", 18.0)
             qc["ok"] = qc["ok"] and qc["ai_clips_ok"]
         qc["chapters"] = [(fmt_tc(o, False), l) for o, l in chs]
+        qc["watermark"] = wm_text or False
+        if wm_err:
+            qc["ok"] = False
+            qc["note"] = "watermark failed: " + wm_err
         if chs and chs[-1][0] > res["measured_total"] - 60:
             qc["ok"] = False
             qc["note"] = "a chapter sits in the final 60 s"

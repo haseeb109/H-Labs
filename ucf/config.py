@@ -38,6 +38,13 @@ DEFAULTS = {
     # --- stream handling ---
     "cookies_file": "",                    # ONLY a burner account's cookies.txt, and only if YouTube blocks downloads
     "max_height": 1080,
+    "watermark": True,                      # anti-copy watermark in every video (see ucf/watermark.py); --no-watermark switches it off for one run
+    "watermark_text": "",                   # "" = channel_name of the style
+    "watermark_opacity": 0.25,
+    "watermark_size": 34,                   # px on a 1080p frame
+    "watermark_every": 9.0,                 # seconds per position
+    "watermark_fade": 0.8,
+    "watermark_margin": 48,
     "download_sort": "",                    # yt-dlp -S sort for the stream download; "" = yt-dlp default. "res,br" = best bitrate at the top resolution
     "captions": "auto",                    # auto = YouTube captions first, whisper if missing/sparse | whisper
     "whisper_model": "base.en",
