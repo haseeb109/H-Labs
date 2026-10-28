@@ -12,11 +12,11 @@ FONTS = Path(__file__).resolve().parent.parent / "hf" / "fonts"      # overridde
 LOGO = None
 
 _CSS_T = """
-@font-face{font-family:Bsd;font-weight:800;src:url(file://__F__/big-shoulders-display-latin-800-normal.woff2)}
-@font-face{font-family:Bsd;font-weight:900;src:url(file://__F__/big-shoulders-display-latin-900-normal.woff2)}
-@font-face{font-family:Mono;font-weight:500;src:url(file://__F__/dm-mono-latin-500-normal.woff2)}
-@font-face{font-family:Inter;font-weight:600;src:url(file://__F__/inter-latin-600-normal.woff2)}
-@font-face{font-family:Inter;font-weight:800;src:url(file://__F__/inter-latin-800-normal.woff2)}
+@font-face{font-family:Bsd;font-weight:800;src:url(__F__/big-shoulders-display-latin-800-normal.woff2)}
+@font-face{font-family:Bsd;font-weight:900;src:url(__F__/big-shoulders-display-latin-900-normal.woff2)}
+@font-face{font-family:Mono;font-weight:500;src:url(__F__/dm-mono-latin-500-normal.woff2)}
+@font-face{font-family:Inter;font-weight:600;src:url(__F__/inter-latin-600-normal.woff2)}
+@font-face{font-family:Inter;font-weight:800;src:url(__F__/inter-latin-800-normal.woff2)}
 :root{--pit:#121417;--pit2:#1C2026;--pit3:#262B33;--amber:#FFB000;--turf:#1F8A4C;--white:#F5F5F5;--mute:#9AA3AF;--line:#343A44}
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{background:transparent;font-family:Inter,sans-serif;color:var(--white)}
@@ -56,7 +56,7 @@ def set_fonts(d):
 
 
 def css():
-    return _CSS_T.replace("__F__", str(FONTS))
+    return _CSS_T.replace("__F__", Path(FONTS).resolve().as_uri())
 
 
 def _browser():
@@ -93,7 +93,7 @@ def render(inner, out, size=(1920, 1080), body_style="", transparent=True):
     try:
         hp = p.with_suffix(".html")
         hp.write_text(doc, encoding="utf-8")
-        page.goto("file://" + str(hp.resolve()))
+        page.goto(hp.resolve().as_uri())
         page.evaluate("document.fonts.ready")
         page.wait_for_timeout(250)
         page.screenshot(path=str(p), omit_background=transparent)
@@ -119,7 +119,7 @@ def _emph(text):
 def _logo_tag(size, extra=""):
     if not LOGO:
         return ""
-    return (f'<img src="file://{LOGO}" style="position:absolute;right:30px;bottom:24px;height:{size}px;width:auto;object-fit:contain;'
+    return (f'<img src="{Path(LOGO).as_uri()}" style="position:absolute;right:30px;bottom:24px;height:{size}px;width:auto;object-fit:contain;'
             f'filter:drop-shadow(0 4px 10px rgba(0,0,0,.6));{extra}">')
 
 
@@ -278,11 +278,11 @@ def thumbnail(frame_png, text, gold_word, out):
     g = (gold_word or "").upper()
     body = "<br>".join(" ".join(f'<span style="background:var(--amber);color:var(--pit);padding:0 14px">{esc(w)}</span>' if w.strip(".,!?") == g else esc(w) for w in ln) for ln in lines)
     fs = 128 if len(lines) <= 3 else 104
-    inner = (f'<img src="file://{Path(frame_png).resolve()}" style="position:absolute;left:0;top:0;width:1280px;height:720px;object-fit:cover">'
+    inner = (f'<img src="{Path(frame_png).resolve().as_uri()}" style="position:absolute;left:0;top:0;width:1280px;height:720px;object-fit:cover">'
              '<div class="abs" style="inset:0;background:linear-gradient(90deg,rgba(13,15,18,.96) 0%,rgba(13,15,18,.62) 50%,rgba(13,15,18,0) 100%)"></div>'
              '<div class="abs bsd amb" style="left:0;top:44px;font-size:44px;letter-spacing:5px;padding:2px 44px 2px 48px;clip-path:polygon(0 0,100% 0,calc(100% - 20px) 100%,0 100%)">COURT HEARING</div>'
              f'<div class="abs bsd" style="left:48px;top:130px;width:900px;font-size:{fs}px;line-height:.98;text-shadow:0 5px 14px rgba(0,0,0,.7)">{body}</div>'
-             + (f'<img src="file://{LOGO}" style="position:absolute;right:26px;bottom:22px;height:104px;object-fit:contain">' if LOGO else ""))
+             + (f'<img src="{Path(LOGO).as_uri()}" style="position:absolute;right:26px;bottom:22px;height:104px;object-fit:contain">' if LOGO else ""))
     p = render(inner, out, size=(1280, 720), transparent=False)
     jp = Path(out).with_suffix(".jpg")
     Image.open(p).convert("RGB").save(jp, quality=93)

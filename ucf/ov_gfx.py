@@ -12,12 +12,12 @@ from PIL import Image, ImageDraw
 FONTS = Path(__file__).resolve().parent.parent / "hf" / "fonts"   # overridden by set_fonts() with the style pack's hf/fonts
 
 _CSS_T = """
-@font-face{font-family:Arch;font-weight:800;src:url(file://__F__/archivo-latin-800-normal.woff2)}
-@font-face{font-family:Arch;font-weight:900;src:url(file://__F__/archivo-latin-900-normal.woff2)}
-@font-face{font-family:Serif;font-weight:700;src:url(file://__F__/playfair-display-latin-700-normal.woff2)}
-@font-face{font-family:Serif;font-weight:900;src:url(file://__F__/playfair-display-latin-900-normal.woff2)}
-@font-face{font-family:Sans;font-weight:700;src:url(file://__F__/montserrat-latin-700-normal.woff2)}
-@font-face{font-family:Sans;font-weight:800;src:url(file://__F__/montserrat-latin-800-normal.woff2)}
+@font-face{font-family:Arch;font-weight:800;src:url(__F__/archivo-latin-800-normal.woff2)}
+@font-face{font-family:Arch;font-weight:900;src:url(__F__/archivo-latin-900-normal.woff2)}
+@font-face{font-family:Serif;font-weight:700;src:url(__F__/playfair-display-latin-700-normal.woff2)}
+@font-face{font-family:Serif;font-weight:900;src:url(__F__/playfair-display-latin-900-normal.woff2)}
+@font-face{font-family:Sans;font-weight:700;src:url(__F__/montserrat-latin-700-normal.woff2)}
+@font-face{font-family:Sans;font-weight:800;src:url(__F__/montserrat-latin-800-normal.woff2)}
 :root{--navy:#0E1A2B;--navy2:#16273E;--navy3:#1E3452;--cream:#F4EDE0;--gold:#E3B45A;--red:#D1222F;--mute:#A9B7CC}
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{background:transparent;font-family:Sans,sans-serif;color:var(--cream)}
@@ -57,7 +57,7 @@ def _use_logo(inner):
         st = m.group(1) or ""
         w = re.search(r"width:(\d+)px", st)
         w = int(w.group(1)) if w else 44
-        return (f'<img src="file://{LOGO}" style="width:{w + 12}px;height:{w + 12}px;object-fit:contain;'
+        return (f'<img src="{Path(LOGO).as_uri()}" style="width:{w + 12}px;height:{w + 12}px;object-fit:contain;'
                 f'margin:-6px 4px -6px -4px;display:inline-block;vertical-align:middle">')
     return re.sub(r'<span class="seal"(?: style="([^"]*)")?>O</span>', rep, inner)
 
@@ -68,7 +68,7 @@ def set_fonts(d):
 
 
 def css():
-    return _CSS_T.replace("__F__", str(FONTS)).replace("%%", "%")
+    return _CSS_T.replace("__F__", Path(FONTS).resolve().as_uri()).replace("%%", "%")
 
 BELL = ('<svg viewBox="0 0 24 24" fill="#fff"><path d="M12 2a2 2 0 0 0-2 2v.3C7.2 5.1 6 7.4 6 10v4l-2 3v1h16v-1l-2-3v-4c0-2.6-1.2-4.9-4-5.7V4a2 2 0 0 0-2-2zm0 20a2.5 2.5 0 0 0 2.4-2h-4.8A2.5 2.5 0 0 0 12 22z"/></svg>')
 
@@ -110,7 +110,7 @@ def render(inner, out, size=(1920, 1080), body_style="", transparent=True):
     try:
         hp = p.with_suffix(".html")
         hp.write_text(doc, encoding="utf-8")
-        page.goto("file://" + str(hp.resolve()))
+        page.goto(hp.resolve().as_uri())
         page.evaluate("document.fonts.ready")
         page.wait_for_timeout(250)          # let the embedded fonts settle
         page.screenshot(path=str(p), omit_background=transparent)
@@ -139,7 +139,7 @@ def ticker(label, text, out):
 
 def brand(out):
     if LOGO:        # the logo already carries the word OVERRULED: show it alone, big enough to read
-        return render(f'<img src="file://{LOGO}" style="position:absolute;left:46px;top:28px;width:104px;height:104px;object-fit:contain;filter:drop-shadow(0 4px 10px rgba(0,0,0,.55))">', out)
+        return render(f'<img src="{Path(LOGO).as_uri()}" style="position:absolute;left:46px;top:28px;width:104px;height:104px;object-fit:contain;filter:drop-shadow(0 4px 10px rgba(0,0,0,.55))">', out)
     return render('<div class="brand" style="left:60px;top:58px"><span class="seal">O</span>OVERRULED</div>', out)
 
 
@@ -270,7 +270,7 @@ def thumbnail(frame_png, text, gold_word, out):
     g = (gold_word or "").upper()
     body = "<br>".join(" ".join(f'<span style="background:var(--gold);color:#0E1A2B;padding:0 14px">{esc(w)}</span>' if w.strip(".,!?") == g else esc(w) for w in ln) for ln in lines)
     fs = 112 if len(lines) <= 3 else 92
-    inner = (f'<img src="file://{Path(frame_png).resolve()}" style="position:absolute;left:0;top:0;width:1280px;height:720px;object-fit:cover">'
+    inner = (f'<img src="{Path(frame_png).resolve().as_uri()}" style="position:absolute;left:0;top:0;width:1280px;height:720px;object-fit:cover">'
              '<div class="abs" style="inset:0;background:linear-gradient(90deg,rgba(10,19,34,.95) 0%,rgba(10,19,34,.6) 48%,rgba(10,19,34,0) 100%)"></div>'
              '<div class="abs" style="left:0;top:44px;background:var(--red);font-family:Arch;font-weight:900;font-size:34px;letter-spacing:5px;padding:10px 40px 10px 48px;clip-path:polygon(0 0,100% 0,calc(100% - 18px) 100%,0 100%)">COURT HEARING</div>'
              f'<div class="abs" style="left:48px;top:140px;width:900px;font-family:Arch;font-weight:900;font-size:{fs}px;line-height:1.0;text-shadow:0 5px 14px rgba(0,0,0,.6)">{body}</div>'

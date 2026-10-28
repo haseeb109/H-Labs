@@ -34,14 +34,14 @@ STEPS = ["CALLED", "PLEA", "TESTIMONY", "RULING", "CLOSED"]
 PHASE_STEP = {"call": 0, "plea_or_admonish": 1, "evidence_or_argument": 2, "ruling": 3, "wrap_up": 4}
 
 _CSS_T = """
-@font-face{font-family:Osw;font-weight:600;src:url(file://__F__/oswald-latin-600-normal.woff2)}
-@font-face{font-family:Osw;font-weight:700;src:url(file://__F__/oswald-latin-700-normal.woff2)}
-@font-face{font-family:Mono;font-weight:500;src:url(file://__F__/ibm-plex-mono-latin-500-normal.woff2)}
-@font-face{font-family:Mono;font-weight:600;src:url(file://__F__/ibm-plex-mono-latin-600-normal.woff2)}
-@font-face{font-family:Ser;font-weight:600;font-style:italic;src:url(file://__F__/source-serif-4-latin-600-italic.woff2)}
-@font-face{font-family:Ser;font-weight:700;src:url(file://__F__/source-serif-4-latin-700-normal.woff2)}
-@font-face{font-family:Int;font-weight:600;src:url(file://__F__/inter-latin-600-normal.woff2)}
-@font-face{font-family:Int;font-weight:800;src:url(file://__F__/inter-latin-800-normal.woff2)}
+@font-face{font-family:Osw;font-weight:600;src:url(__F__/oswald-latin-600-normal.woff2)}
+@font-face{font-family:Osw;font-weight:700;src:url(__F__/oswald-latin-700-normal.woff2)}
+@font-face{font-family:Mono;font-weight:500;src:url(__F__/ibm-plex-mono-latin-500-normal.woff2)}
+@font-face{font-family:Mono;font-weight:600;src:url(__F__/ibm-plex-mono-latin-600-normal.woff2)}
+@font-face{font-family:Ser;font-weight:600;font-style:italic;src:url(__F__/source-serif-4-latin-600-italic.woff2)}
+@font-face{font-family:Ser;font-weight:700;src:url(__F__/source-serif-4-latin-700-normal.woff2)}
+@font-face{font-family:Int;font-weight:600;src:url(__F__/inter-latin-600-normal.woff2)}
+@font-face{font-family:Int;font-weight:800;src:url(__F__/inter-latin-800-normal.woff2)}
 :root{--ink:#07080C;--bar:#06070A;--line:#2A2F3D;--paper:#EDE6D6;--orange:#F2792B;--purple:#5B2A86;--blue:#3CC8FF;
  --gold:#E6B14A;--red:#D63A2F;--text:#F1EEE8;--mute:#9095A6}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -77,7 +77,7 @@ def set_logo(p):
 
 
 def css():
-    return _CSS_T.replace("__F__", str(FONTS))
+    return _CSS_T.replace("__F__", Path(FONTS).resolve().as_uri())
 
 
 def esc(t):
@@ -97,7 +97,7 @@ def render(inner, out, size=(W, H_), transparent=True, body_style=""):
     hp.write_text(doc, encoding="utf-8")
     page = _OV._browser().new_page(viewport={"width": size[0], "height": size[1]})
     try:
-        page.goto("file://" + str(hp.resolve()))
+        page.goto(hp.resolve().as_uri())
         page.evaluate("document.fonts.ready")
         page.wait_for_timeout(200)
         page.screenshot(path=str(p), omit_background=transparent)
@@ -107,7 +107,7 @@ def render(inner, out, size=(W, H_), transparent=True, body_style=""):
 
 
 def _logo(px):
-    return f'<img src="file://{LOGO}" style="width:{px}px;height:{px}px;object-fit:contain">' if LOGO else ""
+    return f'<img src="{Path(LOGO).as_uri()}" style="width:{px}px;height:{px}px;object-fit:contain">' if LOGO else ""
 
 
 def thumb_rects(n):
@@ -302,7 +302,7 @@ def briefing(text, label, frames, status, out):
         cap = fp[1] if isinstance(fp, tuple) else caps[i]
         img = fp[0] if isinstance(fp, tuple) else fp
         s += (f'<div class="pol" style="left:{x}px;top:170px;transform:rotate({r}deg);padding:12px 12px 46px">'
-              f'<img src="file://{Path(img).resolve()}" style="display:block;width:400px;height:225px;object-fit:cover">'
+              f'<img src="{Path(img).resolve().as_uri()}" style="display:block;width:400px;height:225px;object-fit:cover">'
               f'<div class="cap" style="font-size:16px;bottom:12px">{esc(cap)}</div></div>')
     fs = 48 if len(text) <= 190 else 40
     s += (f'<div class="abs ser" style="left:260px;top:590px;width:1400px;text-align:center;font-style:normal;font-weight:700;font-size:{fs}px;line-height:1.3">{esc(text)}</div>'
@@ -326,7 +326,7 @@ def case_files(rows, question, options, out):
     for i, (img, name, res) in enumerate(rows[:n]):
         r = [-2, 1.5, -1, 1][i]
         s += (f'<div class="pol" style="left:{x}px;top:260px;transform:rotate({r}deg);padding:12px 12px 70px">'
-              f'<img src="file://{Path(img).resolve()}" style="display:block;width:{pw}px;height:{ph}px;object-fit:cover">'
+              f'<img src="{Path(img).resolve().as_uri()}" style="display:block;width:{pw}px;height:{ph}px;object-fit:cover">'
               f'<div class="cap" style="font-family:Int;font-weight:800;font-size:24px;letter-spacing:0;bottom:22px">{esc(name)}</div></div>'
               f'<div class="stamp" style="left:{x + 60}px;top:{260 + ph - 70}px;font-size:28px;background:rgba(244,241,234,.7)">{esc(res)}</div>')
         x += pw + 24 + gap
@@ -366,9 +366,9 @@ def thumbnail(frame_png, text, gold_word, out):
     lines = [out_words[i:i + 2] for i in range(0, n, 2)] if n > 2 else [out_words]
     fs = 130 if n <= 4 else 108
     inner = ('<div class="abs" style="inset:0;background:#06070A"></div>'
-             f'<div class="abs" style="left:420px;top:0;width:860px;height:720px;overflow:hidden"><img src="file://{Path(frame_png).resolve()}" style="width:1280px;height:720px;object-fit:cover;margin-left:-260px;filter:contrast(1.15) saturate(.9)"></div>'
+             f'<div class="abs" style="left:420px;top:0;width:860px;height:720px;overflow:hidden"><img src="{Path(frame_png).resolve().as_uri()}" style="width:1280px;height:720px;object-fit:cover;margin-left:-260px;filter:contrast(1.15) saturate(.9)"></div>'
              '<div class="abs" style="left:420px;top:0;width:860px;height:720px;background:linear-gradient(90deg,#06070A 0%,rgba(6,7,10,.2) 30%,transparent 55%),linear-gradient(200deg,rgba(60,200,255,.25),transparent 40%),linear-gradient(20deg,rgba(242,121,43,.35),transparent 45%)"></div>'
              '<div class="abs mono" style="left:44px;top:46px;font-size:24px;letter-spacing:6px;color:var(--blue)">FROM THE COURT RECORD</div>'
              f'<div class="abs osw" style="left:44px;top:104px;font-size:{fs}px;line-height:1.02;text-transform:uppercase;text-shadow:0 6px 30px rgba(0,0,0,.8)">{"<br>".join(" ".join(l) for l in lines)}</div>'
-             + (f'<img class="abs" src="file://{LOGO}" style="right:28px;bottom:24px;width:96px;height:96px">' if LOGO else ""))
+             + (f'<img class="abs" src="{Path(LOGO).as_uri()}" style="right:28px;bottom:24px;width:96px;height:96px">' if LOGO else ""))
     return render(inner, out, size=(1280, 720), transparent=False)
