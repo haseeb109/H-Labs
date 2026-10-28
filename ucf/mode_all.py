@@ -265,10 +265,16 @@ def build_plan(segs, lines, scan_text, stream_len, cfg, ui=print, work=None, sca
 
     # ---------- boundary refinement (video signals may move OUT inside the window) ----------
     if ev:
+        import copy
+        snapshot = copy.deepcopy(plan)
         try:
             from . import boundary as BD
             BD.refine_plan(plan, ev, video_path, cfg, work, ui)
+            if VAL.validate(plan, stream_len, segs, cfg_a)[0]:
+                plan = snapshot
+                ui("boundary refinement reverted (introduced validation errors)")
         except Exception as e:  # noqa
+            plan = snapshot
             ui("boundary refinement skipped:", e)
 
     # ---------- script step ----------

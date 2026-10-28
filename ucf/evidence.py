@@ -23,7 +23,8 @@ def _find(segs, patterns):
         for p in patterns:
             m = re.search(p, low, re.I)
             if m:
-                out.append({"tc": round(s["start"], 1), "phrase": m.group(0).lower()})
+                out.append({"tc": round(s["start"], 1), "end": round(max(s["end"], s["start"]), 1),
+                            "phrase": m.group(0).lower()})
                 break
     return sorted(out, key=lambda x: x["tc"])
 

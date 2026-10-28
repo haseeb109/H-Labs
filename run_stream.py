@@ -195,7 +195,8 @@ def main():
             if not lines:
                 sys.exit("transcript is empty - mode all cannot run")
             try:
-                plan, errs = mode_all.build_plan(segs, lines, scan_text, stream_len, cfg, ui, work)
+                plan, errs = mode_all.build_plan(segs, lines, scan_text, stream_len, cfg, ui, work, scan_rep=rep,
+                                                 video_path=video_path if video_path.exists() else None)
             except brain.BrainStop as e:
                 sys.exit(f"BRAIN STOPPED: {e}\n  replies: work/{sid}/brain_reply_*.txt")
             if plan is None or errs:

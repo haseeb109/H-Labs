@@ -195,8 +195,12 @@ def t8_brain_plumbing():
         calls["n"] += 1
         return "{not json" if calls["n"] == 1 else PLAN_FILE.read_text(encoding="utf-8")
 
+    real_stream = brain._stream_any
     brain._stream_any = fake_stream
-    plan2, errs2, _ = brain.make_plan(prompt, STREAM_LEN, _load_segs(), cfg)
+    try:
+        plan2, errs2, _ = brain.make_plan(prompt, STREAM_LEN, _load_segs(), cfg)
+    finally:
+        brain._stream_any = real_stream          # later tests (12) use the real mock provider
     assert calls["n"] == 2 and not errs2, f"repair loop failed after {calls['n']} rounds: {errs2[:3]}"
     # provider registry sanity
     assert set(brain.PROVIDERS) == {"anthropic", "deepseek", "openai", "hive"}
@@ -632,10 +636,10 @@ def t12_mode_all_orchestration():
                     {"style": "twist", "text": f"Everyone Thought He'd Walk Free — Until {J} SHOCKED The Court", "ctr_rank": 4},
                     {"style": "human", "text": f"His Mother Begs {J} For Mercy — The Whole Courtroom Went SILENT", "ctr_rank": 5}]),
                 "thumbnail": ({"window_in": "0:36:00", "window_out": "0:36:04", "look_for": "the reaction",
-                               "text": "WARRANTS WERE WAITING", "gold_word": "WAITING", "placement": "top"}
+                               "text": "NO MORE CHANCES", "gold_word": "CHANCES", "placement": "top"}
                               if case["id"] == 2 else
                               {"window_in": "0:17:00", "window_out": "0:17:19", "look_for": "the reaction",
-                               "text": "THIRTEEN SKIPPED", "gold_word": "THIRTEEN", "placement": "top"}),
+                               "text": "HE WAS TERRIFIED", "gold_word": "TERRIFIED", "placement": "top"}),
                 "description": {"first_line": "What happens after thirteen skipped court dates?",
                                 "what_happens": "The defendant returns to court after failing to appear again and again. The judge opens an old file and reads it out loud before deciding.",
                                 "search_question": "What happens if you skip court in Texas?",
@@ -758,6 +762,61 @@ def t14_overlay_sched():
     return "geometry + spacing + conflicts + coming_up window"
 
 
+def t18_regressions():
+    """Fixes from the 2026-10-25 code study: validator json import, boundary ruling floor vs wrap-up snap,
+    boundary empty wrap list, TTS cache per provider, mode all hands the video to the boundary engine."""
+    import copy
+    import inspect
+    from ucf import boundary as BD, config as CFG, tts as TTS, validate as VAL
+    import run_stream
+    cfg = CFG.load(style="trial_tales")
+    CFG.apply_mode(cfg, "30")
+    # 1. a dict community_post without "text" must not crash the validator
+    plan = json.loads(PLAN_FILE.read_text(encoding="utf-8"))
+    plan["videos"][0]["community_post"] = {"body": "Who was right?"}
+    VAL.validate(plan, STREAM_LEN, None, cfg)
+    # 2. wrap-up snap never moves OUT before the ruling floor
+    case = {"id": 1, "name": "Test Case", "in": "0:10:00", "out": "0:20:00",
+            "phases": [{"phase": "ruling", "tc": "0:19:00"}]}
+    ev = {"call_outs": [], "wrap_up": [{"tc": parse_tc("0:18:55"), "phrase": "anything further"}],
+          "ruling": [], "silence": [], "tile_events": [], "video_available": False}
+    _old, new, _c = BD.refine_case(case, ev, None, cfg)
+    assert parse_tc(new) >= parse_tc("0:19:03"), f"OUT {new} cuts the ruling at 0:19:00"
+    # 2b. the snap keeps the whole wrap-up line (lands after its END, not its start)
+    case = {"id": 1, "name": "Test Case", "in": "0:10:00", "out": "0:20:00", "phases": []}
+    ev["wrap_up"] = [{"tc": parse_tc("0:19:40"), "end": parse_tc("0:19:45"), "phrase": "good luck"}]
+    _old, new, _c = BD.refine_case(case, ev, None, cfg)
+    assert parse_tc(new) >= parse_tc("0:19:45"), f"OUT {new} cuts the wrap-up line (ends 0:19:45)"
+    # 3. every wrap-up past the window: no crash
+    case = {"id": 1, "name": "Test Case", "in": "0:10:00", "out": "0:20:00", "phases": []}
+    ev["wrap_up"] = [{"tc": parse_tc("0:20:20"), "phrase": "good luck"}]
+    BD.refine_case(case, ev, None, cfg, next_in=parse_tc("0:20:10"))
+    # 4. a backup voice is never reused once the first provider works again
+    made = []
+    saved = dict(TTS.PROVIDERS)
+    try:
+        def down(text, out, c, tmp):
+            raise RuntimeError("ai33 down")
+
+        def up(text, out, c, tmp):
+            made.append("ai33")
+            TTS._dummy(text, out, c, tmp)
+        tc = {"tts_order": ["ai33", "dummy"], "ai33_voice": "v"}
+        with tempfile.TemporaryDirectory() as td:
+            TTS.PROVIDERS["ai33"] = down
+            w1 = TTS.synth("A short test line for the cache.", td, tc)
+            TTS.PROVIDERS["ai33"] = up
+            w2 = TTS.synth("A short test line for the cache.", td, tc)
+            assert made == ["ai33"] and w1 != w2, "fallback voice was reused after ai33 came back"
+            assert TTS.synth("A short test line for the cache.", td, tc) == w2 and made == ["ai33"], "ai33 cache miss"
+    finally:
+        TTS.PROVIDERS.update(saved)
+    # 5. mode all passes the video file + scan to build_plan
+    src = inspect.getsource(run_stream.main)
+    assert "video_path=video_path" in src and "scan_rep=rep" in src, "mode all does not hand the video to build_plan"
+    return "validator json, ruling floor, whole wrap-up line, empty wrap, tts cache per provider, mode-all video hand-over"
+
+
 def t10_end_to_end():
     out_root = ROOT / "output"
     for old in out_root.glob("2026-*_lVQ79x0Hd_w"):
@@ -813,6 +872,7 @@ def main():
         print("  ... test 10 renders the full 28 min video, this takes a few minutes")
         check(10, "end-to-end render", t10_end_to_end)
     check(11, "v10 title validator", t11_title_validator_v10)
+    check(12, "mode all orchestration", t12_mode_all_orchestration)
     check(13, "boundary engine", t13_boundary_engine)
     check(14, "overlay scheduler", t14_overlay_sched)
     check(15, "hive provider + fallback", t15_hive_and_fallback)
@@ -821,6 +881,7 @@ def main():
     check(18, "court audio cleanup", t18_audio_cleanup)
     check(19, "captions", t19_captions)
     check(20, "faces", t20_faces)
+    check(21, "regressions", t18_regressions)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))
