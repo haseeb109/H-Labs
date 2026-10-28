@@ -31,6 +31,11 @@ An NVIDIA GPU makes the final encode much faster (the tool uses NVENC automatica
 * Option **1**: paste the YouTube stream URL -> pick the style -> pick the mode -> answer the voice question -> wait.
   Videos land in `output\<date>_<stream id>\`.
 
+## Watermark
+Every video gets the channel name as a small, faint (25%) watermark that moves to a new place every 9 seconds, in all styles. It runs
+on Windows exactly like on the Mac (nothing extra to install; option 7 shows `watermark: ... ready`). It is applied automatically after
+each video is rendered, so rendering takes a few minutes longer. Only the owner switches it off (`watermark: false` in `config.json`).
+
 ## Styles in the menu
 `trial_tales`, `overruled`, `court_beacon`, `justice_served` (and any new style the owner pushes; it shows up after option 8).
 

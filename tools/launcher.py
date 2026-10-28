@@ -192,6 +192,17 @@ def doctor():
         ok("Chromium for graphics launches")
     except Exception as e:
         bad("Chromium for graphics does not launch: " + str(e).splitlines()[0][:120] + "  -> run: python -m playwright install chromium")
+    # watermark (every video gets one): needs the text font + ffmpeg's geq and overlay filters
+    try:
+        import tempfile
+        from ucf import watermark as WM
+        with tempfile.TemporaryDirectory() as t:
+            WM.render_text_png("Test", Path(t) / "w.png", 34)
+        flt = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True, text=True).stdout if shutil.which("ffmpeg") else ""
+        miss = [f for f in ("geq", "overlay") if f" {f} " not in flt]
+        (bad if miss else ok)("watermark: " + (f"ffmpeg lacks the {', '.join(miss)} filter (install the FULL ffmpeg build)" if miss else "text font + ffmpeg filters ready"))
+    except Exception as e:
+        bad(f"watermark check failed: {e}")
     (ok if shutil.which("node") else warn)("node " + ("found" if shutil.which("node") else "missing (only needed for yt-dlp challenge solving / hyperframes)"))
     if not shutil.which("yt-dlp") and not shutil.which("yt_dlp"):
         warn("yt-dlp command not on PATH (the .venv one is used automatically when you start from H Labs.bat)")
