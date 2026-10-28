@@ -158,8 +158,12 @@ class OVRenderer(TTRenderer):
         cur = "0:v"
         for i, (src, dst) in enumerate(geo["tiles"]):
             cx, cy, cw, ch = L.cover_crop(src, dst)
+            # optional per-style clean-up of soft Zoom footage: footage_pre runs before the upscale (denoise),
+            # footage_post after it (sharpen). Both default to "" so other styles render exactly as before.
+            pre, post = self.cfg.get("footage_pre") or "", self.cfg.get("footage_post") or ""
             fc.append(f"[t{i}]crop=w='{cw:.2f}*iw/1280':h='{ch:.2f}*ih/720':x='{cx:.2f}*iw/1280':y='{cy:.2f}*ih/720',"
-                      f"scale={dst[2]}:{dst[3]}:flags=lanczos,setsar=1[c{i}]")
+                      + (f"{pre}," if pre else "")
+                      + f"scale={dst[2]}:{dst[3]}:flags=lanczos," + (f"{post}," if post else "") + f"setsar=1[c{i}]")
             fc.append(f"[{cur}][c{i}]overlay={dst[0]}:{dst[1]}:eof_action=pass[s{i}]")
             cur = f"s{i}"
         if blur:
