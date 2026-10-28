@@ -1,6 +1,6 @@
-# Style samples (Test Style 2 and 7)
+# Style samples (Test Style 7)
 
-60-second previews of the 2 approved styles: Test Style 2 (Breaking News) and Test Style 7 (Sports Scoreboard), all cut from the same court clip so they are easy to compare.
+60-second preview of the approved style: Test Style 7 (Sports Scoreboard), cut from a real court clip.
 These are **previews**, built outside the main engine. A style you approve gets built into the real renderer
 afterwards (its own `styles/test_style_N/` pack + look module).
 
@@ -10,8 +10,7 @@ afterwards (its own `styles/test_style_N/` pack + look module).
 cd "/Users/haseeb/Desktop/Z Labs/H Labs"
 git pull
 .venv/bin/pip install playwright pillow && .venv/bin/playwright install chromium   # once (Overruled already needs these)
-.venv/bin/python3 tools/style_samples/render.py              # both styles (~1.5 min each)
-.venv/bin/python3 tools/style_samples/render.py --styles 7   # only one
+.venv/bin/python3 tools/style_samples/render.py              # Test Style 7 (~1.5 min)
 ```
 
 Output: `output/style_samples/Test_Style_N_<Look>.mp4`
@@ -37,7 +36,6 @@ In a full video the first subscribe CTA comes after the first big moment (~2-3 m
 
 | Style | Look | Captions |
 |---|---|---|
-| 2 | Breaking News | full video (TV closed captions) |
 | 7 | Sports Scoreboard | key moments |
 
 ## Logo / intro

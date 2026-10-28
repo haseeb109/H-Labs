@@ -1,7 +1,7 @@
-"""Render 60-second style samples for the approved Test Styles (2 and 7), all on the same court clip.
+"""Render 60-second style samples for the approved Test Style 7 (Sports Scoreboard), all on the same court clip.
 
-    .venv/bin/python3 tools/style_samples/render.py                    # both styles, downloads the clip with yt-dlp
-    .venv/bin/python3 tools/style_samples/render.py --styles 7         # only Test Style 7
+    .venv/bin/python3 tools/style_samples/render.py                    # Test Style 7, downloads the clip with yt-dlp
+    .venv/bin/python3 tools/style_samples/render.py --styles 7         # same, explicit
     .venv/bin/python3 tools/style_samples/render.py --source clip.mp4  # use a clip you already have
 
 Clip: Judge Boyd stream HKURkJmb-K8, 2:07:05-2:08:10 (Frank Corona probation hearing). Captions come from
@@ -374,7 +374,7 @@ def render_style(sid, style, src, words, painter, outdir: Path, keep=False):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--styles", nargs="*", help="style numbers (2, 7) or ids (default: all)")
+    ap.add_argument("--styles", nargs="*", help="style numbers (7) or ids (default: all)")
     ap.add_argument("--source", help="local clip of stream HKURkJmb-K8 starting at 2:07:05 (else yt-dlp download)")
     ap.add_argument("--transcript", default=str(ROOT / "tests/sample_boyd_2026-10-19_nexlev.json"))
     ap.add_argument("--out", default=str(ROOT / "output/style_samples"))

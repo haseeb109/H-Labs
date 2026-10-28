@@ -1,4 +1,4 @@
-"""The 2 approved Test Styles (2 = Breaking News, 7 = Sports Scoreboard) for the 60-second style samples.
+"""The approved Test Style 7 (Sports Scoreboard) for the 60-second style samples.
 
 Each style is a dict:
   name, look         shown in the file name and the console
@@ -24,52 +24,6 @@ CASE = {
 }
 
 STYLES = {}
-
-# --------------------------------------------------------------------------- 2. Breaking News
-STYLES["test_style_2"] = dict(
-    name="Test Style - 2", look="Breaking News",
-    footage=dict(mode="band", x=0, y=190, w=1920, h=540),
-    captions=dict(mode="full", max_words=7),
-    emph=[],
-    css="""
-:root{--navy:#0A2A6B;--navy2:#061A45;--red:#E10600;--steel:#9AA7B8}
-.bc{font-family:'Barlow Condensed',sans-serif;font-weight:800;text-transform:uppercase}
-.cap{left:50%;transform:translateX(-50%);top:640px;background:rgba(0,0,0,.82);color:#fff;font-family:'Roboto',sans-serif;font-weight:500;font-size:40px;padding:6px 18px;white-space:nowrap}
-""",
-    bg="""<div class="a" style="inset:0;background:linear-gradient(180deg,#0B2E74,#061A45)"></div>
-<div class="a" style="inset:0;background:repeating-linear-gradient(90deg,rgba(255,255,255,.035) 0 1px,transparent 1px 80px),repeating-linear-gradient(0deg,rgba(255,255,255,.035) 0 1px,transparent 1px 80px)"></div>
-<div class="a" style="left:0;right:0;top:1000px;height:80px;background:#fff"></div>
-<div class="a bc" style="left:0;top:1000px;height:80px;width:300px;background:#E10600;color:#fff;font-size:44px;display:flex;align-items:center;justify-content:center;z-index:2">COURT UPDATE</div>""",
-    intro="""<div class="a" style="inset:0;background:linear-gradient(180deg,#0B2E74,#061A45)"></div>
-<div class="a bc" style="left:0;right:0;top:470px;text-align:center;color:#fff;font-size:80px">[ CHANNEL INTRO ]</div>
-<div class="a" style="left:0;right:0;top:580px;text-align:center;color:#9AA7B8;font:500 30px Roboto">your intro.mp4 plays here</div>""",
-    el=dict(
-        hook_label='<div class="a bc" style="left:60px;top:760px;background:#E10600;color:#fff;font-size:50px;padding:6px 26px">COMING UP</div>',
-        hook_head='<div class="a" style="left:60px;top:830px;width:1800px;background:#fff;color:#0A2A6B;padding:10px 26px"><span class="bc" style="font-size:66px">Man who skipped probation for 2 years faces the judge</span></div>',
-        case_label='''<div class="a" style="left:60px;top:760px;width:1500px">
-<div class="bc" style="display:inline-block;background:#E10600;color:#fff;font-size:44px;padding:4px 22px">BREAKING</div>
-<div style="background:#fff;color:#0A2A6B;padding:8px 22px"><span class="bc" style="font-size:62px">Frank Corona · Probation hearing</span></div>
-<div class="bc" style="background:#0A2A6B;color:#fff;font-size:34px;padding:6px 22px;border:1px solid #9AA7B8">Cause 2020 CR12086 · Facing up to 2 years</div></div>''',
-        ticker='<div class="a bc" style="left:330px;top:1000px;height:80px;display:flex;align-items:center;color:#0A2A6B;font-size:42px;white-space:nowrap">CASE 1 OF 4 &nbsp;●&nbsp; CHARGE: PROBATION VIOLATION &nbsp;●&nbsp; STATE ASKING 18 MONTHS &nbsp;●&nbsp; COMING UP: THE JUDGE RULES &nbsp;●&nbsp; <span style="color:#E10600">SUBSCRIBE FOR EVERY VERDICT</span> &nbsp;●&nbsp; CASE 1 OF 4 &nbsp;●&nbsp; STATE ASKING 18 MONTHS &nbsp;●&nbsp; COMING UP: THE JUDGE RULES</div>',
-        counter='''<div class="a bc" style="left:0;top:1000px;height:80px;width:300px;background:#E10600;color:#fff;font-size:44px;display:flex;align-items:center;justify-content:center">COURT UPDATE</div>
-<div class="a bc" style="right:60px;top:56px;display:flex;gap:0;font-size:40px"><span style="background:#E10600;color:#fff;padding:4px 18px">● LIVE</span><span style="background:#fff;color:#0A2A6B;padding:4px 18px">2:07 PM</span></div>''',
-        mid='''<div class="a" style="right:60px;top:760px;width:420px;background:#061A45;border:2px solid #9AA7B8;padding:14px 22px">
-<div class="bc" style="color:#E10600;font-size:34px;letter-spacing:2px">VERDICT WATCH</div>
-<div class="bc" style="color:#fff;font-size:76px;line-height:1">0:24</div><div style="color:#9AA7B8;font:500 24px Roboto">until the ruling</div></div>''',
-        mid2='''<div class="a" style="left:60px;top:760px;width:1100px;background:#fff;border-left:14px solid #E10600;padding:14px 26px">
-<div class="bc" style="color:#E10600;font-size:30px">THE JUDGE</div>
-<div style="color:#0A2A6B;font:700 46px Roboto">“There’s no need to be afraid of me.”</div></div>''',
-        sub='<div class="a bc" style="right:60px;top:120px;background:#E10600;color:#fff;font-size:40px;padding:8px 24px;border:3px solid #fff">▶ SUBSCRIBE FOR VERDICTS</div>',
-        ruling='''<div class="a" style="left:0;right:0;top:760px;background:#E10600;padding:10px 60px"><span class="bc" style="color:#fff;font-size:92px">BREAKING: PROBATION REVOKED</span></div>''',
-        recap='''<div class="a" style="left:160px;top:180px;width:1600px;background:#061A45;border:2px solid #9AA7B8">
-<div class="bc" style="background:#E10600;color:#fff;font-size:40px;padding:8px 30px">DEVELOPING · THE RECAP</div>
-<div style="color:#fff;font:500 46px/1.4 Roboto;padding:30px 40px">Frank Corona missed 26 months of probation check-ins. He told the court he was scared. The State asked for 18 months. The judge revoked his probation.</div></div>''',
-        end='''<div class="a" style="inset:0;background:rgba(6,26,69,.92)"></div>
-<div class="a bc" style="left:120px;top:120px;color:#fff;font-size:80px">NEXT BROADCAST</div>
-<div class="a" style="left:120px;top:260px;width:900px;height:506px;border:4px solid #9AA7B8;display:flex;align-items:center;justify-content:center"><span class="bc" style="color:#9AA7B8;font-size:44px">NEXT VIDEO ▶</span></div>
-<div class="a bc" style="left:1110px;top:420px;background:#E10600;color:#fff;font-size:72px;padding:20px 50px">SUBSCRIBE</div>
-<div class="a" style="left:1110px;top:580px;color:#fff;font:500 34px Roboto;width:700px">New verdicts every week.</div>'''),
-)
 
 # --------------------------------------------------------------------------- 7. Sports Scoreboard
 STYLES["test_style_7"] = dict(
