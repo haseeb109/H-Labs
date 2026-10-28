@@ -43,7 +43,8 @@ def fetch_video(url, vid, workdir, cfg):
         return out
     h = int(cfg.get("max_height", 1080))
     fmt = f"bv*[height<={h}][vcodec^=avc1]+ba[ext=m4a]/bv*[height<={h}]+ba/b[height<={h}]"
-    r = subprocess.run(_cmd(cfg) + ["-f", fmt, "--merge-output-format", "mp4", "--no-playlist",
+    sort = cfg.get("download_sort") or ""        # e.g. "res,br": highest resolution, then highest bitrate (any codec)
+    r = subprocess.run(_cmd(cfg) + (["-S", sort] if sort else []) + ["-f", fmt, "--merge-output-format", "mp4", "--no-playlist",
                                     "-o", str(workdir / "source.%(ext)s"), "--newline", url])
     if r.returncode != 0 or not out.exists():
         raise RuntimeError("video download failed" + _hint(""))

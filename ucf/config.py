@@ -38,6 +38,7 @@ DEFAULTS = {
     # --- stream handling ---
     "cookies_file": "",                    # ONLY a burner account's cookies.txt, and only if YouTube blocks downloads
     "max_height": 1080,
+    "download_sort": "",                    # yt-dlp -S sort for the stream download; "" = yt-dlp default. "res,br" = best bitrate at the top resolution
     "captions": "auto",                    # auto = YouTube captions first, whisper if missing/sparse | whisper
     "whisper_model": "base.en",
     # --- rendering ---
