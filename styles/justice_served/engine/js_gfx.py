@@ -158,9 +158,30 @@ def lower_third(kicker, name, sub, out):
 
 
 def brief(case_label, rows, geom, out, title="THE MATCHUP"):
+    """rows = [(label, text)]. A wide geom (w > 1000) draws the matchup as one row under the footage strip."""
     x, y, w, h = geom
+    if w > 1000:
+        cols = "".join(
+            '<div style="flex:1;min-width:0;padding:0 20px;border-left:3px solid var(--line)">'
+            f'<div class="mono" style="font-size:17px;letter-spacing:2px;color:var(--amber);text-transform:uppercase">{esc(a)}</div>'
+            '<div class="bsd" style="font-weight:800;font-size:32px;line-height:1.05;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">'
+            f'{esc(b)}</div></div>' for a, b in rows)
+        return render(f'<div class="abs" style="left:{x}px;top:{y}px;width:{w}px;height:{h}px;background:#000;border:3px solid var(--line);border-top:6px solid var(--amber);display:flex;align-items:center;overflow:hidden">'
+                      f'<div class="bsd amb" style="padding:2px 20px;font-size:30px;letter-spacing:3px;margin:0 8px 0 14px;white-space:nowrap">{esc(title)} · {esc(case_label)}</div>{cols}</div>', out)
     dl = "".join(f"<dt>{esc(a)}</dt><dd>{esc(b)}</dd>" for a, b in rows)
     return render(f'<div class="panel" style="left:{x}px;top:{y}px;width:{w}px;height:{h}px"><h4>{esc(title)} · {esc(case_label)}</h4><dl>{dl}</dl></div>', out)
+
+
+def scoreboard(round_label, name, charge, out):
+    """Header bar above the footage: STATE vs NAME + ROUND chip (+ charge)."""
+    return render(
+        '<div class="abs" style="left:40px;top:22px;width:1480px;height:82px;background:#000;border:3px solid var(--line);border-left:12px solid var(--amber);display:flex;align-items:center;gap:22px;padding:0 24px;overflow:hidden">'
+        '<span class="bsd" style="font-size:56px;color:var(--white)">STATE</span>'
+        '<span class="bsd" style="font-size:40px;color:var(--amber)">VS</span>'
+        f'<span class="bsd" style="font-size:56px;color:var(--white);white-space:nowrap;overflow:hidden">{esc(name)}</span>'
+        '<span style="flex:1"></span>'
+        f'<span class="bsd amb" style="font-size:34px;letter-spacing:3px;padding:2px 18px;white-space:nowrap">{esc(round_label)}</span>'
+        '</div>', out)
 
 
 def quote_card(label, quote, who, geom, out):
@@ -197,7 +218,7 @@ def exchange(ts, who_q, q, who_a, a, out):
 
 # --------------------------------------------------------------------------------------- subscribe CTAs
 def pill(out):
-    return render(f'<div class="sub" style="left:1000px;top:58px;font-size:40px;padding:4px 24px">{BELL}SUBSCRIBE</div>', out)
+    return render(f'<div class="sub" style="left:1540px;top:30px;font-size:40px;padding:4px 24px">{BELL}SUBSCRIBE</div>', out)
 
 
 def corner_button(out):

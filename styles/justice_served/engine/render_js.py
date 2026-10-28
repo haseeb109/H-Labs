@@ -50,6 +50,28 @@ FIRST_CTA_AT = 150.0                        # first corner SUBSCRIBE button, sec
 KINDS = ("fact", "so_far", "watch", "verdict_q", "coming_up")
 
 
+def _ev(v):
+    return int(round(v)) & ~1
+
+
+def js_geometry(layout, template, active):
+    """Footage on the canvas with the LEAST scaling (quality first - never the 2x zoom of a 640x360 Zoom tile):
+    * 2 tiles  -> both tiles side by side as one 1920x540 strip (exactly 1.5x, same as the approved sample)
+    * 1 / 3 / 4 tiles -> the whole original Zoom frame at 0.9x (a slight DOWN-scale: sharper than the source), matchup card at the right
+    -> dict(tiles=[(src_rect_1280, dst_rect)], big=rect, small=[rects], brief=(rect, mode))"""
+    rects = L.TEMPLATES[template]
+    n = len(rects)
+    act = active if active is not None and active < n else L.DEFAULT_ACTIVE.get(layout, 0)
+    if layout == "2":
+        dst = [(0, 120, 960, 540), (960, 120, 960, 540)]
+        return dict(tiles=list(zip(rects, dst)), big=dst[act], small=[d for i, d in enumerate(dst) if i != act],
+                    brief=((40, 676, 1840, 104), "always"))
+    k, ox, oy = 0.9, 40, 118
+    dst = [(ox + _ev(k * x), oy + _ev(k * y), _ev(k * w), _ev(k * h)) for x, y, w, h in rects]
+    whole = (ox, oy, _ev(k * 1280), _ev(k * 720))
+    return dict(tiles=list(zip(rects, dst)), big=whole, small=[], brief=((1224, 118, 656, 648), "always"))
+
+
 class JSRenderer(OVRenderer):
     def __init__(self, cfg, sources, root):
         super(TTRenderer, self).__init__(cfg, sources, root)       # renderer base only (no canvas / gavel assets)
@@ -76,7 +98,7 @@ class JSRenderer(OVRenderer):
 
     # ------------------------------------------------------------------ staging
     def stage_clip(self, sname, a, b, out, *, layers=(), brief=None, brief_first=None, brand=True, ticker=None, blur=False,
-                   wav=None, lead=0.0, fade_out=False, prog=None):
+                   wav=None, lead=0.0, fade_out=False, prog=None, header=None):
         """Render [a, b) of `sname` on the Justice Served canvas. layers: {png, s, e, fin, fout, slide} relative to a."""
         path, a, b = self.locate(sname, a, b)
         d = b - a
@@ -88,13 +110,15 @@ class JSRenderer(OVRenderer):
             dr = t1 - t0
             if dr < 0.1:
                 continue
-            geo = L.geometry(lay, tpl, act)
+            geo = js_geometry(lay, tpl, act)
             ls = [dict(l) for l in layers]
             if not blur:
                 fr = JG.tile_frames(geo["small"], geo["big"], self.gdir / f"fr_{lay}_{act}_{tpl}.png")
                 ls.insert(0, dict(png=fr, s=0, e=d))
                 if ticker:
                     ls.insert(1, dict(png=ticker, s=0, e=d))
+                if header:
+                    ls.insert(1, dict(png=header, s=0, e=d))
                 if brief:
                     geom, mode = geo["brief"]
                     if mode == "always":
@@ -267,6 +291,7 @@ class JSRenderer(OVRenderer):
             sname = srcname(c)
             name, kicker, sub, rows = self._case_info(plan, c, i + 1)
             lt_png = JG.lower_third(kicker, name, sub, gf(f"lt_{cid}"))
+            head_png = JG.scoreboard(kicker, c["name"], c.get("charge") or "", gf(f"head_{cid}"))
             tick_png = JG.ticker(f"ROUND {i + 1}", f"{name}  ·  187th District Court · Bexar County", gf(f"tick_{cid}"))
             brief_fn = lambda geom, rows=rows, i=i, cid=cid: JG.brief(f"ROUND {i + 1}", rows, geom, gf(f"brief_{cid}"))   # noqa: E731
             for pc in [p for p in pieces if p["cid"] == cid]:
@@ -296,7 +321,7 @@ class JSRenderer(OVRenderer):
                         lay.append(dict(png=png, s=s - pc["g0"], e=e - pc["g0"], fin=0.6, fout=0.6))
                     f0, f1 = pc["el"] / pc["tot"], (pc["el"] + d) / pc["tot"]
                     self.stage_clip(sname, pc["a"], pc["b"], p, layers=lay, brief=brief_fn, brief_first=10.5 if j == 0 else None,
-                                    ticker=tick_png, prog=(f0, f1))
+                                    ticker=tick_png, prog=(f0, f1), header=head_png)
                 seg("case", p, case_id=cid, src=sname, a=pc["a"], b=pc["b"])
                 k += 1
             if i < len(ids) - 1:

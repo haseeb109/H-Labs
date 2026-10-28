@@ -30,9 +30,7 @@
       "jury trial",
       "courtroom footage",
       "true crime court"
-    ],
-    "footage_pre": "hqdn3d=2:2:4:4",
-    "footage_post": "unsharp=5:5:1.0:5:5:0.0"
+    ]
   },
   "renderer_module": "engine/render_js.py",
   "renderer_class": "JSRenderer"

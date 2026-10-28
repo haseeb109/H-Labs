@@ -48,20 +48,25 @@ def pick_encoder(cfg):
         return want
     for e in ("h264_videotoolbox", "h264_nvenc"):
         if e in enc:
-            # make sure it actually works on this machine
-            t = subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=320x240:d=0.2",
-                                "-c:v", e, "-f", "null", "-"], capture_output=True)
+            # make sure it actually works on this machine - with the SAME quality options the renders use, so a driver that
+            # rejects one of them falls back to x264 now instead of failing in the middle of a video
+            t = subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=1280x720:d=0.5:r=30",
+                                *venc(e), "-f", "null", "-"], capture_output=True)
             if t.returncode == 0:
                 return e
     return "libx264"
 
 
 def venc(enc):
+    """Quality-first video encoding (the footage is already a soft 720p Zoom stream: never lose more of it than we must).
+    x264 crf 16 / NVENC cq 16 (hq tune, adaptive quantisation) are constant-quality: size follows the content, so mostly
+    static court footage stays small. VideoToolbox has no constant-quality mode here, so it gets a generous bitrate."""
     if enc == "h264_videotoolbox":
-        return ["-c:v", enc, "-b:v", "9M", "-pix_fmt", "yuv420p", "-g", "60"]
+        return ["-c:v", enc, "-b:v", "14M", "-maxrate", "20M", "-profile:v", "high", "-pix_fmt", "yuv420p", "-g", "60"]
     if enc == "h264_nvenc":
-        return ["-c:v", enc, "-preset", "p5", "-rc", "vbr", "-cq", "21", "-b:v", "0", "-pix_fmt", "yuv420p", "-g", "60"]
-    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-g", "60"]
+        return ["-c:v", enc, "-preset", "p6", "-tune", "hq", "-rc", "vbr", "-cq", "16", "-b:v", "0", "-spatial-aq", "1",
+                "-temporal-aq", "1", "-profile:v", "high", "-pix_fmt", "yuv420p", "-g", "60"]
+    return ["-c:v", "libx264", "-preset", "medium", "-crf", "16", "-profile:v", "high", "-pix_fmt", "yuv420p", "-g", "60"]
 
 
 AENC = ["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"]
