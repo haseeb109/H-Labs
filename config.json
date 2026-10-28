@@ -10,5 +10,6 @@
   ],
   "max_tokens": 64000,
   "brain_fallback": "anthropic",
-  "brain": "hive"
+  "brain": "hive",
+  "download_sort": "res,br"
 }
