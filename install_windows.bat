@@ -16,14 +16,15 @@ if errorlevel 1 (
   exit /b 1
 )
 
-rem python: "python" may be missing from PATH or be the Microsoft Store stub, so also try the "py" launcher
+rem python: the tool needs Python 3.10-3.13 (3.12 recommended; 3.14 is too new for some libraries).
+rem "python" may be missing from PATH or be the Microsoft Store stub, so use the "py" launcher first.
 set PYCMD=
-python --version >nul 2>nul && set PYCMD=python
+py -3.12 --version >nul 2>nul && set PYCMD=py -3.12
+if not defined PYCMD py -3.11 --version >nul 2>nul && set PYCMD=py -3.11
+if not defined PYCMD py -3.13 --version >nul 2>nul && set PYCMD=py -3.13
+if not defined PYCMD python -c "import sys; sys.exit(0 if (3,10) <= sys.version_info[:2] <= (3,13) else 1)" >nul 2>nul && set PYCMD=python
 if not defined PYCMD (
-  py -3 --version >nul 2>nul && set PYCMD=py -3
-)
-if not defined PYCMD (
-  echo [install] Python 3.12
+  echo [install] Python 3.12  ^(a suitable Python was not found; any newer Python stays installed, it is simply not used^)
   winget install -e --id Python.Python.3.12 --accept-package-agreements --accept-source-agreements
   set NEED_RESTART=1
 ) else (
