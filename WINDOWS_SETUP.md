@@ -37,6 +37,16 @@ It replaces the old `.venv` automatically. Python / ffmpeg / Git installed earli
   Videos land in `output\<date>_<stream id>\`.
 * The first video on a new PC downloads the speech-recognition model once (a few hundred MB, into `runtime\hf`).
 
+## End of a run
+* A Windows notification + sound says the run is done (or that it stopped on an error), and the output folder opens.
+* The window shows **PROCESSING TIME** (total + every stage); `state\run_history.csv` keeps one line per run.
+* `UPLOAD_LIST.txt` in the output folder: the videos in upload order (best first) with title, backup title, length, QC and a
+  checklist, plus the cases that need review.
+* **Free disk space?** The tool lists what it can delete and asks `y`/Enter. Deleted: only the downloaded stream
+  (`work\<id>\source.mp4`, 1-3 GB) and the render temp files (`_work` folders). Never deleted: the finished videos,
+  thumbnails, metadata, transcript, plan and the AI-voice cache. (Rendering the same stream again downloads it again.)
+  `"cleanup_after_run": "always"` / `"never"` in `config.json` skips the question.
+
 ## Watermark
 Every video gets the channel name as a small, faint (25%) watermark that moves to a new place every 9 seconds, in all styles. It runs
 on Windows exactly like on the Mac (nothing extra to install; option 7 shows `watermark: ... ready`). It is applied automatically after

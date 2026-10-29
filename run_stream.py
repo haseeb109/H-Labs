@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ucf.render_tt import TTRenderer
+from ucf import finish as FINISH
 from ucf import runclock as CLOCK
 from ucf import brain, cards, config, download, scan, sheets, timeline as TL, transcript, tts, validate as VAL
 from ucf.render import Renderer
@@ -48,6 +49,8 @@ def _usage_exit(work_holder):
         print("\n" + "\n".join(lines))
     if not CLOCK.T["printed"] and work_holder.get("dir"):     # the run stopped early (error / stage stop): still show the time
         print("\n" + "\n".join(CLOCK.lines(work_holder.get("stream_len", 0), status="stopped before the end")))
+        if not work_holder.get("planned_stop") and work_holder.get("notify", True):
+            FINISH.notify("H Labs stopped", f"{Path(work_holder['dir']).name}: the run stopped before the end - check the window", ok=False)
 
 
 _WORK = {}
@@ -74,8 +77,10 @@ def main():
     a = ap.parse_args()
     CLOCK.reset()
     CLOCK.stage("info")
+    _WORK["planned_stop"] = bool(a.stage) and a.stage != "render"
 
     cfg = config.load(a.config, style=a.style)
+    _WORK["notify"] = cfg.get("notify_when_done", True)
     if a.brain:
         cfg["brain"] = a.brain
         cfg["brain_pass_a"] = cfg["brain_pass_b"] = ""   # an explicit --brain runs every pass on that brain
@@ -341,7 +346,7 @@ def main():
     else:
         rn = (TTRenderer if cfg.get("_renderer", "tt") == "tt" else Renderer)(cfg, sources, root)
     ui(f"encoder: {rn.enc}")
-    summary = []
+    summary, rows = [], []
     for v in plan["videos"]:
         if only and v["n"] not in only:
             continue
@@ -393,6 +398,7 @@ def main():
         ui(f"  done: {res['final']}  {fmt_dur(res['measured_total'])}  QC {'OK' if qc['ok'] else 'CHECK'}  {qc['loudness_lufs']} LUFS"
            f"  (took {CLOCK.hms(qc['processing_seconds'])})")
         summary.append((v["n"], folder.name, res["measured_total"], qc["ok"]))
+        rows.append((v["n"], folder.name, res["measured_total"], qc["ok"], v, qc))
     CLOCK.stage("report")
     carry_txt = ["CARRIED FORWARD (state/carry_forward.json): " + (brain.carried_text(carry) if carry else "none")]
     if mode == "all":
@@ -413,8 +419,18 @@ def main():
     (outroot / "run_report.txt").write_text("\n".join(rep), encoding="utf-8")
     shutil.copy(plan_path, outroot / "plan.json")
     shutil.copy(work / "plan_report.txt", outroot / "plan_report.txt")
+    ulist = FINISH.upload_list(plan, rows, outroot)
     print("\n".join(rep))
+    ui("upload list:", ulist)
     ui("ALL DONE ->", outroot)
+    n_ok = sum(1 for *_, ok in summary if ok)
+    n_rev = sum(1 for c in plan.get("cases", []) if c.get("needs_review"))
+    if cfg.get("notify_when_done", True):
+        FINISH.notify("H Labs - done", f"{sid}: {len(summary)} videos ({n_ok} QC OK"
+                      + (f", {n_rev} need review" if n_rev else "") + f") in {CLOCK.hms(CLOCK.total())}", ok=n_ok == len(summary))
+    if cfg.get("open_output_after_run", True):
+        FINISH.open_folder(outroot)
+    FINISH.cleanup(cfg, work, outroot, a.video_file, ui)
 
 
 if __name__ == "__main__":

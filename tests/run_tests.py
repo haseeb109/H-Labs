@@ -1010,6 +1010,34 @@ def t27_processing_time():
     return f"{out[0].strip()} | per-stage lines + history csv ok"
 
 
+def t28_finish():
+    """End of run: cleanup deletes only the downloaded stream + render temp files (never videos, voice cache, own file); upload list."""
+    from ucf import finish as F
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        work, out = tmp / "work" / "sid", tmp / "out" / "run"
+        for f, n in ((work / "source.mp4", 5000), (work / "transcript.json", 10), (work / "tts" / "a.mp3", 300),
+                     (out / "01_A" / "video.mp4", 900), (out / "01_A" / "thumbnail.jpg", 50), (out / "01_A" / "_work" / "c1.mp4", 700),
+                     (out / "02_B" / "_work" / "c1.mp4", 400)):          # 02_B has no video.mp4 -> its temp files stay
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_bytes(b"x" * n)
+        names = sorted(str(p.relative_to(tmp)) for p, _, _ in F.cleanup_candidates(work, out))
+        assert names == [str(Path("out/run/01_A/_work")), str(Path("work/sid/source.mp4"))], names
+        assert not F.cleanup_candidates(work, out, own_video_file=work / "source.mp4")[0][0].name.startswith("source"), "own file kept"
+        freed = F.cleanup({"cleanup_after_run": "always"}, work, out, None, lambda *a: None)
+        assert freed == 5700 and (out / "01_A" / "video.mp4").exists() and (work / "tts" / "a.mp3").exists() \
+            and (work / "transcript.json").exists() and (out / "02_B" / "_work").exists() and not (work / "source.mp4").exists()
+        assert F.cleanup({"cleanup_after_run": "never"}, work, out, None) == 0
+        plan = {"cases": [{"name": "Z", "in": "1:00:00", "out": "1:10:00", "needs_review": True, "reject_reason": "C-04"}]}
+        ul = F.upload_list(plan, [(2, "02_B", 700, False, {"rank": 2, "title": "T2"}, {"note": "loud"}),
+                                  (1, "01_A", 900, True, {"rank": 1, "title": "T1", "backup_title": "B1"}, {})], out)
+        txt = ul.read_text(encoding="utf-8")
+        assert txt.index("01_A") < txt.index("02_B") and "T1" in txt and "QC CHECK - loud" in txt and "NEEDS REVIEW" in txt, txt
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return "cleanup frees stream + render temp only (videos, voice cache, transcript kept); upload list ranked + review list"
+
+
 def t25_nvenc_levels():
     """An old GPU/driver that rejects the best NVENC options gets the next simpler set; one that rejects all falls back to x264."""
     from ucf import render
@@ -1071,6 +1099,7 @@ def main():
     check(25, "nvenc option levels", t25_nvenc_levels)
     check(26, "Pass A salvage + C-04 location", t26_pass_a_salvage)
     check(27, "processing time", t27_processing_time)
+    check(28, "end of run: cleanup + upload list", t28_finish)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))
