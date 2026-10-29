@@ -959,6 +959,33 @@ def t24_download_fallback():
     return "3 strategies: configured -> default clients -> tv+web_safari; the 3rd succeeded"
 
 
+def t25_nvenc_levels():
+    """An old GPU/driver that rejects the best NVENC options gets the next simpler set; one that rejects all falls back to x264."""
+    from ucf import render
+    real = subprocess.run
+
+    def make(first_ok_level):
+        def fake(cmd, *a, **k):
+            cmd = [str(c) for c in cmd]
+            if "-encoders" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, stdout=" V....D h264_nvenc NVIDIA NVENC H.264 encoder", stderr="")
+            lvl = next((i for i, L in enumerate(render.NVENC_LEVELS) if all(x in cmd for x in L)), None)
+            return subprocess.CompletedProcess(cmd, 0 if (first_ok_level is not None and lvl is not None and lvl >= first_ok_level) else 1, stdout="", stderr="")
+        return fake
+    try:
+        subprocess.run = make(2)
+        assert render.pick_encoder({}) == "h264_nvenc" and render._NV["level"] == 2, render._NV
+        assert "-cq" in render.venc("h264_nvenc") and "20" in render.venc("h264_nvenc")
+        subprocess.run = make(0)
+        assert render.pick_encoder({}) == "h264_nvenc" and render._NV["level"] == 0
+        subprocess.run = make(None)
+        assert render.pick_encoder({}) == "libx264"
+    finally:
+        subprocess.run = real
+        render._NV["level"] = 0
+    return "full options -> simpler options -> x264 fallback all chosen correctly"
+
+
 def main():
     print("H Labs self-test matrix")
     check(1, "environment", t1_environment)
@@ -990,6 +1017,7 @@ def main():
     check(22, "watermark", t22_watermark)
     check(23, "brain retry (Hive only)", t23_brain_retry)
     check(24, "download fallback", t24_download_fallback)
+    check(25, "nvenc option levels", t25_nvenc_levels)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))

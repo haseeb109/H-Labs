@@ -172,7 +172,17 @@ def doctor():
             sys.path.insert(0, str(ROOT))
             from ucf import render
             enc = render.pick_encoder({"encoder": "auto"})
-            (ok if enc != "libx264" else warn)(f"video encoder that will be used: {enc}" + ("" if enc != "libx264" else "  (no GPU encoder found: CPU only, slower. NVIDIA GPU + recent driver gives h264_nvenc; run "nvidia-smi" to check)"))
+            (ok if enc != "libx264" else warn)(f"video encoder that will be used: {enc}" + ("" if enc != "libx264" else "  (no GPU encoder found: CPU only, slower. NVIDIA GPU + recent driver gives h264_nvenc; run nvidia-smi to check)"))
+            if enc == "libx264" and "nvenc" in subprocess.run([ff, "-hide_banner", "-encoders"], capture_output=True, text=True).stdout:
+                err = subprocess.run([ff, "-hide_banner", "-f", "lavfi", "-i", "color=c=black:s=1280x720:d=1", "-c:v", "h264_nvenc", "-f", "null", "-"],
+                                     capture_output=True, text=True).stderr
+                why = next((x.split("] ", 1)[-1] for x in err.splitlines() if any(k in x for k in (
+                    "Driver does not support", "minimum required", "No NVENC capable", "OpenEncodeSessionEx", "unsupported"))), "")
+                if why:
+                    warn("NVIDIA encoder found but rejected: " + why[:150])
+                    if "nvenc API version" in err or "minimum required" in err:
+                        warn("  -> this ffmpeg is newer than the GPU driver. Fix: install ffmpeg 8.0 (winget uninstall Gyan.FFmpeg; "
+                             "winget install -e --id Gyan.FFmpeg --version 8.0.1) or just use CPU: \"x264_preset\": \"fast\" in config.json")
         except Exception as e:
             warn(f"could not test encoders: {e}")
     else:

@@ -83,6 +83,14 @@ def probe_dur(p):
 
 
 _X264 = {"preset": "medium", "crf": "16"}
+# NVENC option sets, best first. Older GPUs/drivers (Maxwell, Pascal) reject some options (tune hq, temporal AQ ...): pick_encoder
+# tests the sets in order and keeps the first one that really encodes on THIS machine.
+NVENC_LEVELS = [
+    ["-preset", "p6", "-tune", "hq", "-rc", "vbr", "-cq", "16", "-b:v", "0", "-spatial-aq", "1", "-temporal-aq", "1", "-profile:v", "high"],
+    ["-preset", "p5", "-rc", "vbr", "-cq", "18", "-b:v", "0", "-spatial-aq", "1", "-profile:v", "high"],
+    ["-preset", "p5", "-rc", "vbr", "-cq", "20", "-b:v", "0"],
+]
+_NV = {"level": 0}
 
 
 def pick_encoder(cfg):
@@ -94,12 +102,15 @@ def pick_encoder(cfg):
         return want
     for e in ("h264_videotoolbox", "h264_nvenc"):
         if e in enc:
-            # make sure it actually works on this machine - with the SAME quality options the renders use, so a driver that
-            # rejects one of them falls back to x264 now instead of failing in the middle of a video
-            t = subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=1280x720:d=0.5:r=30",
-                                *venc(e), "-f", "null", "-"], capture_output=True)
-            if t.returncode == 0:
-                return e
+            for lvl in (range(len(NVENC_LEVELS)) if e == "h264_nvenc" else [0]):
+                _NV["level"] = lvl
+                # make sure it actually works on this machine, with the SAME options the renders use, so a driver that
+                # rejects one falls back to a simpler set (or x264) now instead of failing in the middle of a video
+                t = subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=1280x720:d=0.5:r=30",
+                                    *venc(e), "-f", "null", "-"], capture_output=True)
+                if t.returncode == 0:
+                    return e
+    _NV["level"] = 0
     return "libx264"
 
 
@@ -110,8 +121,7 @@ def venc(enc):
     if enc == "h264_videotoolbox":
         return ["-c:v", enc, "-b:v", "14M", "-maxrate", "20M", "-profile:v", "high", "-pix_fmt", "yuv420p", "-g", "60"]
     if enc == "h264_nvenc":
-        return ["-c:v", enc, "-preset", "p6", "-tune", "hq", "-rc", "vbr", "-cq", "16", "-b:v", "0", "-spatial-aq", "1",
-                "-temporal-aq", "1", "-profile:v", "high", "-pix_fmt", "yuv420p", "-g", "60"]
+        return ["-c:v", enc, *NVENC_LEVELS[_NV["level"]], "-pix_fmt", "yuv420p", "-g", "60"]
     return ["-c:v", "libx264", "-preset", _X264["preset"], "-crf", _X264["crf"], "-profile:v", "high", "-pix_fmt", "yuv420p", "-g", "60"]
 
 
