@@ -26,3 +26,6 @@ _backup_*/
 # Secrets must never live here (keys belong in ~/.config/umf/*.env)
 *.env
 cookies.txt
+
+# Windows: tools installed by Setup.bat into this folder
+runtime/

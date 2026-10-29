@@ -1,35 +1,41 @@
 # H Labs on Windows (for the team)
 
 Development happens on the owner's Mac and is pushed to GitHub. The team runs the tool on Windows from the same repo,
-so everyone always has the same code. Nobody edits code on the Windows PCs: you only `git pull` to update.
+so everyone always has the same code. Nobody edits code on the Windows PCs: menu option 8 updates them.
 
 **PC that fits:** Windows 10/11 64-bit, 16 GB RAM, 100+ GB free disk (a 3 h stream is ~1-3 GB plus temp files).
 An NVIDIA GPU makes the final encode much faster (the tool uses NVENC automatically); without one it uses the CPU (slower, same quality).
 
-## First time on a PC (about 15 minutes)
+## First time on a PC (about 15-20 minutes, mostly downloads)
 
-1. **Get the code.** Install Git for Windows (https://git-scm.com), then in a short folder (not deep inside Desktop/OneDrive):
-   ```
-   cd C:\
-   git clone https://github.com/haseeb109/H-Labs.git HLabs
-   ```
-   The repo is private: Git asks you to sign in to GitHub once. The account needs access to the repo.
-2. **Install everything.** Double-click `install_windows.bat` in `C:\HLabs`.
-   It installs Python 3.12, ffmpeg, Node.js and Git with winget (if missing), builds the `.venv`, installs the Python packages,
-   Chromium (for the graphics) and creates empty key files in `C:\Users\<you>\.config\umf\`.
-   If it says some tools were just installed, **close the window and run it again** (Windows needs a new window to see them).
-3. **Add the API keys** (the owner gives you these, they are never in the repo or in chat):
-   double-click `H Labs.bat` -> option **4**, paste each key after the `=` and save.
-   Needed: `hive.env` (the brain) and `ai33.env` (the AI voice). Nothing else: the tool runs on Hive only.
-4. **Check.** `H Labs.bat` -> option **7** (Setup check). Everything should say `[ok]`.
-   `[WARN]` for the optional parts (anthropic/deepseek/openai keys, faster_whisper) is fine. `[FAIL]` must be fixed first.
+Nothing is installed on the PC itself: no admin rights, no winget, no PATH changes. `Setup.bat` puts exact, pinned versions of
+everything (Python 3.12, ffmpeg 8.0.1, Node.js, Chromium, the Python packages from `uv.lock`) **inside the H Labs folder**
+(`runtime\` and `.venv\`), so every laptop gets the same set-up, whatever is or is not installed on it.
+
+1. **Get the code** into a short folder (not inside Desktop/OneDrive), e.g. `C:\HLabs`. Either:
+   * with Git (if the PC has it): `cd C:\` then `git clone https://github.com/haseeb109/H-Labs.git HLabs`, or
+   * without Git: on github.com open the repo -> **Code -> Download ZIP**, unzip it to `C:\HLabs`.
+     Setup links the folder to GitHub for updates (a GitHub sign-in window may open once).
+   The repo is private: the GitHub account needs access to it.
+2. **Double-click `Setup.bat`.** It downloads and checks everything, asks for the two API keys (Hive + ai33; the owner gives them,
+   they are never in the repo or in chat; press Enter to add them later with option 4) and ends with **READY** or a short list of
+   what is still missing.
+3. Double-click **`H Labs.bat`**. Option **7** (Setup check) should show `[ok]` everywhere; `[WARN]` lines are optional parts.
+
+**PC that was set up with the old installer (`install_windows.bat`):** do option 8 once (or `git pull`), then double-click `Setup.bat`.
+It replaces the old `.venv` automatically. Python / ffmpeg / Git installed earlier with winget can stay; the tool no longer uses them.
+
+**Broken install / strange error after an update:** just run `Setup.bat` again. To start completely clean, delete the
+`runtime` and `.venv` folders first (your videos in `output\` and the keys are not touched).
 
 ## Every day
 
 * Double-click `H Labs.bat`.
-* Option **8** updates the tool from GitHub (`git pull`). Do this before starting work, so you have the owner's latest styles and fixes.
+* Option **8** updates everything: the newest code from GitHub, any new pinned tool or package, and the newest yt-dlp.
+  Do this before starting work. The window re-opens by itself afterwards.
 * Option **1**: paste the YouTube stream URL -> pick the style -> pick the mode -> answer the voice question -> wait.
   Videos land in `output\<date>_<stream id>\`.
+* The first video on a new PC downloads the speech-recognition model once (a few hundred MB, into `runtime\hf`).
 
 ## Watermark
 Every video gets the channel name as a small, faint (25%) watermark that moves to a new place every 9 seconds, in all styles. It runs
@@ -45,4 +51,6 @@ each video is rendered, so rendering takes a few minutes longer. Only the owner 
 * **Keep 100 GB free**; delete old `work\<stream id>\` folders when a stream is finished.
 * Antivirus can slow ffmpeg a lot: ask IT to exclude the `C:\HLabs` folder if renders are very slow.
 * If something fails, send the owner the last 30 lines of the window and the result of option 7.
-* Do not edit files inside the repo on the PC; if you must, tell the owner (local edits can block `git pull`).
+* Do not edit files inside the repo on the PC; if you must, tell the owner (local edits can block the update).
+* For the owner: a new Python package goes into `pyproject.toml`, then run `uv lock` and commit both files; a new ffmpeg / Node / uv
+  version is a new pin (version, URL, SHA-256) at the top of `tools/win/setup.ps1`. The next option 8 installs it on every PC.

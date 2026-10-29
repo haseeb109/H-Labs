@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 os.chdir(ROOT)
 os.environ.setdefault("PYTHONUTF8", "1")
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+WIN = os.name == "nt"
 KEYS = Path.home() / ".config" / "umf"
 KEY_FILES = {"hive.env": "HIVE_API_KEY", "ai33.env": "AI33_API_KEY"}      # the only two keys this setup needs (brain + AI voice)
 BRAINS = {"1": ("hive", "Hive - DeepSeek V4.1 Flash   - default, ~$0.01/video, Claude fixes the cases it cannot"),
@@ -152,20 +153,25 @@ def _key_set(fn, var):
     return False
 
 
-def doctor():
-    """Setup check: what is installed, which encoder will be used, which keys are present."""
+def doctor(pause=True):
+    """Setup check: what is installed, which encoder will be used, which keys are present. Returns the number of [FAIL] lines."""
+    fails = []
     ok = lambda m: print("  [ok]   " + m)          # noqa: E731
     warn = lambda m: print("  [WARN] " + m)         # noqa: E731
-    bad = lambda m: print("  [FAIL] " + m)         # noqa: E731
+
+    def bad(m):
+        fails.append(m)
+        print("  [FAIL] " + m)
     print(f"\nSetup check ({platform.system()} {platform.release()}, Python {platform.python_version()})")
     (ok if sys.version_info >= (3, 10) else bad)(f"python {platform.python_version()} (3.10+ needed)")
     if (ROOT / ".venv").exists():
         ok(".venv found")
     else:
-        warn(".venv missing - run install_windows.bat first (Windows) or create one")
+        warn(".venv missing - run Setup.bat first (Windows) or create one")
     ff = shutil.which("ffmpeg")
     if ff:
-        ok("ffmpeg: " + ff)
+        ver = subprocess.run([ff, "-hide_banner", "-version"], capture_output=True, text=True).stdout.split(" ")[2:3]
+        ok(f"ffmpeg {''.join(ver)}: {ff}" + ("" if WIN is False or "runtime" in ff else "   (not the one from Setup.bat - run Setup.bat)"))
         try:
             sys.path.insert(0, str(ROOT))
             from ucf import render
@@ -179,8 +185,8 @@ def doctor():
                 if why:
                     warn("NVIDIA encoder found but rejected: " + why[:150])
                     if "nvenc API version" in err or "minimum required" in err:
-                        warn("  -> this ffmpeg is newer than the GPU driver. Fix: install ffmpeg 8.0 (winget uninstall Gyan.FFmpeg; "
-                             "winget install -e --id Gyan.FFmpeg --version 8.0.1) or just use CPU: \"x264_preset\": \"fast\" in config.json")
+                        warn("  -> this ffmpeg is newer than the GPU driver. Fix: run Setup.bat (it brings ffmpeg 8.0.1), update the NVIDIA "
+                             "driver, or just use CPU: \"x264_preset\": \"fast\" in config.json")
         except Exception as e:
             warn(f"could not test encoders: {e}")
     else:
@@ -199,7 +205,7 @@ def doctor():
             b.close()
         ok("Chromium for graphics launches")
     except Exception as e:
-        bad("Chromium for graphics does not launch: " + str(e).splitlines()[0][:120] + "  -> run: python -m playwright install chromium")
+        bad("Chromium for graphics does not launch: " + str(e).splitlines()[0][:120] + "  -> run Setup.bat again")
     # watermark (every video gets one): needs the text font + ffmpeg's geq and overlay filters
     try:
         import tempfile
@@ -214,7 +220,9 @@ def doctor():
     (ok if shutil.which("node") else warn)("node " + ("found" if shutil.which("node") else "missing (only needed for yt-dlp challenge solving / hyperframes)"))
     for fn, var in KEY_FILES.items():
         (ok if _key_set(fn, var) else bad)(f"{fn}: " + ("key set" if _key_set(fn, var) else f"{var} is EMPTY - required ({KEYS}; menu option 4)"))
-    ask("\nPress Enter...")
+    if pause:
+        ask("\nPress Enter...")
+    return len(fails)
 
 
 def main():
@@ -268,6 +276,8 @@ def main():
             ask("\nPress Enter...")
         elif pick == "7":
             doctor()
+        elif pick == "8" and WIN:
+            sys.exit(88)              # H Labs.bat runs tools/win/setup.ps1 -Update once this process (and the files it holds) is closed
         elif pick == "8":
             subprocess.run(["git", "pull"], cwd=ROOT)
             print("\nUpdating yt-dlp (YouTube changes often; an old yt-dlp is the usual reason a download fails)...")
@@ -278,6 +288,8 @@ def main():
 
 
 if __name__ == "__main__":
+    if "--check" in sys.argv:              # used by Setup: setup check without the pause, exit code = number of problems
+        sys.exit(doctor(pause=False))
     try:
         main()
     except KeyboardInterrupt:

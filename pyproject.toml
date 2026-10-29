@@ -1,0 +1,19 @@
+# Python packages for H Labs, locked in uv.lock so every Windows laptop gets exactly the same versions.
+# Windows setup (Setup.bat) installs these with uv into .venv.  Change a package: edit here, run `uv lock`, commit both files.
+# yt-dlp is NOT in this list on purpose: YouTube changes often, so the setup / update always installs the newest yt-dlp on top.
+[project]
+name = "h-labs"
+version = "1.0.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "pillow",
+    "numpy",
+    "av<16",
+    "faster-whisper",
+    "playwright",
+    "mediapipe",
+]
+
+[tool.uv]
+package = false
+exclude-newer = "2026-10-01T00:00:00Z"   # ignore releases younger than this date (fresh releases sometimes break); move it forward on purpose when updating

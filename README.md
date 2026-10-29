@@ -55,7 +55,7 @@ or menu option 3 (an explicit `--brain` runs every pass on that brain).
 * Voice chain: ai33.pro → VoiceStudio (local) → macOS `say` → dummy tone (`--tts dummy` = tests).
   **> 5,000 TTS chars per run stops unless `--confirm-tts`** (owner rule).
 
-**Windows (team PCs):** see `WINDOWS_SETUP.md` (`install_windows.bat` once, then `H Labs.bat`).
+**Windows (team PCs):** see `WINDOWS_SETUP.md` (`Setup.bat` once - everything goes inside the folder - then `H Labs.bat`).
 
 ## Setup (already done on this Mac, Oct 2026)
 
