@@ -50,6 +50,8 @@ DEFAULTS = {
     "whisper_model": "base.en",
     # --- rendering ---
     "encoder": "auto",                     # auto | libx264 | h264_videotoolbox | h264_nvenc
+    "x264_preset": "medium",               # only used when no GPU encoder is available: medium (best) | fast | veryfast (quicker renders)
+    "x264_crf": 16,                        # lower = better quality / bigger file (16 is near-transparent)
     "runtime_min": 20 * 60,                # a video is 20-30 min (owner rule, Oct 2026)
     "runtime_max": 30 * 60,
     "allow_long_solo": True,               # one strong 25+ min case may exceed the cap (Master Prompt Rule 4)

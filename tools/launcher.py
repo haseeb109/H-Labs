@@ -172,7 +172,7 @@ def doctor():
             sys.path.insert(0, str(ROOT))
             from ucf import render
             enc = render.pick_encoder({"encoder": "auto"})
-            (ok if enc != "libx264" else warn)(f"video encoder that will be used: {enc}" + ("" if enc != "libx264" else "  (CPU only: slower; NVIDIA GPU + recent driver gives h264_nvenc)"))
+            (ok if enc != "libx264" else warn)(f"video encoder that will be used: {enc}" + ("" if enc != "libx264" else "  (no GPU encoder found: CPU only, slower. NVIDIA GPU + recent driver gives h264_nvenc; run "nvidia-smi" to check)"))
         except Exception as e:
             warn(f"could not test encoders: {e}")
     else:
@@ -204,8 +204,6 @@ def doctor():
     except Exception as e:
         bad(f"watermark check failed: {e}")
     (ok if shutil.which("node") else warn)("node " + ("found" if shutil.which("node") else "missing (only needed for yt-dlp challenge solving / hyperframes)"))
-    if not shutil.which("yt-dlp") and not shutil.which("yt_dlp"):
-        warn("yt-dlp command not on PATH (the .venv one is used automatically when you start from H Labs.bat)")
     for fn, var in KEY_FILES.items():
         (ok if _key_set(fn, var) else warn)(f"{fn}: " + ("key set" if _key_set(fn, var) else f"no {var} yet ({KEYS})"))
     ask("\nPress Enter...")

@@ -82,7 +82,12 @@ def probe_dur(p):
     return tts.dur(p)
 
 
+_X264 = {"preset": "medium", "crf": "16"}
+
+
 def pick_encoder(cfg):
+    _X264["preset"] = str(cfg.get("x264_preset") or "medium")       # CPU-only PCs: "fast" / "veryfast" render much quicker
+    _X264["crf"] = str(cfg.get("x264_crf") or 16)
     want = cfg.get("encoder", "auto")
     enc = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True).stdout
     if want != "auto":
@@ -107,7 +112,7 @@ def venc(enc):
     if enc == "h264_nvenc":
         return ["-c:v", enc, "-preset", "p6", "-tune", "hq", "-rc", "vbr", "-cq", "16", "-b:v", "0", "-spatial-aq", "1",
                 "-temporal-aq", "1", "-profile:v", "high", "-pix_fmt", "yuv420p", "-g", "60"]
-    return ["-c:v", "libx264", "-preset", "medium", "-crf", "16", "-profile:v", "high", "-pix_fmt", "yuv420p", "-g", "60"]
+    return ["-c:v", "libx264", "-preset", _X264["preset"], "-crf", _X264["crf"], "-profile:v", "high", "-pix_fmt", "yuv420p", "-g", "60"]
 
 
 AENC = ["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"]
