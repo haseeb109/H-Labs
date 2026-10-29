@@ -89,14 +89,11 @@ rem key files (empty templates: the keys themselves come from the owner, they ar
 set KD=%USERPROFILE%\.config\umf
 if not exist "%KD%" mkdir "%KD%"
 if not exist "%KD%\hive.env" echo HIVE_API_KEY=>"%KD%\hive.env"
-if not exist "%KD%\anthropic.env" echo ANTHROPIC_API_KEY=>"%KD%\anthropic.env"
-if not exist "%KD%\deepseek.env" echo DEEPSEEK_API_KEY=>"%KD%\deepseek.env"
-if not exist "%KD%\openai.env" echo OPENAI_API_KEY=>"%KD%\openai.env"
 if not exist "%KD%\ai33.env" echo AI33_API_KEY=>"%KD%\ai33.env"
 
 echo.
 echo ===== Done =====
-echo  1. Put the API keys into the files in  %KD%   (menu option 4 in H Labs.bat opens them)
+echo  1. Put the 2 API keys (Hive + ai33) into the files in  %KD%   (menu option 4 in H Labs.bat opens them)
 echo  2. Double-click  H Labs.bat   and pick option 7 (Setup check) to confirm everything is green.
 echo.
 pause

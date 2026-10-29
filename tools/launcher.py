@@ -16,8 +16,7 @@ os.chdir(ROOT)
 os.environ.setdefault("PYTHONUTF8", "1")
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 KEYS = Path.home() / ".config" / "umf"
-KEY_FILES = {"hive.env": "HIVE_API_KEY", "anthropic.env": "ANTHROPIC_API_KEY", "deepseek.env": "DEEPSEEK_API_KEY",
-             "openai.env": "OPENAI_API_KEY", "ai33.env": "AI33_API_KEY"}
+KEY_FILES = {"hive.env": "HIVE_API_KEY", "ai33.env": "AI33_API_KEY"}      # the only two keys this setup needs (brain + AI voice)
 BRAINS = {"1": ("hive", "Hive - DeepSeek V4.1 Flash   - default, ~$0.01/video, Claude fixes the cases it cannot"),
           "2": ("anthropic", "Anthropic (Claude)           - best quality, ~$0.34/video"),
           "3": ("deepseek", "DeepSeek direct              - backup if Hive is down"),
@@ -133,12 +132,11 @@ def edit_keys():
         f = KEYS / fn
         if not f.exists():
             f.write_text(f"{var}=\n", encoding="utf-8")
-    print("Key files are in:", KEYS, "\nPaste each key after the '=' and save. Keys never go into the repo or into chat.")
+    print("Key files are in:", KEYS, "\n  hive.env -> HIVE_API_KEY=...   (the brain)\n  ai33.env -> AI33_API_KEY=...   (the AI voice)\n"
+          "Paste each key after the '=' and save. Keys never go into the repo or into chat.")
     if os.name == "nt":
-        subprocess.run(["notepad", *[str(KEYS / f) for f in list(KEY_FILES)[:1]]])    # one at a time: Notepad has no tabs
-        for fn in list(KEY_FILES)[1:]:
-            if ask(f"Open {fn}? [y/N]: ").lower() == "y":
-                subprocess.run(["notepad", str(KEYS / fn)])
+        for fn in KEY_FILES:
+            subprocess.Popen(["notepad", str(KEYS / fn)])
     else:
         open_path(KEYS)
 
@@ -215,7 +213,7 @@ def doctor():
         bad(f"watermark check failed: {e}")
     (ok if shutil.which("node") else warn)("node " + ("found" if shutil.which("node") else "missing (only needed for yt-dlp challenge solving / hyperframes)"))
     for fn, var in KEY_FILES.items():
-        (ok if _key_set(fn, var) else warn)(f"{fn}: " + ("key set" if _key_set(fn, var) else f"no {var} yet ({KEYS})"))
+        (ok if _key_set(fn, var) else bad)(f"{fn}: " + ("key set" if _key_set(fn, var) else f"{var} is EMPTY - required ({KEYS}; menu option 4)"))
     ask("\nPress Enter...")
 
 

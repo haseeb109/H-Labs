@@ -20,7 +20,7 @@ An NVIDIA GPU makes the final encode much faster (the tool uses NVENC automatica
    If it says some tools were just installed, **close the window and run it again** (Windows needs a new window to see them).
 3. **Add the API keys** (the owner gives you these, they are never in the repo or in chat):
    double-click `H Labs.bat` -> option **4**, paste each key after the `=` and save.
-   Needed: `hive.env` (the brain), `ai33.env` (the AI voice). The others are optional backups.
+   Needed: `hive.env` (the brain) and `ai33.env` (the AI voice). Nothing else: the tool runs on Hive only.
 4. **Check.** `H Labs.bat` -> option **7** (Setup check). Everything should say `[ok]`.
    `[WARN]` for the optional parts (anthropic/deepseek/openai keys, faster_whisper) is fine. `[FAIL]` must be fixed first.
 
