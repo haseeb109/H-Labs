@@ -1012,7 +1012,8 @@ def t27_processing_time():
 
 def t28_finish():
     """End of run: cleanup deletes only the downloaded stream + render temp files (never videos, voice cache, own file); upload list."""
-    from ucf import finish as F
+    from ucf import config, finish as F
+    assert config.DEFAULTS["cleanup_after_run"] == "always", "cleanup must run by default (no question)"
     tmp = Path(tempfile.mkdtemp())
     try:
         work, out = tmp / "work" / "sid", tmp / "out" / "run"

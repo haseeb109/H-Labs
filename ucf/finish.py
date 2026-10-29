@@ -1,6 +1,6 @@
 """End of a run: 'done' notification, UPLOAD_LIST.txt, open the output folder, free disk space.
 
-Cleanup (config cleanup_after_run: "ask" | "always" | "never") deletes ONLY things that can be made again:
+Cleanup (config cleanup_after_run: "always" (default, no question) | "ask" | "never") deletes ONLY things that can be made again:
   * work/<id>/source.mp4 (+ .part / .ytdl leftovers)  - the downloaded stream (1-3 GB); a re-render downloads it again.
     Never a file given with --video-file (that is the user's own file).
   * output/<run>/<video>/_work/  - render intermediates (cut clips, frames, thumbnail candidates), only where video.mp4 exists.
@@ -41,7 +41,7 @@ def cleanup_candidates(work, outroot, own_video_file=None):
 
 
 def cleanup(cfg, work, outroot, own_video_file=None, ui=print, ask=input):
-    mode = str(cfg.get("cleanup_after_run", "ask")).lower()
+    mode = str(cfg.get("cleanup_after_run", "always")).lower()
     if mode == "never":
         return 0
     cands = cleanup_candidates(work, outroot, own_video_file)
@@ -62,13 +62,14 @@ def cleanup(cfg, work, outroot, own_video_file=None, ui=print, ask=input):
         except EOFError:
             return 0
     freed = 0
-    for p, n, _ in cands:
+    for p, n, what in cands:
         try:
             shutil.rmtree(p) if p.is_dir() else p.unlink()
             freed += n
+            ui(f"  deleted {gb(n):>8}  {what}")
         except OSError as e:
             ui(f"  could not delete {p.name}: {e}")
-    ui(f"cleanup: freed {gb(freed)}")
+    ui(f"cleanup: freed {gb(freed)}  (final videos, thumbnails, metadata, transcript, plan and AI-voice cache are kept)")
     return freed
 
 

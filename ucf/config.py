@@ -40,7 +40,7 @@ DEFAULTS = {
     "max_height": 1080,
     "notify_when_done": True,              # desktop notification + sound when a run ends (or stops on an error)
     "open_output_after_run": True,         # open the output folder at the end of a run
-    "cleanup_after_run": "ask",            # ask | always | never - delete the downloaded stream + render temp files (never the videos)
+    "cleanup_after_run": "always",         # always (default) | ask | never - delete the downloaded stream + render temp files (never the videos)
     "watermark": True,                      # anti-copy watermark in every video (see ucf/watermark.py); --no-watermark switches it off for one run
     "watermark_text": "",                   # "" = channel_name of the style
     "watermark_opacity": 0.25,
