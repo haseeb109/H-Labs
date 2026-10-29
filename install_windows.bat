@@ -71,7 +71,7 @@ if not exist ".venv\Scripts\python.exe" (
 set PY=.venv\Scripts\python.exe
 echo [setup] installing Python packages (a few minutes)
 "%PY%" -m pip install --upgrade pip
-"%PY%" -m pip install yt-dlp pillow numpy "av<16" faster-whisper playwright
+"%PY%" -m pip install "yt-dlp[default]" pillow numpy "av<16" faster-whisper playwright
 if errorlevel 1 ( echo [!] pip install failed & pause & exit /b 1 )
 echo [setup] installing the graphics browser (Chromium)
 "%PY%" -m playwright install chromium

@@ -930,6 +930,35 @@ def t23_brain_retry():
     return f"capped repair round ({calls[1]} tokens), fresh attempt on the same brain passed, fallback is off"
 
 
+def t24_download_fallback():
+    """A failing first download strategy (YouTube changed a client) falls through to the next one and succeeds."""
+    import tempfile
+    from ucf import download
+    tmp = Path(tempfile.mkdtemp(prefix="dltest_"))
+    seen = []
+    real = subprocess.run
+
+    def fake(cmd, *a, **k):
+        if "--help" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout="--remote-components", stderr="")
+        seen.append(" ".join(map(str, cmd)))
+        ok = len(seen) >= 3                         # 1st and 2nd strategy fail, the 3rd works
+        if ok:
+            (tmp / "source.mp4").write_bytes(b"0" * 11_000_000)
+        return subprocess.CompletedProcess(cmd, 0 if ok else 1, stdout="", stderr="")
+    download._HELP.clear()
+    subprocess.run = fake
+    try:
+        out = download.fetch_video("https://youtu.be/x", "x", tmp, {"max_height": 1080, "yt_dlp_extra_args": ["--extractor-args", "youtube:player_client=tv,android"]})
+    finally:
+        subprocess.run = real
+        shutil.rmtree(tmp, ignore_errors=True)
+    assert len(seen) == 3, seen
+    assert "player_client=tv,android" in seen[0] and "player_client=tv,android" not in seen[1], "2nd try must not reuse the configured clients"
+    assert "web_safari" in seen[2]
+    return "3 strategies: configured -> default clients -> tv+web_safari; the 3rd succeeded"
+
+
 def main():
     print("H Labs self-test matrix")
     check(1, "environment", t1_environment)
@@ -960,6 +989,7 @@ def main():
     check(21, "regressions", t18_regressions)
     check(22, "watermark", t22_watermark)
     check(23, "brain retry (Hive only)", t23_brain_retry)
+    check(24, "download fallback", t24_download_fallback)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))

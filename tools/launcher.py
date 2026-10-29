@@ -217,7 +217,7 @@ def main():
               f"\n  brain: {_read('.brain', 'hive')}   |   style: {_read('.style', 'trial_tales')}   |   mode: {_read('.mode', '60')}"
               f"\n  output: {ROOT / 'output'}\n==============================================")
         print("  1) New video from a YouTube stream URL (full pipeline)\n  2) Local file mode (already downloaded / pre-cut clips)\n"
-              "  3) Change brain provider\n  4) Edit API keys\n  5) Open output folder\n  6) Run self-test\n  7) Setup check (what is installed?)\n  8) Update H Labs from GitHub (git pull)\n  q) Quit")
+              "  3) Change brain provider\n  4) Edit API keys\n  5) Open output folder\n  6) Run self-test\n  7) Setup check (what is installed?)\n  8) Update H Labs (GitHub code + yt-dlp)\n  q) Quit")
         pick = ask("Pick: ", "q").lower()
         if pick == "1":
             url = ask("YouTube URL: ")
@@ -264,7 +264,9 @@ def main():
             doctor()
         elif pick == "8":
             subprocess.run(["git", "pull"], cwd=ROOT)
-            ask("\nIf it says 'Already up to date' you have the latest. Press Enter...")
+            print("\nUpdating yt-dlp (YouTube changes often; an old yt-dlp is the usual reason a download fails)...")
+            subprocess.run([sys.executable, "-m", "pip", "install", "-U", "yt-dlp[default]"], cwd=ROOT)
+            ask("\nIf git says 'Already up to date' you have the latest code. Press Enter...")
         elif pick in ("q", ""):
             return
 
