@@ -959,6 +959,33 @@ def t24_download_fallback():
     return "3 strategies: configured -> default clients -> tv+web_safari; the 3rd succeeded"
 
 
+def t26_pass_a_salvage():
+    """Repair cap counts the thinking tokens; a case the brain cannot fix is set aside instead of failing the stream; C-04 says where."""
+    from ucf import brain as B, mode_all as MA, validate as VAL
+    big = MA._repair_cfg({"max_tokens": 64000}, "x" * 6000, 1, prev_out=20794)
+    assert big["max_tokens"] >= 27000, f"cap must follow the real output tokens (thinking model): {big['max_tokens']}"
+    plan = {"cases": [{"id": "1", "name": "A", "status": "used", "in": "0:00:00", "out": "0:10:00"},
+                      {"id": "5", "name": "B", "status": "used", "in": "0:10:00", "out": "0:20:00"}]}
+    orig = VAL.validate
+    VAL.validate = lambda p, sl, segs, cfg: ([f"case {c['id']} ({c['name']}): C-04 x" for c in p["cases"]
+                                              if c["id"] == "5" and c["status"] == "used"], [])
+    try:
+        saved = MA._salvage_cases(plan, ["case 5 (B): C-04 x"], 1200, [], {}, lambda *a: None)
+        assert saved and saved["cases"][1]["status"] == "skipped" and saved["cases"][1]["needs_review"], saved
+        assert saved["cases"][0]["status"] == "used" and plan["cases"][1]["status"] == "used", "other case kept, input untouched"
+        assert MA._salvage_cases(plan, ["Pass A: not valid JSON"], 1200, [], {}, lambda *a: None) is None, "stream-level error: no salvage"
+    finally:
+        VAL.validate = orig
+    segs = [{"start": 5, "text": "calling CR2469 State versus A"}, {"start": 400, "text": "the court is calling cause number 12"}]
+    c = {"id": "1", "name": "A", "status": "used", "in": "0:00:00", "out": "0:12:00"}
+    e = [x for x in VAL.validate({"cases": [c]}, 1200, segs, {"mode": "all", "title_system": "old"})[0] if "C-04" in x]
+    assert e and "at 6:40" in e[0] and "recall_ok" in e[0], e
+    c["recall_ok"] = ["6:40"]
+    e = [x for x in VAL.validate({"cases": [c]}, 1200, segs, {"mode": "all", "title_system": "old"})[0] if "C-04" in x]
+    assert not e, e
+    return "cap 1.3x real output tokens, unfixable case set aside (rest kept), C-04 names the time + recall_ok works"
+
+
 def t25_nvenc_levels():
     """An old GPU/driver that rejects the best NVENC options gets the next simpler set; one that rejects all falls back to x264."""
     from ucf import render
@@ -1018,6 +1045,7 @@ def main():
     check(23, "brain retry (Hive only)", t23_brain_retry)
     check(24, "download fallback", t24_download_fallback)
     check(25, "nvenc option levels", t25_nvenc_levels)
+    check(26, "Pass A salvage + C-04 location", t26_pass_a_salvage)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))

@@ -103,9 +103,15 @@ def validate(plan, stream_len, segs=None, cfg=None):
             if c.get("status") == "skipped" and kept >= mc:
                 W.append(f"{w}: C-07 skipped but {fmt_dur(kept)} >= the {cfg.get('min_case_minutes', 8):.0f} min threshold")
             if c.get("status") == "used" and segs is not None:
-                inside = " ".join(x["text"] for x in segs if a + 30 < x["start"] < b - 1)
-                if re.search(r"\bcourt is calling\b|\bcause (no|number)\b|\bparties announce\b", inside, re.I):
-                    E.append(f"{w}: C-04 a different CR call-out sits inside this case's range - split the ranges")
+                # "recall_ok": ["1:12:40"] = the brain says that call-out is THIS case called again (after a break), not a new case
+                ok_at = [t for t in (_tc(x, w + " recall_ok", []) for x in (c.get("recall_ok") or [])) if t is not None]
+                hit = next((x for x in segs if a + 30 < x["start"] < b - 1
+                            and re.search(r"\bcourt is calling\b|\bcause (no|number)\b|\bparties announce\b", x["text"], re.I)
+                            and not any(abs(x["start"] - t) <= 15 for t in ok_at)), None)
+                if hit:
+                    E.append(f"{w}: C-04 at {fmt_tc(hit['start'], False)} the transcript says \"{hit['text'].strip()[:90]}\" - if that is a "
+                             f"DIFFERENT case, end this case before {fmt_tc(hit['start'], False)} and start the other case there; if it is "
+                             f"THIS case called again, add \"recall_ok\": [\"{fmt_tc(hit['start'], False)}\"] to this case")
         # v10 case rules (phases, virality, interrupted) + overlays truth rules
         if v10_titles:
             V10.check_case_v10(c, cfg, E, W)

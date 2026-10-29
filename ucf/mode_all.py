@@ -130,12 +130,14 @@ def _fallback_for(cfg, used):
     return fb if fb and fb != used and used != "mock" else None
 
 
-def _repair_cfg(cfg, prev_text, rnd):
+def _repair_cfg(cfg, prev_text, rnd, prev_out=0):
     """Repair rounds re-send the WHOLE JSON, so a sane reply is about as long as the previous one. A cheap model that loops would
-    otherwise burn the full max_tokens (64k tokens ~ 8 minutes) before failing: cap the round at 1.3x the previous reply."""
+    otherwise burn the full max_tokens (64k tokens ~ 8 minutes) before failing: cap the round at 1.3x the previous reply.
+    prev_out = the previous call's real output tokens: a thinking model (DeepSeek v4.1) spends most of them on reasoning that is not
+    in the saved text, so a cap from the text length alone (8000) cut every repair round off before the JSON was finished."""
     if rnd <= 0 or not prev_text:
         return cfg
-    cap = max(8000, int(len(prev_text) / 3.0 * 1.3))
+    cap = max(8000, int(len(prev_text) / 3.0 * 1.3), int(prev_out * 1.3))
     mt = int(cfg.get("max_tokens") or 64000)
     return dict(cfg, max_tokens=cap) if cap < mt else cfg
 
@@ -145,12 +147,13 @@ def _pass_a_once(cfg_a, prompt_a, stream_len, segs, ui, work, tag="", soft=False
     (BrainStop: empty / cut off / refused) or an API error ends this attempt; `soft` = return the failure instead of raising."""
     from . import brain as B
     msgs_a = [{"role": "user", "content": prompt_a}]
-    plan, errs, last_txt = None, [], ""
+    plan, errs, last_txt, last_out = None, [], "", 0
     for rnd in range(int(cfg_a["max_repair_rounds"]) + 1):
         ui(f"  PASS A (inventory) {cfg_a.get('brain')} round {rnd + 1}...")
         cfg_a["_usage_label"] = f"pass A {tag}r{rnd + 1}"
+        n_usage = len(B.USAGE)
         try:
-            txt = B.stream_and_save(msgs_a, _repair_cfg(cfg_a, last_txt, rnd),
+            txt = B.stream_and_save(msgs_a, _repair_cfg(cfg_a, last_txt, rnd, last_out),
                                     Path(work) / f"brain_reply_A_{tag}{rnd + 1}.txt" if work else None,
                                     on_text=lambda n: n % 400 == 0 and ui(f"    ...{n} chunks"))
         except (B.BrainStop, RuntimeError) as e:
@@ -158,6 +161,7 @@ def _pass_a_once(cfg_a, prompt_a, stream_len, segs, ui, work, tag="", soft=False
                 raise                                   # no fallback configured: stop the run (old behaviour)
             return None, [f"{cfg_a.get('brain')}: {e}"]
         last_txt = txt
+        last_out = B.USAGE[-1].get("output", 0) if len(B.USAGE) > n_usage else 0
         try:
             plan = B.extract_json(txt)
         except Exception as e:
@@ -180,7 +184,7 @@ def _pass_a_loop(cfg_a, prompt_a, stream_len, segs, ui, work, tag=""):
     """Pass A on ONE provider. A cheap model sometimes fails a repair round (loops until max_tokens): instead of going straight to the
     (paid) fallback provider, start a FRESH conversation on the same provider first (config brain_attempts, default 2; 1 for mock)."""
     attempts = 1 if cfg_a.get("brain") == "mock" else max(1, int(cfg_a.get("brain_attempts", 2)))
-    plan, errs = None, []
+    plan, errs, best = None, [], None
     for att in range(attempts):
         last = att == attempts - 1
         if att:
@@ -188,7 +192,43 @@ def _pass_a_loop(cfg_a, prompt_a, stream_len, segs, ui, work, tag=""):
         plan, errs = _pass_a_once(cfg_a, prompt_a, stream_len, segs, ui, work, tag=f"{tag}try{att + 1}_" if att else tag, soft=not last)
         if plan is not None and not errs:
             return plan, []
+        if plan is not None and (best is None or len(errs) < len(best[1])):
+            best = (plan, errs)
+    if best:
+        saved = _salvage_cases(best[0], best[1], stream_len, segs, cfg_a, ui)
+        if saved is not None:
+            return saved, []
     return plan, errs
+
+
+_CASE_ERR = re.compile(r"^case (\w+)[ :]")
+
+
+def _salvage_cases(plan, errs, stream_len, segs, cfg_a, ui):
+    """All attempts failed, but often only because of ONE case the brain cannot fix. When every remaining error belongs to a case,
+    set those cases aside (needs_review, not rendered) and keep the rest of the stream instead of losing every video.
+    -> the repaired plan, or None when that is not possible (a stream-level error, or nothing would be left)."""
+    import copy
+    ids = set()
+    for e in errs:
+        m = _CASE_ERR.match(str(e))
+        if not m:
+            return None
+        ids.add(m.group(1))
+    p = copy.deepcopy(plan)
+    cases = p.get("cases", [])
+    hit = [c for c in cases if str(c.get("id")) in ids]
+    if not hit or len(hit) >= len([c for c in cases if c.get("status") == "used"]):
+        return None
+    for c in hit:
+        c["status"], c["needs_review"] = "skipped", True
+        c["reject_reason"] = "Pass A validator: " + next(str(e) for e in errs if _CASE_ERR.match(str(e)).group(1) == str(c.get("id")))[:200]
+    if VAL.validate(p, stream_len, segs, cfg_a)[0]:
+        return None
+    for c in hit:
+        ui(f"  ! {c.get('name')} ({c.get('in')}-{c.get('out')}) set aside (needs_review): the brain could not fix it - "
+           "the other cases go on")
+    return p
 
 
 def _fill_titles(v):
@@ -219,16 +259,18 @@ def _pass_b_once(c, pb, prompt_b, plan, judge, stream_len, segs, cfg, ui, work, 
     """Pass B for one case, ONE provider, ONE conversation, with validator repair rounds. -> (video object, errs)."""
     from . import brain as B
     msgs_b = [{"role": "user", "content": prompt_b}]
-    vobj, berrs, _last_b = None, [], ""
+    vobj, berrs, _last_b, _out_b = None, [], "", 0
     for rnd in range(int(cfg["max_repair_rounds"]) + 1):
         pb["_usage_label"] = f"pass B {c.get('name', '')[:10]} {tag}r{rnd + 1}"
+        n_usage = len(B.USAGE)
         try:
-            txt = B.stream_and_save(msgs_b, _repair_cfg(pb, _last_b, rnd),
+            txt = B.stream_and_save(msgs_b, _repair_cfg(pb, _last_b, rnd, _out_b),
                                     Path(work) / f"brain_reply_B_{c['id']}_{tag}{rnd + 1}.txt" if work else None,
                                     on_text=lambda n: n % 400 == 0 and ui(f"    ...{n} chunks"))
         except (B.BrainStop, RuntimeError) as e:
             return None, [f"{pb.get('brain')}: {e}"]     # this case fails (needs_review); the run goes on
         _last_b = txt
+        _out_b = B.USAGE[-1].get("output", 0) if len(B.USAGE) > n_usage else 0
         try:
             vobj = B.extract_json(txt).get("video", {})
         except Exception as e:
