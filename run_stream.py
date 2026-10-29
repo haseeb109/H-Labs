@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ucf.render_tt import TTRenderer
+from ucf import runclock as CLOCK
 from ucf import brain, cards, config, download, scan, sheets, timeline as TL, transcript, tts, validate as VAL
 from ucf.render import Renderer
 from ucf.timeutil import fmt_dur, fmt_tc, parse_tc, safe_slug
@@ -45,6 +46,8 @@ def _usage_exit(work_holder):
         brain.save_usage(Path(work_holder["dir"]) / "usage.json")
     if brain.USAGE:
         print("\n" + "\n".join(lines))
+    if not CLOCK.T["printed"] and work_holder.get("dir"):     # the run stopped early (error / stage stop): still show the time
+        print("\n" + "\n".join(CLOCK.lines(work_holder.get("stream_len", 0), status="stopped before the end")))
 
 
 _WORK = {}
@@ -69,6 +72,8 @@ def main():
     ap.add_argument("--tts", help="force one TTS provider (ai33|voicestudio|say|dummy)")
     ap.add_argument("--no-watermark", action="store_true", help="skip the anti-copy watermark for this run")
     a = ap.parse_args()
+    CLOCK.reset()
+    CLOCK.stage("info")
 
     cfg = config.load(a.config, style=a.style)
     if a.brain:
@@ -115,10 +120,12 @@ def main():
     url = meta.get("url") or a.url or ""
     upload = meta.get("upload_date", "") or time.strftime("%Y%m%d")
     stream_len = meta.get("duration") or (parse_tc(a.stream_length) if a.stream_length else 0)
+    _WORK["stream_len"] = stream_len
 
     # ---------------- download ----------------
     video_path = Path(a.video_file) if a.video_file else work / "source.mp4"
     if upto >= 1 and not video_path.exists():
+        CLOCK.stage("download")
         ui("downloading stream (this is the slow part)...")
         video_path = download.fetch_video(url, sid, work, cfg)
     if video_path.exists() and not stream_len:
@@ -134,6 +141,8 @@ def main():
         return ui("stopped after", stop)
 
     # ---------------- transcript ----------------
+    _WORK["stream_len"] = stream_len
+    CLOCK.stage("transcript")
     tpath = work / "transcript.json"
     if a.transcript_file:
         segs = transcript.load_any(a.transcript_file)
@@ -157,6 +166,7 @@ def main():
         return ui("stopped after", stop)
 
     # ---------------- scan ----------------
+    CLOCK.stage("scan + evidence")
     rep = scan.report(segs, stream_len)
     scan_text = scan.report_text(rep)
     (work / "scan.txt").write_text(scan_text, encoding="utf-8")
@@ -178,6 +188,7 @@ def main():
         return ui("stopped after", stop)
 
     # ---------------- plan ----------------
+    CLOCK.stage("brain (plan)")
     plan_path = Path(a.plan) if a.plan else work / "plan.json"
     carried = [] if mode == "all" else load_json(state / "carry_forward.json", [])
     inputs = {"source_file": source_file, "stream_length": fmt_tc(stream_len), "channel_name": cfg["channel_name"]}
@@ -296,6 +307,7 @@ def main():
         return ui("stopped after plan. Review plan_report.txt + contact_plan.jpg, then run again without --stage.")
 
     # ---------------- render ----------------
+    CLOCK.stage("render setup")
     only = {int(x) for x in a.only.split(",")} if a.only else None
     # cross-channel reuse guard (spec 9.5): warn, never block
     if cfg.get("reuse_guard", True):
@@ -338,6 +350,8 @@ def main():
         folder = outroot / f"{prefix}_{safe_slug(lead['name'], 24)}"
         folder.mkdir(exist_ok=True)
         ui(f"VIDEO {v['n']}: {[by_id[i]['name'] for i in v['case_ids']]}")
+        CLOCK.stage(f"video {v['n']} render")
+        _t_video = time.time()
         rn.log = []
         res = rn.render_video(plan, v, folder, work / "tts", ui)
         wm_text, wm_err = None, None
@@ -367,6 +381,7 @@ def main():
         if chs and chs[-1][0] > res["measured_total"] - 60:
             qc["ok"] = False
             qc["note"] = "a chapter sits in the final 60 s"
+        qc["processing_seconds"] = round(time.time() - _t_video)
         save_json(folder / "qc.json", qc)
         save_json(folder / "video_plan.json", {"video": v, "cases": [by_id[i] for i in v["case_ids"]]})
         log = load_json(state / "used_cases.json", [])
@@ -375,8 +390,10 @@ def main():
                     "mode": cfg.get("mode", ""), "folder": folder.name, "date": time.strftime("%Y-%m-%d")})
         save_json(state / "used_cases.json", log)
         shutil.rmtree(folder / "_work" / "frames", ignore_errors=True)
-        ui(f"  done: {res['final']}  {fmt_dur(res['measured_total'])}  QC {'OK' if qc['ok'] else 'CHECK'}  {qc['loudness_lufs']} LUFS")
+        ui(f"  done: {res['final']}  {fmt_dur(res['measured_total'])}  QC {'OK' if qc['ok'] else 'CHECK'}  {qc['loudness_lufs']} LUFS"
+           f"  (took {CLOCK.hms(qc['processing_seconds'])})")
         summary.append((v["n"], folder.name, res["measured_total"], qc["ok"]))
+    CLOCK.stage("report")
     carry_txt = ["CARRIED FORWARD (state/carry_forward.json): " + (brain.carried_text(carry) if carry else "none")]
     if mode == "all":
         carry_txt = ["carry-forward: not used in mode all"]
@@ -389,6 +406,10 @@ def main():
     if ut.get("cost") is not None and summary:
         ulines.append(f"  per video  ${ut['cost'] / len(summary):.2f}  ({len(summary)} videos)")
     rep += [""] + ulines
+    rep += [""] + CLOCK.lines(stream_len, len(summary), "completed" if all(ok for *_, ok in summary) else "completed, some QC CHECK")
+    CLOCK.history(state / "run_history.csv", stream_id=sid, style=cfg["style"], mode=mode, encoder=rn.enc,
+                  stream_min=round(stream_len / 60, 1), videos=len(summary), qc_ok=sum(1 for *_, ok in summary if ok),
+                  cost_usd=round(ut.get("cost") or 0, 3))
     (outroot / "run_report.txt").write_text("\n".join(rep), encoding="utf-8")
     shutil.copy(plan_path, outroot / "plan.json")
     shutil.copy(work / "plan_report.txt", outroot / "plan_report.txt")

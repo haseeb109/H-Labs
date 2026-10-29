@@ -986,6 +986,30 @@ def t26_pass_a_salvage():
     return "cap 1.3x real output tokens, unfixable case set aside (rest kept), C-04 names the time + recall_ok works"
 
 
+def t27_processing_time():
+    """End-of-run PROCESSING TIME block (total + per stage) and the one-line-per-run history CSV."""
+    import csv as _csv
+    from ucf import runclock as C
+    C.reset()
+    C.T["start"] -= 4000
+    C.stage("download")
+    C.T["cur_t"] -= 600
+    C.stage("brain (plan)")
+    C.T["cur_t"] -= 130
+    out = C.lines(stream_len=5160, videos=2)
+    assert out[0].startswith("PROCESSING TIME  1h 06m") and any("download" in x and "10m 00s" in x for x in out), out
+    assert any("per video" in x for x in out) and C.T["printed"], out
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        C.history(tmp / "h.csv", stream_id="a", videos=2)
+        C.history(tmp / "h.csv", stream_id="b", videos=1, cost_usd=0.04)
+        rows = list(_csv.DictReader((tmp / "h.csv").open(encoding="utf-8")))
+        assert [r["stream_id"] for r in rows] == ["a", "b"] and rows[1]["cost_usd"] == "0.04", rows
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return f"{out[0].strip()} | per-stage lines + history csv ok"
+
+
 def t25_nvenc_levels():
     """An old GPU/driver that rejects the best NVENC options gets the next simpler set; one that rejects all falls back to x264."""
     from ucf import render
@@ -1046,6 +1070,7 @@ def main():
     check(24, "download fallback", t24_download_fallback)
     check(25, "nvenc option levels", t25_nvenc_levels)
     check(26, "Pass A salvage + C-04 location", t26_pass_a_salvage)
+    check(27, "processing time", t27_processing_time)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))
