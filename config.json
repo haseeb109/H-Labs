@@ -9,7 +9,7 @@
     "1"
   ],
   "max_tokens": 64000,
-  "brain_fallback": "anthropic",
+  "brain_fallback": "",
   "brain": "hive",
   "download_sort": "res,br"
 }

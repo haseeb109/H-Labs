@@ -430,7 +430,7 @@ def t15_hive_and_fallback():
             except brain.BrainStop:
                 pass
         # Pass A: hive returns nothing -> with a fallback the loop hands over instead of stopping the run
-        ca = dict(h, brain_fallback="anthropic", max_repair_rounds=0)
+        ca = dict(h, brain_fallback="anthropic", max_repair_rounds=0, brain_attempts=1)
         script[:] = [sse([])]
         plan, errs = mode_all._pass_a_loop(ca, "prompt", STREAM_LEN, _load_segs(), lambda *a: None, None)
         assert plan is None and errs and "hive" in errs[0], errs
@@ -441,7 +441,7 @@ def t15_hive_and_fallback():
         # without a fallback the same empty reply stops the run (old behaviour)
         script[:] = [sse([])]
         try:
-            mode_all._pass_a_loop(dict(h, brain_fallback="", max_repair_rounds=0), "prompt", STREAM_LEN,
+            mode_all._pass_a_loop(dict(h, brain_fallback="", max_repair_rounds=0, brain_attempts=1), "prompt", STREAM_LEN,
                                   _load_segs(), lambda *a: None, None)
             raise AssertionError("BrainStop expected without fallback")
         except brain.BrainStop:
@@ -902,6 +902,34 @@ def t22_watermark():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def t23_brain_retry():
+    """Hive-only: a repair round that fails (runaway reply) is capped, then a FRESH conversation on the same brain succeeds."""
+    from ucf import brain as B, config, mode_all as MA
+    assert config.DEFAULTS["brain_fallback"] == "" and json.loads((ROOT / "config.json").read_text(encoding="utf-8")).get("brain_fallback", "") == "", \
+        "Claude fallback must be OFF"
+    calls = []
+    seq = [('{"cases": []}', None), (None, B.BrainStop("hit max_tokens")), ('{"cases": [1]}', None)]
+
+    def fake(msgs, cfg, save=None, on_text=None):
+        txt, exc = seq[len(calls)]
+        calls.append(cfg.get("max_tokens"))
+        if exc:
+            raise exc
+        return txt
+    orig_s, orig_v = B.stream_and_save, MA.VAL.validate
+    B.stream_and_save = fake
+    MA.VAL.validate = lambda plan, sl, segs, cfg: (["bad item"] if plan.get("cases") == [] else [], [])
+    try:
+        plan, errs = MA._pass_a_loop({"brain": "hive", "max_repair_rounds": 2, "max_tokens": 64000, "brain_attempts": 2,
+                                      "brain_fallback": ""}, "p", 100, [], lambda *a: None, None)
+    finally:
+        B.stream_and_save, MA.VAL.validate = orig_s, orig_v
+    assert plan == {"cases": [1]} and not errs, (plan, errs)
+    assert len(calls) == 3, f"expected 3 calls (round1, failed repair, fresh attempt), got {len(calls)}"
+    assert calls[1] < 64000 and calls[2] == 64000, f"repair round must be capped, fresh attempt not: {calls}"
+    return f"capped repair round ({calls[1]} tokens), fresh attempt on the same brain passed, fallback is off"
+
+
 def main():
     print("H Labs self-test matrix")
     check(1, "environment", t1_environment)
@@ -931,6 +959,7 @@ def main():
     check(20, "faces", t20_faces)
     check(21, "regressions", t18_regressions)
     check(22, "watermark", t22_watermark)
+    check(23, "brain retry (Hive only)", t23_brain_retry)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))

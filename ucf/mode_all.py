@@ -130,24 +130,34 @@ def _fallback_for(cfg, used):
     return fb if fb and fb != used and used != "mock" else None
 
 
-def _pass_a_loop(cfg_a, prompt_a, stream_len, segs, ui, work, tag=""):
-    """Pass A with validator repair rounds on ONE provider. -> (plan, errs). A reply that cannot be repaired
-    (BrainStop: empty / cut off / refused) or an API error ends this provider's attempt; the caller decides
-    whether a fallback provider takes over (no fallback -> BrainStop goes up and stops the run)."""
+def _repair_cfg(cfg, prev_text, rnd):
+    """Repair rounds re-send the WHOLE JSON, so a sane reply is about as long as the previous one. A cheap model that loops would
+    otherwise burn the full max_tokens (64k tokens ~ 8 minutes) before failing: cap the round at 1.3x the previous reply."""
+    if rnd <= 0 or not prev_text:
+        return cfg
+    cap = max(8000, int(len(prev_text) / 3.0 * 1.3))
+    mt = int(cfg.get("max_tokens") or 64000)
+    return dict(cfg, max_tokens=cap) if cap < mt else cfg
+
+
+def _pass_a_once(cfg_a, prompt_a, stream_len, segs, ui, work, tag="", soft=False):
+    """Pass A with validator repair rounds on ONE provider, ONE conversation. -> (plan, errs). A reply that cannot be repaired
+    (BrainStop: empty / cut off / refused) or an API error ends this attempt; `soft` = return the failure instead of raising."""
     from . import brain as B
     msgs_a = [{"role": "user", "content": prompt_a}]
-    plan, errs = None, []
+    plan, errs, last_txt = None, [], ""
     for rnd in range(int(cfg_a["max_repair_rounds"]) + 1):
         ui(f"  PASS A (inventory) {cfg_a.get('brain')} round {rnd + 1}...")
         cfg_a["_usage_label"] = f"pass A {tag}r{rnd + 1}"
         try:
-            txt = B.stream_and_save(msgs_a, cfg_a,
+            txt = B.stream_and_save(msgs_a, _repair_cfg(cfg_a, last_txt, rnd),
                                     Path(work) / f"brain_reply_A_{tag}{rnd + 1}.txt" if work else None,
                                     on_text=lambda n: n % 400 == 0 and ui(f"    ...{n} chunks"))
         except (B.BrainStop, RuntimeError) as e:
-            if not tag and not _fallback_for(cfg_a, cfg_a.get("brain")):
+            if not soft and not tag and not _fallback_for(cfg_a, cfg_a.get("brain")):
                 raise                                   # no fallback configured: stop the run (old behaviour)
             return None, [f"{cfg_a.get('brain')}: {e}"]
+        last_txt = txt
         try:
             plan = B.extract_json(txt)
         except Exception as e:
@@ -158,9 +168,26 @@ def _pass_a_loop(cfg_a, prompt_a, stream_len, segs, ui, work, tag=""):
         if not errs:
             break
         ui(f"  validator: {len(errs)} problem(s) -> sending back")
+        for e in errs[:4]:
+            ui("    - " + str(e)[:150])
         msgs_a += [{"role": "assistant", "content": txt},
                    {"role": "user", "content": "The validator rejected this plan. Fix EVERY item and return the "
                     "COMPLETE corrected JSON (same schema):\n- " + "\n- ".join(errs[:40])}]
+    return plan, errs
+
+
+def _pass_a_loop(cfg_a, prompt_a, stream_len, segs, ui, work, tag=""):
+    """Pass A on ONE provider. A cheap model sometimes fails a repair round (loops until max_tokens): instead of going straight to the
+    (paid) fallback provider, start a FRESH conversation on the same provider first (config brain_attempts, default 2; 1 for mock)."""
+    attempts = 1 if cfg_a.get("brain") == "mock" else max(1, int(cfg_a.get("brain_attempts", 2)))
+    plan, errs = None, []
+    for att in range(attempts):
+        last = att == attempts - 1
+        if att:
+            ui(f"  Pass A: starting a fresh attempt on {cfg_a.get('brain')} ({att + 1}/{attempts})...")
+        plan, errs = _pass_a_once(cfg_a, prompt_a, stream_len, segs, ui, work, tag=f"{tag}try{att + 1}_" if att else tag, soft=not last)
+        if plan is not None and not errs:
+            return plan, []
     return plan, errs
 
 
@@ -174,20 +201,34 @@ def _fill_titles(v):
 
 
 def _pass_b_loop(c, pb, prompt_b, plan, judge, stream_len, segs, cfg, ui, work, tag=""):
-    """Pass B for one case on ONE provider with validator repair rounds. -> (video object, errs)."""
+    """Pass B for one case on ONE provider: fresh attempts (config brain_attempts) around the validator repair rounds.
+    A case that still fails is marked needs_review by the caller; it never stops the other cases."""
+    attempts = 1 if pb.get("brain") == "mock" else max(1, int(cfg.get("brain_attempts", 2)))
+    vobj, berrs = None, []
+    for att in range(attempts):
+        if att:
+            ui(f"  {c.get('name', '')}: fresh attempt {att + 1}/{attempts} on {pb.get('brain')}...")
+        vobj, berrs = _pass_b_once(c, pb, prompt_b, plan, judge, stream_len, segs, cfg, ui, work,
+                                   tag=f"{tag}try{att + 1}_" if att else tag)
+        if vobj is not None and not berrs:
+            return vobj, []
+    return vobj, berrs
+
+
+def _pass_b_once(c, pb, prompt_b, plan, judge, stream_len, segs, cfg, ui, work, tag=""):
+    """Pass B for one case, ONE provider, ONE conversation, with validator repair rounds. -> (video object, errs)."""
     from . import brain as B
     msgs_b = [{"role": "user", "content": prompt_b}]
-    vobj, berrs = None, []
+    vobj, berrs, _last_b = None, [], ""
     for rnd in range(int(cfg["max_repair_rounds"]) + 1):
         pb["_usage_label"] = f"pass B {c.get('name', '')[:10]} {tag}r{rnd + 1}"
         try:
-            txt = B.stream_and_save(msgs_b, pb,
+            txt = B.stream_and_save(msgs_b, _repair_cfg(pb, _last_b, rnd),
                                     Path(work) / f"brain_reply_B_{c['id']}_{tag}{rnd + 1}.txt" if work else None,
                                     on_text=lambda n: n % 400 == 0 and ui(f"    ...{n} chunks"))
         except (B.BrainStop, RuntimeError) as e:
-            if not tag and not _fallback_for(cfg, pb.get("brain")):
-                raise                                   # no fallback configured: stop the run (old behaviour)
-            return None, [f"{pb.get('brain')}: {e}"]
+            return None, [f"{pb.get('brain')}: {e}"]     # this case fails (needs_review); the run goes on
+        _last_b = txt
         try:
             vobj = B.extract_json(txt).get("video", {})
         except Exception as e:
@@ -251,9 +292,14 @@ def build_plan(segs, lines, scan_text, stream_len, cfg, ui=print, work=None, sca
     plan, errs = _pass_a_loop(cfg_a, prompt_a, stream_len, segs, ui, work)
     fb = _fallback_for(cfg, pass_a_brain)
     if (plan is None or errs) and fb:
+        primary_errs = [f"{pass_a_brain}: " + str((errs or ["no plan"])[0])[:300]]
         ui(f"  Pass A on {pass_a_brain} failed ({(errs or ['no plan'])[0][:100]}) -> falling back to {fb}")
         cfg_a2 = dict(_provider_cfg(cfg, fb), _cases_only=True, _mock_queue=[])
         plan, errs = _pass_a_loop(cfg_a2, prompt_a, stream_len, segs, ui, work, tag="fb_")
+        if plan is None or errs:
+            errs = primary_errs + [f"fallback {fb}: " + str(e)[:300] for e in (errs or ["failed"])]
+            errs.append("-> Fix: run again (the cheap model often succeeds on a second try), or add the fallback key "
+                        f"(~/.config/umf/{fb}.env), or set \"brain_fallback\": \"\" in config.json.")
         pass_a_brain = fb
     if plan is None or errs:
         return plan, errs or ["Pass A failed"]

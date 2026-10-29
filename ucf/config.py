@@ -83,8 +83,9 @@ DEFAULTS = {
     "brain_two_pass": "auto",              # auto (= on for mode all) | on | off
     "brain_pass_a": "",                    # hybrid: provider for Pass A inventory ("" = same as brain)
     "brain_pass_b": "",                    # hybrid: provider for Pass B packaging ("" = same as brain)
-    "brain_fallback": "anthropic",         # a case the pass brain cannot get past the validator (or an API
-                                           #   failure) is retried on this brain; "" = no fallback (100% cheap brain)
+    "brain_fallback": "",                  # OFF (owner decision 2026-10-29: everything runs on Hive, no Claude fallback). A provider name here
+                                           #   would retry a failed case on that brain - leave it empty.
+    "brain_attempts": 3,                   # fresh conversations per pass on the same brain before a pass counts as failed (mode all)
     "prompt_examples": "auto",             # gold Pass A/B examples in the prompt: auto = every brain except anthropic
     "reuse_guard": True,                   # warn when a case was already rendered on another style
     # --- voice ---

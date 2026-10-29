@@ -25,12 +25,11 @@ Double-click **`H Labs.command`** to run everything from a menu.
 Prices checked 2026-10-25 (thehive.ai/pricing, api-docs.deepseek.com). Every run prints `BRAIN USAGE` with
 real dollars and saves it to `work/<id>/usage.json`.
 
-**How the brain runs:** every pass goes to the chosen brain (default Hive). The validator checks each reply
-and sends mistakes back (up to 2 repair rounds). A case that still fails - or an API failure - is retried on
-`brain_fallback` (default `anthropic`), so only the hard cases cost Claude money. `ranking.md` shows which
-brain built each case. Set `"brain_fallback": ""` in `config.json` for 100% cheap brain. Non-Claude brains
-also get gold examples in the prompt (`prompts/shared/example_pass_a.md`, `example_pass_b.md`;
-`"prompt_examples"`: auto / true / false).
+**How the brain runs:** every pass goes to the chosen brain (default Hive) and nothing else (no Claude fallback since 2026-10-29).
+The validator checks each reply and sends mistakes back (repair rounds, each capped at 1.3x the previous reply so a looping model
+cannot burn minutes). If a pass still fails, it starts a fresh conversation on the same brain (`brain_attempts`, default 3). A mode-all
+case that never passes is marked needs_review in `ranking.md` and skipped; the other cases render. Non-Claude brains also get gold
+examples in the prompt (`prompts/shared/example_pass_a.md`, `example_pass_b.md`; `"prompt_examples"`: auto / true / false).
 
 Paste your key after the `=` in the env file and save. Switch with `--brain hive|anthropic|deepseek|openai|manual`
 or menu option 3 (an explicit `--brain` runs every pass on that brain).
