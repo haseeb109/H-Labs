@@ -79,7 +79,7 @@ def normalise(segs):
     return out
 
 
-def whisper_transcribe(media, model="base.en", device="cpu"):
+def whisper_transcribe(media, model="base.en", device="cpu", threads=None):
     """Fallback ASR with faster-whisper. cpu_threads matters: defaults leave the M1 at ~1.3x realtime,
     8 threads gives ~6x. int8 + beam_size=1 stays well ahead of the 18 s caption quality bar.
     A bundled model dir (models/<name>) wins over a Hub download, so an offline machine just works."""
@@ -88,7 +88,7 @@ def whisper_transcribe(media, model="base.en", device="cpu"):
     local = ROOT / "models" / model
     if local.exists():
         model = str(local)
-    m = WhisperModel(model, device=device, compute_type="int8", cpu_threads=os.cpu_count() or 4)
+    m = WhisperModel(model, device=device, compute_type="int8", cpu_threads=threads or os.cpu_count() or 4)
     seg_iter, _ = m.transcribe(str(media), vad_filter=True, beam_size=1, language="en")
     segs = [{"start": s.start, "end": s.end, "text": _clean(s.text)} for s in seg_iter if _clean(s.text)]
     return normalise(segs)

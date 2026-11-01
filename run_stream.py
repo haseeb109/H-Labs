@@ -82,6 +82,8 @@ def main():
 
     cfg = config.load(a.config, style=a.style)
     _WORK["notify"] = cfg.get("notify_when_done", True)
+    from ucf import load as LOAD
+    _prio = LOAD.lower_priority(cfg)                     # ffmpeg / whisper children inherit it: the PC stays responsive
     if a.brain:
         cfg["brain"] = a.brain
         cfg["brain_pass_a"] = cfg["brain_pass_b"] = ""   # an explicit --brain runs every pass on that brain
@@ -96,6 +98,8 @@ def main():
     if cfg["brain"] in brain.PROVIDERS and cfg.get("model") == config.DEFAULTS["model"]:
         cfg.update(brain.cfg_for(cfg, cfg["brain"]))
     ui(f"style: {cfg['style']}  ({config.style_path(cfg)})  |  mode: {mode}  |  band: {band}")
+    ui(f"load: priority {_prio or 'normal'}, CPU threads {LOAD.cpu_threads(cfg)} of {os.cpu_count()}"
+       "  (config process_priority / cpu_threads)")
     root = config.ROOT
     state = root / cfg["state_dir"]
     state.mkdir(exist_ok=True)
@@ -180,7 +184,8 @@ def main():
         spoken_wpm = (sum(len(s["text"].split()) for s in segs) / max(stream_len / 60.0, 1)) if segs else 0
         if spoken_wpm < 15:   # missing / sparse captions
             ui("captions missing or sparse -> whisper (slow, CPU)...")
-            segs = transcript.whisper_transcribe(video_path, cfg["whisper_model"])
+            from ucf.load import cpu_threads
+            segs = transcript.whisper_transcribe(video_path, cfg["whisper_model"], threads=cpu_threads(cfg))
         transcript.save(segs, tpath)
     ui(f"transcript: {len(segs)} segments, ends {fmt_tc(segs[-1]['end']) if segs else '-'}")
     if upto < IX["scan"]:

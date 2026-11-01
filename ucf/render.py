@@ -82,7 +82,7 @@ def probe_dur(p):
     return tts.dur(p)
 
 
-_X264 = {"preset": "medium", "crf": "16"}
+_X264 = {"preset": "medium", "crf": "16", "threads": "0"}
 # NVENC option sets, best first. Older GPUs/drivers (Maxwell, Pascal) reject some options (tune hq, temporal AQ ...): pick_encoder
 # tests the sets in order and keeps the first one that really encodes on THIS machine.
 NVENC_LEVELS = [
@@ -96,6 +96,8 @@ _NV = {"level": 0}
 def pick_encoder(cfg):
     _X264["preset"] = str(cfg.get("x264_preset") or "medium")       # CPU-only PCs: "fast" / "veryfast" render much quicker
     _X264["crf"] = str(cfg.get("x264_crf") or 16)
+    from .load import cpu_threads
+    _X264["threads"] = str(cpu_threads(cfg))                          # not every core: the PC stays usable (ucf/load.py)
     want = cfg.get("encoder", "auto")
     enc = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True).stdout
     if want != "auto":
@@ -122,7 +124,8 @@ def venc(enc):
         return ["-c:v", enc, "-b:v", "14M", "-maxrate", "20M", "-profile:v", "high", "-pix_fmt", "yuv420p", "-g", "60"]
     if enc == "h264_nvenc":
         return ["-c:v", enc, *NVENC_LEVELS[_NV["level"]], "-pix_fmt", "yuv420p", "-g", "60"]
-    return ["-c:v", "libx264", "-preset", _X264["preset"], "-crf", _X264["crf"], "-profile:v", "high", "-pix_fmt", "yuv420p", "-g", "60"]
+    return ["-c:v", "libx264", "-preset", _X264["preset"], "-crf", _X264["crf"], "-profile:v", "high", "-pix_fmt", "yuv420p", "-g", "60",
+            *(["-threads", _X264["threads"]] if _X264["threads"] != "0" else [])]
 
 
 AENC = ["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"]

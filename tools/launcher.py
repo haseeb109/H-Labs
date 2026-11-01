@@ -176,7 +176,12 @@ def doctor(pause=True):
             sys.path.insert(0, str(ROOT))
             from ucf import render
             enc = render.pick_encoder({"encoder": "auto"})
-            (ok if enc != "libx264" else warn)(f"video encoder that will be used: {enc}" + ("" if enc != "libx264" else "  (no GPU encoder found: CPU only, slower. NVIDIA GPU + recent driver gives h264_nvenc; run nvidia-smi to check)"))
+            (ok if enc != "libx264" else warn)(f"video encoder that will be used: {enc}" + ("  (GPU encodes - the CPU stays free)" if enc != "libx264" else
+                "  (no GPU encoder works: the CPU does ALL the encoding -> high CPU load. NVIDIA GPU + driver: run nvidia-smi and send this check)"))
+            from ucf.load import cpu_threads
+            cfg_now = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+            ok(f"CPU load limit: {cpu_threads(cfg_now)} of {os.cpu_count()} threads, priority {cfg_now.get('process_priority', 'below_normal')}"
+               "  (config cpu_threads / process_priority)")
             if enc == "libx264" and "nvenc" in subprocess.run([ff, "-hide_banner", "-encoders"], capture_output=True, text=True).stdout:
                 err = subprocess.run([ff, "-hide_banner", "-f", "lavfi", "-i", "color=c=black:s=1280x720:d=1", "-c:v", "h264_nvenc", "-f", "null", "-"],
                                      capture_output=True, text=True).stderr

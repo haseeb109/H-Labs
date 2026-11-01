@@ -1149,6 +1149,23 @@ def t30_windows_run_fixes():
     return "shared surname / generic words not flagged; 360p cache spotted; 360p download -> next strategy got 720p"
 
 
+def t31_load_limits():
+    """CPU no longer at 100%: x264 gets a thread cap (75% of cores by default), the run lowers its own priority."""
+    import os
+    from ucf import load as LD, render
+    n = os.cpu_count() or 4
+    assert LD.cpu_threads({}) == max(2, int(n * 0.75)) and LD.cpu_threads({"cpu_threads": "all"}) == n and LD.cpu_threads({"cpu_threads": 1}) == 1
+    render.pick_encoder({"encoder": "libx264", "cpu_threads": 2})
+    v = render.venc("libx264")
+    assert v[v.index("-threads") + 1] == "2", v
+    assert "-threads" not in render.venc("h264_nvenc"), "GPU encoder: no CPU thread option"
+    r = subprocess.run([sys.executable, "-c", "import sys; sys.path.insert(0, sys.argv[1]); from ucf import load; "
+                        "print(load.lower_priority({}) or 'unchanged')", str(ROOT)], capture_output=True, text=True)
+    assert r.stdout.strip() == "below_normal", r.stdout + r.stderr
+    render.pick_encoder({"encoder": "libx264"})
+    return f"x264 threads capped ({LD.cpu_threads({})} of {n}), priority below_normal"
+
+
 def t25_nvenc_levels():
     """An old GPU/driver that rejects the best NVENC options gets the next simpler set; one that rejects all falls back to x264."""
     from ucf import render
@@ -1213,6 +1230,7 @@ def main():
     check(28, "end of run: cleanup + upload list", t28_finish)
     check(29, "download picks best quality", t29_download_quality)
     check(30, "Windows run fixes (names, 360p cache, thumbnail lock)", t30_windows_run_fixes)
+    check(31, "CPU load limits", t31_load_limits)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))

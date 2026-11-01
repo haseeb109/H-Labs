@@ -38,6 +38,8 @@ DEFAULTS = {
     # --- stream handling ---
     "cookies_file": "",                    # ONLY a burner account's cookies.txt, and only if YouTube blocks downloads
     "max_height": 1080,
+    "process_priority": "below_normal",   # below_normal (PC stays responsive) | normal | idle - ffmpeg / whisper inherit it
+    "cpu_threads": 0,                      # 0 = auto (75% of logical cores) | a number | "all" - x264 encode + whisper
     "notify_when_done": True,              # desktop notification + sound when a run ends (or stops on an error)
     "open_output_after_run": True,         # open the output folder at the end of a run
     "cleanup_after_run": "always",         # always (default) | ask | never - delete the downloaded stream + render temp files (never the videos)
