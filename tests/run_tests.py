@@ -685,7 +685,35 @@ def t12_mode_all_orchestration():
     mode_all.write_ranking(plan, work, cfg, "mock")
     assert (work / "ranking.md").exists() and (work / "ranking.csv").exists()
     assert "Thirteen" in (work / "ranking.md").read_text(encoding="utf-8") or "13" in (work / "ranking.md").read_text(encoding="utf-8")
-    return "2 ranked videos, skipped list, ranking.md/csv, script-filled titles"
+
+    # same stream, Pass B on a live-style brain: the cases are packaged AT THE SAME TIME, with the same result as one by one
+    import threading
+    from ucf import brain as B
+    live, peak, lock = [0], [0], threading.Lock()
+    replies = {1: _json.dumps({"video": video_obj(caseA, 1, "a", "13")}), 2: _json.dumps({"video": video_obj(caseB, 2, "b", "6")})}
+
+    def fake(msgs, c, save=None, on_text=None):
+        if c.get("brain") == "mock":                # Pass A still replays the saved mock reply
+            return orig(msgs, c, save, on_text)
+        with lock:
+            live[0] += 1
+            peak[0] = max(peak[0], live[0])
+        time.sleep(0.4)
+        with lock:
+            live[0] -= 1
+        return replies[2 if "Mary Plead" in msgs[0]["content"] else 1]
+    cfg2 = dict(cfg, brain_pass_b="hive", brain_parallel_b=3, mock_passA_replies=[str(tmp / "a.json")])
+    orig = B.stream_and_save
+    B.stream_and_save = fake
+    try:
+        plan2, errs2 = mode_all.build_plan(segs, lines, "SCAN", 3300, cfg2, lambda *m: None, work)
+    finally:
+        B.stream_and_save = orig
+    assert not errs2, errs2[:4]
+    assert peak[0] == 2, f"both cases should be packaged at the same time (peak {peak[0]})"
+    assert [(v["rank"], v["title"]) for v in plan2["videos"]] == [(v["rank"], v["title"]) for v in plan["videos"]], \
+        "parallel Pass B must give the same videos as one by one"
+    return "2 ranked videos, skipped list, ranking.md/csv, script-filled titles; Pass B in parallel = same videos"
 
 
 def t13_boundary_engine():

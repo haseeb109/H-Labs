@@ -261,7 +261,7 @@ def _pass_b_once(c, pb, prompt_b, plan, judge, stream_len, segs, cfg, ui, work, 
     msgs_b = [{"role": "user", "content": prompt_b}]
     vobj, berrs, _last_b, _out_b = None, [], "", 0
     for rnd in range(int(cfg["max_repair_rounds"]) + 1):
-        pb["_usage_label"] = f"pass B {c.get('name', '')[:10]} {tag}r{rnd + 1}"
+        label = pb["_usage_label"] = f"pass B #{c.get('rank', '')} {c.get('name', '')[:10]} {tag}r{rnd + 1}"
         n_usage = len(B.USAGE)
         try:
             txt = B.stream_and_save(msgs_b, _repair_cfg(pb, _last_b, rnd, _out_b),
@@ -270,7 +270,8 @@ def _pass_b_once(c, pb, prompt_b, plan, judge, stream_len, segs, cfg, ui, work, 
         except (B.BrainStop, RuntimeError) as e:
             return None, [f"{pb.get('brain')}: {e}"]     # this case fails (needs_review); the run goes on
         _last_b = txt
-        _out_b = B.USAGE[-1].get("output", 0) if len(B.USAGE) > n_usage else 0
+        # this call's own usage row (other cases may be running at the same time, so not simply the last row)
+        _out_b = next((r.get("output", 0) for r in reversed(B.USAGE[n_usage:]) if r.get("label") == label), 0)
         try:
             vobj = B.extract_json(txt).get("video", {})
         except Exception as e:
@@ -372,24 +373,43 @@ def build_plan(segs, lines, scan_text, stream_len, cfg, ui=print, work=None, sca
         return plan, ["no case reached the minimum length for its own video"]
 
     # ---------- Pass B: one packaging call per used case ----------
-    # one shared reply queue in rank order: case A pops reply 1, case B pops reply 2, ...
+    # Cases are independent (own prompt, own transcript slice, own validator check), so up to brain_parallel_b of them run at the
+    # same time: same prompts and same model as one-by-one, only sooner. Results are applied in rank order afterwards.
+    # one shared reply queue in rank order: case A pops reply 1, case B pops reply 2, ... (mock: always one at a time)
     cfg["_mock_queue"] = list(cfg.get("mock_passB_replies") or [])
-    videos = []
-    for c in used:
-        ui(f"  PASS B (packaging) #{c['rank']} {c['name']}...")
-        pass_b_brain = cfg.get("brain_pass_b") or cfg.get("brain", "anthropic")
+    pass_b_brain = cfg.get("brain_pass_b") or cfg.get("brain", "anthropic")
+    par = 1 if pass_b_brain in ("mock", "manual") else max(1, int(cfg.get("brain_parallel_b", 3)))
+
+    def package(c):
+        cui = ui if par == 1 else (lambda *m: ui(f"  [#{c['rank']} {c['name'][:16]}]", *m))
+        cui(f"  PASS B (packaging) #{c['rank']} {c['name']}...")
         pb = _provider_cfg(cfg, pass_b_brain)
         a, b = parse_tc(c["in"]), parse_tc(c["out"])
         prompt_b = case_prompt(c, pb, judge) + "\n\n" + "═" * 64 + \
             "\n TRANSCRIPT SLICE (this case only)\n" + "═" * 64 + "\n" + "\n".join(case_slice_lines(lines, a, b))
-        vobj, berrs = _pass_b_loop(c, pb, prompt_b, plan, judge, stream_len, segs, cfg, ui, work)
+        brain_used = pass_b_brain
+        vobj, berrs = _pass_b_loop(c, pb, prompt_b, plan, judge, stream_len, segs, cfg, cui, work)
         fb = _fallback_for(cfg, pass_b_brain)
         if (vobj is None or berrs) and fb:
-            ui(f"  {c['name']}: {pass_b_brain} could not pass the validator -> retrying this case on {fb}")
+            cui(f"  {c['name']}: {pass_b_brain} could not pass the validator -> retrying this case on {fb}")
             vobj, berrs = _pass_b_loop(c, _provider_cfg(cfg, fb), prompt_b, plan, judge, stream_len, segs, cfg,
-                                       ui, work, tag="fb_")
-            pass_b_brain = fb
-        c["packaged_by"] = pass_b_brain
+                                       cui, work, tag="fb_")
+            brain_used = fb
+        if vobj is not None and not berrs:
+            cui(f"  #{c['rank']} {c['name']}: packaging done")
+        return vobj, berrs, brain_used
+
+    if par > 1 and len(used) > 1:
+        from concurrent.futures import ThreadPoolExecutor
+        ui(f"  PASS B: {len(used)} cases, {min(par, len(used))} at a time")
+        with ThreadPoolExecutor(max_workers=min(par, len(used))) as pool:
+            results = list(pool.map(package, used))
+    else:
+        results = [package(c) for c in used]
+
+    videos = []
+    for c, (vobj, berrs, brain_used) in zip(used, results):
+        c["packaged_by"] = brain_used
         if vobj is None or berrs:
             ui(f"  ! {c['name']} stays unrendered (needs_review) - see brain_reply_B_{c['id']}_*.txt")
             c["needs_review"] = True

@@ -90,6 +90,7 @@ DEFAULTS = {
     "brain_pass_b": "",                    # hybrid: provider for Pass B packaging ("" = same as brain)
     "brain_fallback": "",                  # OFF (owner decision 2026-10-29: everything runs on Hive, no Claude fallback). A provider name here
                                            #   would retry a failed case on that brain - leave it empty.
+    "brain_parallel_b": 3,                 # Pass B (packaging) cases sent to the brain at the same time (1 = one by one, as before)
     "brain_attempts": 3,                   # fresh conversations per pass on the same brain before a pass counts as failed (mode all)
     "prompt_examples": "auto",             # gold Pass A/B examples in the prompt: auto = every brain except anthropic
     "reuse_guard": True,                   # warn when a case was already rendered on another style
