@@ -37,6 +37,16 @@ It replaces the old `.venv` automatically. Python / ffmpeg / Git installed earli
   Videos land in `output\<date>_<stream id>\`.
 * The first video on a new PC downloads the speech-recognition model once (a few hundred MB, into `runtime\hf`).
 
+## Clips only (mode 4)
+For channels where your own editor finishes the video. Pick mode **4) Clips only**. For every verified case of 8:00 or more:
+* `clip.mp4`: the hook (10-20 s, from inside the case) + the whole case, dead air cut out. Native resolution (no upscale),
+  frame-accurate cuts, H.264 (opens in Premiere / CapCut / Resolve). No overlays, no AI voice, no graphics, no watermark.
+* `EDITOR_GUIDE.txt`: what the full render would have added, with **clip** timestamps: the hook title text, every text overlay
+  (time, position, text), the Subscribe CTAs, the closing voice-over script (paste it into any TTS), titles, thumbnail text,
+  description, chapters, tags, and the list of cuts (source times).
+* `thumbnail_frame_*.jpg`: frame candidates for the thumbnail.
+The output folder ends with `_clips`. No ai33 credits are used. Settings: `clips_dead_air_s` (10 s), `clips_crf` (14).
+
 ## End of a run
 * A Windows notification + sound says the run is done (or that it stopped on an error), and the output folder opens.
 * The window shows **PROCESSING TIME** (total + every stage); `state\run_history.csv` keeps one line per run.

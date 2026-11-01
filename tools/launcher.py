@@ -78,11 +78,12 @@ def pick_style():
 
 def pick_mode():
     print("\nVideo mode for this run:\n  1) 30 min video   (v9 bundles, 20-40 min)\n  2) 1 hour video   (v9 bundles, 50-70 min)\n"
-          "  3) All cases      (every case >= 8:00 becomes its own video, ranked)")
+          "  3) All cases      (every case >= 8:00 becomes its own video, ranked)\n"
+          "  4) Clips only     (every case >= 8:00 -> hook + case, dead air cut, NO overlays/voice/watermark + EDITOR_GUIDE.txt)")
     cur = _read(".mode", "60")
-    d = {"30": 1, "60": 2, "all": 3}.get(cur, 2)
-    m = ask(f"Pick [1-3, Enter={d}]: ", str(d))
-    mode = {"1": "30", "2": "60", "3": "all"}.get(m, "60")
+    d = {"30": 1, "60": 2, "all": 3, "clips": 4}.get(cur, 2)
+    m = ask(f"Pick [1-4, Enter={d}]: ", str(d))
+    mode = {"1": "30", "2": "60", "3": "all", "4": "clips"}.get(m, "60")
     _write(".mode", mode)
     print("mode:", mode)
     return mode
@@ -247,7 +248,7 @@ def main():
                 continue
             mode = pick_mode()
             args = [url, "--brain", _read(".brain", "hive"), "--style", sid, "--mode", mode]
-            if confirm_tts():
+            if mode != "clips" and confirm_tts():          # clips mode makes no AI voice
                 args.append("--confirm-tts")
             run_stream(args)
         elif pick == "2":
@@ -266,7 +267,7 @@ def main():
                 args += ["--stream-length", slen]
             if tr:
                 args += ["--transcript-file", tr]
-            if confirm_tts():
+            if mode != "clips" and confirm_tts():
                 args.append("--confirm-tts")
             run_stream(args)
         elif pick == "3":

@@ -72,7 +72,8 @@ def main():
     ap.add_argument("--confirm-tts", action="store_true")
     ap.add_argument("--brain", choices=["hive", "anthropic", "deepseek", "openai", "manual", "mock"])
     ap.add_argument("--style", help="editing style id from styles/<id>/style.json (e.g. trial_tales)")
-    ap.add_argument("--mode", help="run mode: 30 (20-40 min videos) | 60 (50-70 min) | all (one video per case, ranked)")
+    ap.add_argument("--mode", help="run mode: 30 (20-40 min videos) | 60 (50-70 min) | all (one video per case, ranked) | "
+                                   "clips (one clean clip per case + editor guide, no overlays / voice / watermark)")
     ap.add_argument("--tts", help="force one TTS provider (ai33|voicestudio|say|dummy)")
     ap.add_argument("--no-watermark", action="store_true", help="skip the anti-copy watermark for this run")
     a = ap.parse_args()
@@ -91,6 +92,9 @@ def main():
         cfg["tts_order"] = [a.tts]
     if a.no_watermark:
         cfg["watermark"] = False
+    if a.mode == "clips":                 # clips only: the brain works exactly as mode "all", the output is clips + editor guides
+        cfg["output_kind"] = "clips"
+        a.mode = "all"
     mode = config.apply_mode(cfg, a.mode)
     band = (f"{cfg['runtime_min'] // 60}-{cfg['runtime_max'] // 60} min" if mode != "all"
             else f"one video per case >= {cfg.get('min_case_minutes', 8):.0f} min")
@@ -223,7 +227,6 @@ def main():
     (work / "prompt_for_claude.txt").write_text(prompt, encoding="utf-8")
     if not plan_path.exists():
         if mode == "all":
-            import os
             if os.environ.get("HL_PASSA_REPLY"):       # resume: replay a saved Pass A reply, live Pass B
                 cfg["mock_passA_replies"] = [os.environ["HL_PASSA_REPLY"]]
             if cfg["brain"] == "manual":
@@ -337,6 +340,8 @@ def main():
     # ---------------- render ----------------
     CLOCK.stage("render setup")
     only = {int(x) for x in a.only.split(",")} if a.only else None
+    if cfg.get("output_kind") == "clips":
+        return clips_output(plan, plan_path, work, state, sid, upload, url, video_path, segs, cfg, mode, only, a)
     # cross-channel reuse guard (spec 9.5): warn, never block
     if cfg.get("reuse_guard", True):
         used_log = load_json(state / "used_cases.json", [])
@@ -451,6 +456,60 @@ def main():
     if cfg.get("notify_when_done", True):
         FINISH.notify("H Labs - done", f"{sid}: {len(summary)} videos ({n_ok} QC OK"
                       + (f", {n_rev} need review" if n_rev else "") + f") in {CLOCK.hms(CLOCK.total())}", ok=n_ok == len(summary))
+    if cfg.get("open_output_after_run", True):
+        FINISH.open_folder(outroot)
+    FINISH.cleanup(cfg, work, outroot, a.video_file, ui)
+
+
+def clips_output(plan, plan_path, work, state, sid, upload, url, video_path, segs, cfg, mode, only, a):
+    """Clips-only run: one clip.mp4 + EDITOR_GUIDE.txt per case (ucf/clips.py), then the usual report / notify / cleanup."""
+    from ucf import clips as CLIPS
+    from ucf.render import pick_encoder
+    if not video_path.exists():
+        sys.exit(f"clips mode needs the downloaded stream ({video_path}) - run again with the URL")
+    stamp = f"{upload[:4]}-{upload[4:6]}-{upload[6:8]}" if len(upload) == 8 else upload
+    outroot = config.ROOT / cfg["output_dir"] / f"{stamp}_{sid}_clips"
+    outroot.mkdir(parents=True, exist_ok=True)
+    enc = pick_encoder(cfg)
+    ui(f"clips only: {len(plan['videos'])} case(s)  |  encoder: {enc}  |  no overlays / voice / watermark")
+    by_id = {c["id"]: c for c in plan["cases"]}
+    summary, rows = [], []
+    for v in plan["videos"]:
+        if only and v["n"] not in only:
+            continue
+        case = by_id[v["case_ids"][0]]
+        folder = outroot / f"{v.get('rank', v['n']):02d}_{safe_slug(case['name'], 24)}"
+        ui(f"CLIP {v.get('rank', v['n'])}: {case['name']}")
+        CLOCK.stage(f"clip {v.get('rank', v['n'])}")
+        t0 = time.time()
+        res = CLIPS.make(plan, v, case, segs, video_path, folder, cfg, enc, ui, url)
+        qc = dict(res["qc"], processing_seconds=round(time.time() - t0))
+        save_json(folder / "qc.json", qc)
+        ui(f"  done: {res['final']}  {fmt_dur(res['total'])}  (took {CLOCK.hms(qc['processing_seconds'])})")
+        summary.append((v["n"], folder.name, res["total"], qc["ok"]))
+        rows.append((v["n"], folder.name, res["total"], qc["ok"], v, qc))
+    CLOCK.stage("report")
+    from ucf import mode_all
+    mode_all.write_ranking(plan, outroot, cfg, sid)
+    rep = [f"RUN REPORT {sid} (clips only) - {time.strftime('%Y-%m-%d %H:%M')}", ""] + \
+          [f"Clip {n}: {f}  {fmt_dur(d)}  {'OK' if ok else 'CHECK'}" for n, f, d, ok in summary]
+    ulines, ut = brain.usage_summary()
+    brain.save_usage(outroot / "usage.json")
+    rep += [""] + ulines + [""] + CLOCK.lines(_WORK.get("stream_len", 0), len(summary), "completed")
+    CLOCK.history(state / "run_history.csv", stream_id=sid, style=cfg["style"], mode="clips", encoder=enc,
+                  stream_min=round(_WORK.get("stream_len", 0) / 60, 1), videos=len(summary),
+                  qc_ok=sum(1 for *_, ok in summary if ok), cost_usd=round(ut.get("cost") or 0, 3))
+    (outroot / "run_report.txt").write_text("\n".join(rep), encoding="utf-8")
+    shutil.copy(plan_path, outroot / "plan.json")
+    shutil.copy(work / "plan_report.txt", outroot / "plan_report.txt")
+    ulist = FINISH.upload_list(plan, rows, outroot, files="clip.mp4  |  EDITOR_GUIDE.txt  |  thumbnail_frame_*.jpg")
+    print("\n".join(rep))
+    ui("editor list:", ulist)
+    ui("ALL DONE ->", outroot)
+    n_ok = sum(1 for *_, ok in summary if ok)
+    if cfg.get("notify_when_done", True):
+        FINISH.notify("H Labs - clips done", f"{sid}: {len(summary)} clips ready for the editor in {CLOCK.hms(CLOCK.total())}",
+                      ok=n_ok == len(summary))
     if cfg.get("open_output_after_run", True):
         FINISH.open_folder(outroot)
     FINISH.cleanup(cfg, work, outroot, a.video_file, ui)

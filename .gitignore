@@ -29,3 +29,7 @@ cookies.txt
 
 # Windows: tools installed by Setup.bat into this folder
 runtime/
+
+# Per-PC run state (every run writes these; tracking them blocked git pull on the team PCs)
+state/*.json
+state/*.csv

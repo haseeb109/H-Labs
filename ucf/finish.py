@@ -73,7 +73,7 @@ def cleanup(cfg, work, outroot, own_video_file=None, ui=print, ask=input):
     return freed
 
 
-def upload_list(plan, rows, outroot, header_lines=()):
+def upload_list(plan, rows, outroot, header_lines=(), files="video.mp4  |  thumbnail.jpg  |  metadata.txt"):
     """UPLOAD_LIST.txt: the finished videos in upload order with their title, length, QC and files; then what needs review.
     rows = [(n, folder name, seconds, qc_ok, video dict, qc dict)]."""
     from .timeutil import fmt_dur
@@ -85,7 +85,7 @@ def upload_list(plan, rows, outroot, header_lines=()):
             L.append(f"   title:     {v['title']}")
         if v.get("backup_title"):
             L.append(f"   backup:    {v['backup_title']}  (swap at 48 h if CTR < 5%)")
-        L.append(f"   files:     {folder}\\video.mp4  |  thumbnail.jpg  |  metadata.txt")
+        L.append(f"   files:     {folder}\\{files}")
         L.append("   [ ] uploaded    [ ] thumbnail set    [ ] description + chapters pasted")
         L.append("")
     review = [c for c in plan.get("cases", []) if c.get("needs_review")]

@@ -20,12 +20,13 @@ pick_mode() {
   echo "  1) 30 min video   (v9 bundles, 20-40 min)"
   echo "  2) 1 hour video   (v9 bundles, 50-70 min)"
   echo "  3) All cases      (every case >= 8:00 becomes its own video, ranked)"
+  echo "  4) Clips only     (every case >= 8:00 -> hook + case, dead air cut, no overlays/voice/watermark + EDITOR_GUIDE.txt)"
   local def=2
-  [[ -f "$MODE_FILE" ]] && { case "$(cat "$MODE_FILE")" in 30) def=1;; 60) def=2;; all) def=3;; esac; }
-  printf "Pick [1-3, Enter=%d]: " $def
+  [[ -f "$MODE_FILE" ]] && { case "$(cat "$MODE_FILE")" in 30) def=1;; 60) def=2;; all) def=3;; clips) def=4;; esac; }
+  printf "Pick [1-4, Enter=%d]: " $def
   read -r m
   [[ -z "$m" ]] && m=$def
-  case "$m" in 1) echo "30" > "$MODE_FILE";; 3) echo "all" > "$MODE_FILE";; *) echo "60" > "$MODE_FILE";; esac
+  case "$m" in 1) echo "30" > "$MODE_FILE";; 3) echo "all" > "$MODE_FILE";; 4) echo "clips" > "$MODE_FILE";; *) echo "60" > "$MODE_FILE";; esac
   echo "mode: $(cat "$MODE_FILE")"
 }
 

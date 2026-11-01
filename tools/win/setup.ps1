@@ -103,8 +103,18 @@ if ($Update) {
     } elseif (-not $gitExe) {
         Warn "git not found - code update skipped (run Setup.bat once, it installs a portable git)"
     } else {
+        # state\*.json is written by every run; older versions tracked it in git, so a local change blocked the pull. Keep a copy,
+        # reset the tracked copies, pull, and put this PC's own state back.
+        $stBak = Join-Path $RT "_state_backup"
+        if (Test-Path $stBak) { Remove-Item $stBak -Recurse -Force }
+        New-Item -ItemType Directory -Force -Path $stBak | Out-Null
+        Get-ChildItem (Join-Path $Root "state") -File -ErrorAction SilentlyContinue | Copy-Item -Destination $stBak
+        $tracked = & $gitExe -C $Root ls-files state
+        if ($tracked) { & $gitExe -C $Root checkout -- state }
         & $gitExe -C $Root pull --ff-only
         if ($LASTEXITCODE -ne 0) { Warn "git pull failed (local edits in the folder? see the message above). Setup continues with the current code." }
+        Get-ChildItem $stBak -File | Copy-Item -Destination (Join-Path $Root "state") -Force
+        Remove-Item $stBak -Recurse -Force
     }
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Root "tools\win\setup.ps1") -NoPrompt
     exit $LASTEXITCODE

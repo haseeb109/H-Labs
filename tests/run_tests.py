@@ -545,6 +545,7 @@ def t12_mode_all_orchestration():
     """12.1 #8: two-pass mock brain, mode all - 2 cases >= 8:00 + 1 short -> 2 ranked videos,
     ranking files, title/backup script-filled, carry-forward untouched."""
     import json as _json
+    import os
     import tempfile
     from ucf import mode_all, config as CFG, transcript
 
@@ -713,6 +714,8 @@ def t12_mode_all_orchestration():
     assert peak[0] == 2, f"both cases should be packaged at the same time (peak {peak[0]})"
     assert [(v["rank"], v["title"]) for v in plan2["videos"]] == [(v["rank"], v["title"]) for v in plan["videos"]], \
         "parallel Pass B must give the same videos as one by one"
+    if os.environ.get("HL_DUMP_T12"):
+        Path(os.environ["HL_DUMP_T12"]).write_text(_json.dumps({"plan": plan2, "segs": segs}), encoding="utf-8")
     return "2 ranked videos, skipped list, ranking.md/csv, script-filled titles; Pass B in parallel = same videos"
 
 
@@ -1166,6 +1169,78 @@ def t31_load_limits():
     return f"x264 threads capped ({LD.cpu_threads({})} of {n}), priority below_normal"
 
 
+def t32_clips_only():
+    """Clips only: hook (10-20 s) + case, brain removes + transcript dead air cut, frame-accurate H.264, editor guide with clip times."""
+    from ucf import clips as CL, config, render
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        src = tmp / "src.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=640x360:r=30:d=200", "-f", "lavfi",
+                        "-i", "sine=f=440:d=200", "-c:v", "libx264", "-preset", "ultrafast", "-g", "150", "-c:a", "aac", "-shortest",
+                        str(src)], check=True)
+        segs = [{"start": float(t), "end": float(t) + 4.0, "text": "words"} for t in range(10, 60, 4)] + \
+               [{"start": float(t), "end": float(t) + 4.0, "text": "words"} for t in range(90, 200, 4)]      # silence 62-90
+        case = {"id": 1, "name": "Jane Roe", "in": "0:00:10", "out": "0:03:00", "charge": "Theft", "question": "Jail?",
+                "removes": [{"in": "0:01:40", "out": "0:01:50"}],
+                "overlays": [{"tc": "0:01:20", "kind": "fact", "text": "She had three priors", "dur": 7},
+                             {"tc": "0:01:10", "kind": "coming_up", "text": "Coming up: the ruling", "dur": 6}]}
+        video = {"n": 1, "rank": 1, "case_ids": [1], "hook": {"in": "0:02:00", "out": "0:02:05", "headline": "SHE LAUGHED"},
+                 "vo_final": {"text": "One hearing, one hard lesson. Fair or too harsh? Tell us below and subscribe for the next one."},
+                 "titles": [{"style": "karma", "text": "She Laughed In Court", "primary": True}], "thumbnail": {"text": "SHE LAUGHED",
+                 "gold_word": "LAUGHED", "window_in": "0:02:01", "window_out": "0:02:03"},
+                 "description": {"first_line": "What happens next?", "what_happens": "A hearing."},
+                 "chapters": [{"tc": "0:00:10", "label": "Start"}, {"tc": "0:02:30", "label": "Ruling"}], "tags": ["court"]}
+        cfg = dict(config.load(), clips_dead_air_s=10, clips_dead_air_pad=0.7)
+        enc = render.pick_encoder(dict(cfg, encoder="libx264", x264_preset="ultrafast"))     # test speed only
+        res = CL.make({"cases": [case], "source_file": "src.mp4"}, video, case, segs, src, tmp / "out", cfg, enc, lambda *a: None)
+        hook = 10.0                                                         # 5 s hook stretched to the 10 s minimum
+        expect = hook + (170 - 10 - (90 - 0.7 - (62 + 0.7)))                # case 10-180 minus brain remove 10 s, minus the gap
+        r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_name,width,height:format=duration", "-of", "json",
+                            str(res["final"])], capture_output=True, text=True)
+        info = json.loads(r.stdout)
+        dur = float(info["format"]["duration"])
+        assert abs(dur - expect) < 0.25 and abs(res["total"] - expect) < 0.05, (dur, res["total"], expect)
+        v = [st for st in info["streams"] if st.get("codec_name") == "h264"][0]
+        assert (v["width"], v["height"]) == (640, 360), "native resolution, no upscale"
+        g = (tmp / "out" / "EDITOR_GUIDE.txt").read_text(encoding="utf-8")
+        for need in ("HOOK TITLE", "SHE LAUGHED", "She had three priors", "SUBSCRIBE CTA", "VO 1 - closing narration",
+                     "She Laughed In Court", "removed 1:03-1:29", "removed 1:40-1:50"):
+            assert need in g, f"guide misses {need!r}"
+        # both overlays sat in the cut silence -> both land after it, one after the other (never stacked)
+        assert "1:03-1:09" in g and "1:11-1:18" in g, g
+        assert list((tmp / "out").glob("thumbnail_frame_*.jpg")), "thumbnail frames"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return f"clip {dur:.1f}s = 10 s hook + case minus brain remove + dead air; H.264 640x360 native; guide with overlays/CTA/VO/titles"
+
+
+def t33_run_smoke():
+    """run_stream.py really starts (a whole-run crash at the first line once slipped through: os shadowed in main)."""
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=gray:s=320x180:d=20", "-f", "lavfi",
+                        "-i", "sine=d=20", "-shortest", str(tmp / "t.mp4")], check=True)
+        (tmp / "tr.json").write_text(json.dumps([{"start": 0, "end": 5, "text": "calling CR1234 state versus test"},
+                                                  {"start": 5, "end": 20, "text": "hello court"}]), encoding="utf-8")
+        sid = "smoketest_" + tmp.name[-6:]
+        for m in ("all", "clips"):
+            r = subprocess.run([sys.executable, str(ROOT / "run_stream.py"), "--video-file", str(tmp / "t.mp4"), "--stream-id", sid,
+                                "--transcript-file", str(tmp / "tr.json"), "--stage", "scan", "--mode", m],
+                               capture_output=True, text=True, cwd=ROOT, timeout=120)
+            assert r.returncode == 0 and "stopped after scan" in r.stdout, (m, r.stdout[-600:] + r.stderr[-1500:])
+    finally:
+        shutil.rmtree(ROOT / "work" / sid, ignore_errors=True)
+        src = ROOT / "state" / "sources.json"
+        try:                                                      # leave no trace of the smoke run in the sources map
+            d = json.loads(src.read_text(encoding="utf-8"))
+            if d.pop(f"{sid}.mp4", None) is not None:
+                src.write_text(json.dumps(d, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+        shutil.rmtree(tmp, ignore_errors=True)
+    return "run_stream starts and stops cleanly in mode all + clips"
+
+
 def t25_nvenc_levels():
     """An old GPU/driver that rejects the best NVENC options gets the next simpler set; one that rejects all falls back to x264."""
     from ucf import render
@@ -1231,6 +1306,8 @@ def main():
     check(29, "download picks best quality", t29_download_quality)
     check(30, "Windows run fixes (names, 360p cache, thumbnail lock)", t30_windows_run_fixes)
     check(31, "CPU load limits", t31_load_limits)
+    check(32, "clips only + editor guide", t32_clips_only)
+    check(33, "run_stream smoke (all + clips)", t33_run_smoke)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))
