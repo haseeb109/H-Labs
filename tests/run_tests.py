@@ -941,6 +941,8 @@ def t24_download_fallback():
     def fake(cmd, *a, **k):
         if "--help" in cmd:
             return subprocess.CompletedProcess(cmd, 0, stdout="--remote-components", stderr="")
+        if cmd[0] == "ffprobe":                     # the quality line printed after a download
+            return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
         seen.append(" ".join(map(str, cmd)))
         ok = len(seen) >= 3                         # 1st and 2nd strategy fail, the 3rd works
         if ok:
@@ -1039,6 +1041,32 @@ def t28_finish():
     return "cleanup frees stream + render temp only (videos, voice cache, transcript kept); upload list ranked + review list"
 
 
+def t29_download_quality():
+    """Stream download picks the HIGHEST-bitrate 720p (VP9 1.7 Mbps), not the starved H.264 one (0.47 Mbps); AV1 is skipped."""
+    from ucf import config, download as D
+    fm = lambda i, ext, vc, ac, h, tbr: {"format_id": i, "url": "https://x/" + i, "ext": ext, "vcodec": vc, "acodec": ac, "height": h,
+                                         "width": h * 16 // 9 if h else None, "tbr": tbr, "protocol": "https"}   # noqa: E731
+    info = {"id": "t", "title": "t", "extractor": "youtube", "extractor_key": "Youtube", "webpage_url": "https://www.youtube.com/watch?v=t",
+            "formats": [fm("140", "m4a", "none", "mp4a.40.2", None, 129), fm("136", "mp4", "avc1.4d401f", "none", 720, 473),
+                        fm("609", "mp4", "vp09.00.31.08", "none", 720, 1677), fm("399", "mp4", "av01.0.05M.08", "none", 720, 2100),
+                        fm("135", "mp4", "avc1.4d401e", "none", 480, 250)]}
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        (tmp / "info.json").write_text(json.dumps(info), encoding="utf-8")
+        cfg = config.load()
+        r = subprocess.run([sys.executable, "-m", "yt_dlp", "--load-info-json", str(tmp / "info.json"), "-S", cfg["download_sort"],
+                            "-f", D.video_format(cfg), "--print", "format_id"], capture_output=True, text=True)
+        got = (r.stdout.strip().splitlines() or [r.stderr[-200:]])[-1]
+        assert got == "609+140", f"picked {got} (expected the 1.7 Mbps VP9 609 + audio 140)"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=1280x720:r=30:d=3", "-c:v", "libx264",
+                        "-b:v", "400k", str(tmp / "low.mp4")], check=True)
+        line, low = D.describe(tmp / "low.mp4")
+        assert low and "LOW bitrate" in line, line
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return "picks 609+140 (VP9 1.7 Mbps) over 136 (H.264 0.47 Mbps), AV1 skipped; low-bitrate source is flagged"
+
+
 def t25_nvenc_levels():
     """An old GPU/driver that rejects the best NVENC options gets the next simpler set; one that rejects all falls back to x264."""
     from ucf import render
@@ -1101,6 +1129,7 @@ def main():
     check(26, "Pass A salvage + C-04 location", t26_pass_a_salvage)
     check(27, "processing time", t27_processing_time)
     check(28, "end of run: cleanup + upload list", t28_finish)
+    check(29, "download picks best quality", t29_download_quality)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))

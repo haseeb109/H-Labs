@@ -62,15 +62,46 @@ def _strategies(cfg):
             ("tv + web_safari clients", ["--extractor-args", "youtube:player_client=tv,web_safari,mweb"] + solver + sleep)]
 
 
+def video_format(cfg):
+    """yt-dlp -f for the stream. NO codec filter on the first choice: YouTube's H.264 (avc1) 720p of a Zoom stream is often
+    ~0.5 Mbps while the VP9 720p of the same stream is ~1.7 Mbps (3x the detail) - an avc1-only filter made `-S res,br` pick the
+    starved one every time. AV1 is left out (slow to decode on CPU, not in every ffmpeg build); VP9 goes into the mp4 untouched."""
+    h = int(cfg.get("max_height", 1080))
+    return (f"bv*[height<={h}][vcodec!^=av01]+ba[ext=m4a]/bv*[height<={h}][vcodec!^=av01]+ba/"
+            f"bv*[height<={h}]+ba/b[height<={h}]")
+
+
+def describe(path):
+    """-> (one line 'source: 1280x720 vp9 30fps 1.68 Mbps', low_bitrate_bool) for a downloaded stream."""
+    try:
+        r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                            "stream=codec_name,width,height,avg_frame_rate,bit_rate:format=bit_rate,duration",
+                            "-of", "json", str(path)], capture_output=True, text=True)
+        d = json.loads(r.stdout or "{}")
+        st, fo = (d.get("streams") or [{}])[0], d.get("format") or {}
+        size = Path(path).stat().st_size
+        dur = float(fo.get("duration") or 0)
+        vbr = float(st.get("bit_rate") or 0) or (size * 8 / dur - 130_000 if dur else 0)   # webm/vp9 streams often have no bit_rate
+        num, _, den = str(st.get("avg_frame_rate", "0/1")).partition("/")
+        fps = float(num) / float(den or 1) if float(den or 1) else 0
+        h = int(st.get("height") or 0)
+        low = bool(vbr) and h >= 700 and vbr < 900_000
+        line = (f"source: {st.get('width')}x{h} {st.get('codec_name')} {fps:.0f}fps {vbr / 1e6:.2f} Mbps video"
+                + ("   <- LOW bitrate: this file looks soft. Delete it (work\\<id>\\source.mp4) and run again to re-download"
+                   " the best version" if low else ""))
+        return line, low
+    except Exception as e:
+        return f"source: could not read ({e})", False
+
+
 def fetch_video(url, vid, workdir, cfg):
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
     out = workdir / "source.mp4"
     if out.exists() and out.stat().st_size > 10_000_000:
         return out
-    h = int(cfg.get("max_height", 1080))
-    fmt = f"bv*[height<={h}][vcodec^=avc1]+ba[ext=m4a]/bv*[height<={h}]+ba/b[height<={h}]"
-    sort = cfg.get("download_sort") or ""        # e.g. "res,br": highest resolution, then highest bitrate (any codec)
+    fmt = video_format(cfg)
+    sort = cfg.get("download_sort") or ""        # "res,br": highest resolution, then highest bitrate (any codec)
     tries = _strategies(cfg)
     for k, (name, extra) in enumerate(tries, 1):
         if k > 1:
@@ -78,6 +109,7 @@ def fetch_video(url, vid, workdir, cfg):
         r = subprocess.run(_cmd(cfg, extra) + (["-S", sort] if sort else []) + ["-f", fmt, "--merge-output-format", "mp4", "--no-playlist",
                                         "-o", str(workdir / "source.%(ext)s"), "--newline", url])
         if r.returncode == 0 and out.exists():
+            print("  " + describe(out)[0], flush=True)
             return out
     raise RuntimeError("video download failed after " + str(len(tries)) + " tries. Update yt-dlp (H Labs.bat -> option 8) and run again; "
                        "if it keeps failing send the first ERROR line." + _hint(""))

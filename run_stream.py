@@ -133,6 +133,8 @@ def main():
         CLOCK.stage("download")
         ui("downloading stream (this is the slow part)...")
         video_path = download.fetch_video(url, sid, work, cfg)
+    elif video_path.exists() and upto >= 1:
+        ui(download.describe(video_path)[0])       # cached download: show its quality (an old one may be the starved H.264 copy)
     if video_path.exists() and not stream_len:
         stream_len = tts.dur(video_path)
     source_file = f"{sid}.mp4"

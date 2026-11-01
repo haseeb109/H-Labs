@@ -48,7 +48,7 @@ DEFAULTS = {
     "watermark_every": 9.0,                 # seconds per position
     "watermark_fade": 0.8,
     "watermark_margin": 48,
-    "download_sort": "",                    # yt-dlp -S sort for the stream download; "" = yt-dlp default. "res,br" = best bitrate at the top resolution
+    "download_sort": "res,br",              # yt-dlp -S sort for the stream download: highest resolution, then highest bitrate (any codec)
     "captions": "auto",                    # auto = YouTube captions first, whisper if missing/sparse | whisper
     "whisper_model": "base.en",
     # --- rendering ---
