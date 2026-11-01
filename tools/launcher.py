@@ -105,6 +105,79 @@ def confirm_tts():
     return ask("\nAllow AI voiceover over 5,000 characters this run? (owner rule - type yes): ").lower() in ("yes", "y")
 
 
+QUEUE = ROOT / "state" / "queue.txt"          # bulk queue: the links still to do (survives a closed window / restart)
+
+
+def _urls(text):
+    import re as _re
+    seen, out = set(), []
+    for u in _re.findall(r"https?://\S+", text or ""):
+        u = u.strip().rstrip(",;")
+        if u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
+
+
+def bulk():
+    """Bulk queue: many stream links in, processed one after the other (same style / mode / brain for all) until the list is done.
+    A failed link is noted and the queue goes on. The remaining links are kept in state/queue.txt, so a closed window can resume."""
+    left = _urls(QUEUE.read_text(encoding="utf-8")) if QUEUE.exists() else []
+    if left and ask(f"\n{len(left)} link(s) are still waiting from the last queue. Continue them? [Y/n]: ", "y").lower() not in ("n", "no"):
+        urls = left
+    else:
+        print("\nPaste the YouTube stream links (one per line, or many in one paste). Empty line = start.\n"
+              "Or type the path of a .txt file that holds the links.")
+        lines = []
+        while True:
+            ln = ask("> ")
+            if not ln:
+                break
+            p = Path(ln.strip('"'))
+            lines.append(p.read_text(encoding="utf-8") if p.suffix.lower() == ".txt" and p.exists() else ln)
+        urls = _urls("\n".join(lines))
+    if not urls:
+        print("no links.")
+        return
+    sid = pick_style()
+    if not sid:
+        return
+    mode = pick_mode()
+    tts_ok = mode != "clips" and confirm_tts()
+    QUEUE.parent.mkdir(exist_ok=True)
+    QUEUE.write_text("\n".join(urls) + "\n", encoding="utf-8")
+    print(f"\nQUEUE: {len(urls)} stream(s), style {sid}, mode {mode}. Leave the PC on; each finished stream is cleaned up.\n")
+    import time as _t
+    t0, done, failed = _t.time(), [], []
+    for i, url in enumerate(urls, 1):
+        print("\n" + "#" * 64 + f"\n#  QUEUE {i}/{len(urls)}:  {url}\n" + "#" * 64)
+        args = [url, "--brain", _read(".brain", "hive"), "--style", sid, "--mode", mode, "--queued"] + (["--confirm-tts"] if tts_ok else [])
+        try:
+            r = subprocess.run([sys.executable, "run_stream.py"] + args, cwd=ROOT)
+            (done if r.returncode == 0 else failed).append(url)
+        except KeyboardInterrupt:
+            print("\nqueue stopped - the remaining links stay in the queue (menu 9 continues them).")
+            return
+        QUEUE.write_text("\n".join(urls[i:]) + ("\n" if urls[i:] else ""), encoding="utf-8")
+    QUEUE.unlink(missing_ok=True)
+    mins = (_t.time() - t0) / 60
+    print("\n" + "=" * 64 + f"\nQUEUE DONE: {len(done)} ok, {len(failed)} failed, {mins:.0f} min in total")
+    for u in failed:
+        print("  FAILED:", u)
+    if failed:
+        (ROOT / "state" / "queue_failed.txt").write_text("\n".join(failed) + "\n", encoding="utf-8")
+        print("  (saved in state\\queue_failed.txt - paste them into menu 9 again after a look at the error)")
+    try:
+        sys.path.insert(0, str(ROOT))
+        from ucf import finish as F
+        F.notify("H Labs - queue done", f"{len(done)} of {len(urls)} streams done in {mins:.0f} min" + (f", {len(failed)} failed" if failed else ""),
+                 ok=not failed)
+        F.open_folder(ROOT / "output")
+    except Exception:
+        pass
+    ask("\nPress Enter...")
+
+
 def run_stream(args):
     cmd = [sys.executable, "run_stream.py"] + args
     print("\n>", " ".join(cmd), "\n")
@@ -179,6 +252,8 @@ def doctor(pause=True):
             enc = render.pick_encoder({"encoder": "auto"})
             (ok if enc != "libx264" else warn)(f"video encoder that will be used: {enc}" + ("  (GPU encodes - the CPU stays free)" if enc != "libx264" else
                 "  (no GPU encoder works: the CPU does ALL the encoding -> high CPU load. NVIDIA GPU + driver: run nvidia-smi and send this check)"))
+            (ok if render._HW["name"] else warn)("video decode: " + (f"GPU ({render._HW['name']}) - the CPU only runs the filters"
+                                                                    if render._HW["name"] else "CPU (GPU decode needs a working GPU encoder)"))
             from ucf.load import cpu_threads
             cfg_now = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
             ok(f"CPU load limit: {cpu_threads(cfg_now)} of {os.cpu_count()} threads, priority {cfg_now.get('process_priority', 'below_normal')}"
@@ -237,7 +312,8 @@ def main():
               f"\n  brain: {_read('.brain', 'hive')}   |   style: {_read('.style', 'trial_tales')}   |   mode: {_read('.mode', '60')}"
               f"\n  output: {ROOT / 'output'}\n==============================================")
         print("  1) New video from a YouTube stream URL (full pipeline)\n  2) Local file mode (already downloaded / pre-cut clips)\n"
-              "  3) Change brain provider\n  4) Edit API keys\n  5) Open output folder\n  6) Run self-test\n  7) Setup check (what is installed?)\n  8) Update H Labs (GitHub code + yt-dlp)\n  q) Quit")
+              "  3) Change brain provider\n  4) Edit API keys\n  5) Open output folder\n  6) Run self-test\n  7) Setup check (what is installed?)\n  8) Update H Labs (GitHub code + yt-dlp)\n"
+              "  9) BULK QUEUE - many stream links, one after the other, until all are done\n  q) Quit")
         pick = ask("Pick: ", "q").lower()
         if pick == "1":
             url = ask("YouTube URL: ")
@@ -282,6 +358,8 @@ def main():
             ask("\nPress Enter...")
         elif pick == "7":
             doctor()
+        elif pick == "9":
+            bulk()
         elif pick == "8" and WIN:
             sys.exit(88)              # H Labs.bat runs tools/win/setup.ps1 -Update once this process (and the files it holds) is closed
         elif pick == "8":

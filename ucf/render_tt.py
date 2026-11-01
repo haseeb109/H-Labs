@@ -24,7 +24,7 @@ from PIL import Image, ImageDraw
 
 from . import cards, hf, tts
 from . import timeline as TL
-from .render import AENC, AUDIO_NORM, NORM, TS, Renderer, court_audio, probe_dur, run, venc
+from .render import AENC, AUDIO_NORM, NORM, TS, Renderer, court_audio, hwdec, probe_dur, run, venc
 from .timeutil import fmt_dur, fmt_tc, parse_tc
 
 ASSETS = Path(__file__).resolve().parent.parent / "styles" / "trial_tales" / "assets"   # module default; TTRenderer uses the active style pack
@@ -233,7 +233,7 @@ class TTRenderer(Renderer):
             raise RuntimeError(f"empty cut {a}-{b}")
         runs = self.layout_runs(path, a, b)
         cmd = ["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-framerate", "30", "-t", f"{d:.3f}", "-i", bg,
-               "-ss", f"{a:.3f}", "-t", f"{d:.3f}", "-i", path]
+               "-ss", f"{a:.3f}", "-t", f"{d:.3f}", *hwdec(), "-i", path]
         chain = self.strip_chain("1:v", "f", runs) + f";[0:v][f]overlay=0:{STRIP_Y}:eof_action=pass[b]"
         last = "b"
         if ov:
@@ -257,7 +257,7 @@ class TTRenderer(Renderer):
               f"[0:v][f]overlay=0:{STRIP_Y}:eof_action=pass[b];[b]format=yuv420p{vf_tail}[v];"
               f"[2:a]adelay={lead_ms}|{lead_ms},apad,{AUDIO_NORM}{af_tail}[a]")
         run(["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-framerate", "30", "-t", f"{dur:.3f}", "-i", self.bg_logo,
-             "-ss", f"{blur_in:.3f}", "-t", f"{dur:.3f}", "-i", path, "-i", wav,
+             "-ss", f"{blur_in:.3f}", "-t", f"{dur:.3f}", *hwdec(), "-i", path, "-i", wav,
              "-filter_complex", fc, "-map", "[v]", "-map", "[a]", "-t", f"{dur:.3f}", *venc(self.enc), *AENC, *TS, out])
         return out
 
@@ -342,7 +342,7 @@ class TTRenderer(Renderer):
         out = final.with_name(final.stem + "_ov.mp4")
         # -loop 1: a PNG input is ONE frame at t=0; the fade-in then never starts and ffmpeg repeats that fully
         # transparent frame, so every card was invisible (found on 03p3ATnv6dY, 2026-10-25).
-        inp = ["-i", str(final)] + sum([["-loop", "1", "-t", f"{e + 1:.2f}", "-i", str(p)] for p, _s, e in pngs], [])
+        inp = [*hwdec(), "-i", str(final)] + sum([["-loop", "1", "-t", f"{e + 1:.2f}", "-i", str(p)] for p, _s, e in pngs], [])
         fc, prev = [], "0:v"
         for i, (p, s, e) in enumerate(pngs):
             k = i + 1

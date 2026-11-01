@@ -38,6 +38,7 @@ DEFAULTS = {
     # --- stream handling ---
     "cookies_file": "",                    # ONLY a burner account's cookies.txt, and only if YouTube blocks downloads
     "max_height": 1080,
+    "hw_decode": "auto",                   # auto (GPU decodes the source when the GPU encodes: NVENC -> cuda) | off | cuda | d3d11va
     "process_priority": "below_normal",   # below_normal (PC stays responsive) | normal | idle - ffmpeg / whisper inherit it
     "cpu_threads": 0,                      # 0 = auto (75% of logical cores) | a number | "all" - x264 encode + whisper
     "notify_when_done": True,              # desktop notification + sound when a run ends (or stops on an error)

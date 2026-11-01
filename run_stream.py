@@ -76,12 +76,17 @@ def main():
                                    "clips (one clean clip per case + editor guide, no overlays / voice / watermark)")
     ap.add_argument("--tts", help="force one TTS provider (ai33|voicestudio|say|dummy)")
     ap.add_argument("--no-watermark", action="store_true", help="skip the anti-copy watermark for this run")
+    ap.add_argument("--queued", action="store_true", help="part of a bulk queue: no per-stream notification / folder window "
+                                                          "(the queue reports once at the end)")
     a = ap.parse_args()
     CLOCK.reset()
     CLOCK.stage("info")
     _WORK["planned_stop"] = bool(a.stage) and a.stage != "render"
 
     cfg = config.load(a.config, style=a.style)
+    if a.queued:
+        cfg["notify_when_done"] = False
+        cfg["open_output_after_run"] = False
     _WORK["notify"] = cfg.get("notify_when_done", True)
     from ucf import load as LOAD
     _prio = LOAD.lower_priority(cfg)                     # ffmpeg / whisper children inherit it: the PC stays responsive
@@ -373,7 +378,8 @@ def main():
         rn = OVRenderer(cfg, sources, root)
     else:
         rn = (TTRenderer if cfg.get("_renderer", "tt") == "tt" else Renderer)(cfg, sources, root)
-    ui(f"encoder: {rn.enc}")
+    from ucf.render import _HW
+    ui(f"encoder: {rn.enc}  |  decode: {('GPU (' + _HW['name'] + ')') if _HW['name'] else 'CPU'}")
     summary, rows = [], []
     for v in plan["videos"]:
         if only and v["n"] not in only:
@@ -471,7 +477,9 @@ def clips_output(plan, plan_path, work, state, sid, upload, url, video_path, seg
     outroot = config.ROOT / cfg["output_dir"] / f"{stamp}_{sid}_clips"
     outroot.mkdir(parents=True, exist_ok=True)
     enc = pick_encoder(cfg)
-    ui(f"clips only: {len(plan['videos'])} case(s)  |  encoder: {enc}  |  no overlays / voice / watermark")
+    from ucf.render import _HW
+    ui(f"clips only: {len(plan['videos'])} case(s)  |  encoder: {enc}  |  decode: {('GPU (' + _HW['name'] + ')') if _HW['name'] else 'CPU'}"
+       "  |  no overlays / voice / watermark")
     by_id = {c["id"]: c for c in plan["cases"]}
     summary, rows = [], []
     for v in plan["videos"]:

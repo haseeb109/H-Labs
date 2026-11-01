@@ -112,12 +112,12 @@ def encode_args(enc, cfg):
 def cut_clip(src, rows, out, enc, cfg, ui=print):
     """One ffmpeg pass: every span as its own accurately-seeked input -> concat -> one H.264 encode. Short audio fades at every
     join so the cuts do not click."""
-    from .render import run_progress
+    from .render import hwdec, run_progress
     cmd, fc, n = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"], [], 0
     total = 0.0
     for _k, a, b, _o in rows:
         d = b - a
-        cmd += ["-ss", f"{a:.3f}", "-t", f"{d:.3f}", "-i", str(src)]
+        cmd += ["-ss", f"{a:.3f}", "-t", f"{d:.3f}", *hwdec(), "-i", str(src)]
         f = min(0.04, d / 4)
         fc.append(f"[{n}:v]setpts=PTS-STARTPTS,setsar=1[v{n}];"
                   f"[{n}:a]asetpts=PTS-STARTPTS,afade=t=in:d={f:.3f},afade=t=out:st={max(0, d - f):.3f}:d={f:.3f}[a{n}]")

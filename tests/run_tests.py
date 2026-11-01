@@ -1241,6 +1241,41 @@ def t33_run_smoke():
     return "run_stream starts and stops cleanly in mode all + clips"
 
 
+def t34_bulk_queue():
+    """Bulk queue: links run one after the other, a failure does not stop the queue, the queue file empties, failed links are kept."""
+    sys.path.insert(0, str(ROOT / "tools"))
+    import launcher as LA
+    answers = iter(["https://youtu.be/AAA https://youtu.be/BBB", "https://youtu.be/CCC", "", "1", "4", ""])
+    ran = []
+    orig = (LA.ask, LA.subprocess.run, LA.pick_style, LA.QUEUE)
+    tmp = Path(tempfile.mkdtemp())
+
+    def fake_run(cmd, *a, **k):
+        ran.append(cmd[2])
+        return subprocess.CompletedProcess(cmd, 1 if "BBB" in cmd[2] else 0)
+    LA.ask = lambda prompt, default="": next(answers, default)
+    LA.subprocess.run = fake_run
+    LA.pick_style = lambda: "trial_tales"
+    LA.QUEUE = tmp / "queue.txt"
+    failed_file = ROOT / "state" / "queue_failed.txt"
+    had_failed = failed_file.exists()
+    try:
+        import ucf.finish as F
+        n0, o0 = F.notify, F.open_folder
+        F.notify, F.open_folder = (lambda *a, **k: None), (lambda *a, **k: None)
+        LA.bulk()
+        F.notify, F.open_folder = n0, o0
+        assert [u.rsplit("/", 1)[1] for u in ran] == ["AAA", "BBB", "CCC"], ran
+        assert not LA.QUEUE.exists(), "queue file must be gone when the queue is done"
+        assert "BBB" in failed_file.read_text(encoding="utf-8")
+    finally:
+        LA.ask, LA.subprocess.run, LA.pick_style, LA.QUEUE = orig
+        if not had_failed:
+            failed_file.unlink(missing_ok=True)
+        shutil.rmtree(tmp, ignore_errors=True)
+    return "3 links in order, the failed one noted and the queue went on, queue file cleared"
+
+
 def t25_nvenc_levels():
     """An old GPU/driver that rejects the best NVENC options gets the next simpler set; one that rejects all falls back to x264."""
     from ucf import render
@@ -1308,6 +1343,7 @@ def main():
     check(31, "CPU load limits", t31_load_limits)
     check(32, "clips only + editor guide", t32_clips_only)
     check(33, "run_stream smoke (all + clips)", t33_run_smoke)
+    check(34, "bulk queue", t34_bulk_queue)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))

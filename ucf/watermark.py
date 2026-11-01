@@ -63,7 +63,8 @@ def apply(src, dst, text, *, opacity=0.25, size=34, every=9.0, fade=0.8, margin=
     with tempfile.TemporaryDirectory(prefix="wm_") as tmp:
         png = Path(tmp) / "wm.png"
         render_text_png(text, png, size)
-        cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(src), "-loop", "1", "-framerate", "30", "-i", str(png),
+        from .render import hwdec
+        cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", *hwdec(), "-i", str(src), "-loop", "1", "-framerate", "30", "-i", str(png),
                "-filter_complex", filter_graph(opacity, every, fade, margin, seed), "-map", "[v]", "-map", "0:a?",
                *_encoder_args(enc), "-c:a", "copy", "-movflags", "+faststart", str(dst)]
         from .render import probe_dur, run_progress

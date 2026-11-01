@@ -91,6 +91,35 @@ NVENC_LEVELS = [
     ["-preset", "p5", "-rc", "vbr", "-cq", "20", "-b:v", "0"],
 ]
 _NV = {"level": 0}
+_HW = {"args": [], "name": ""}       # GPU video DECODE for the source inputs (set by pick_encoder; [] = CPU decode)
+
+
+def hwdec():
+    """Input options that let the GPU decode the source (frames come back to normal memory, so every filter still works).
+    ffmpeg falls back to CPU decoding by itself for a codec the GPU cannot decode (e.g. VP9 on an older card)."""
+    return list(_HW["args"])
+
+
+def _pick_hwdec(cfg, enc):
+    """config hw_decode: "auto" (GPU decode when the GPU also encodes) | "off" | an ffmpeg hwaccel name (cuda, d3d11va, ...)."""
+    want = str(cfg.get("hw_decode", "auto")).lower()
+    _HW.update(args=[], name="")
+    if want in ("off", "no", "false", "0", "none"):
+        return
+    name = want if want != "auto" else {"h264_nvenc": "cuda", "h264_videotoolbox": "videotoolbox"}.get(enc, "")
+    if not name:
+        return
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="hwdec_") as t:
+        probe = Path(t) / "p.mp4"
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=640x360:r=30:d=1", "-c:v", "libx264",
+                        "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(probe)], capture_output=True)
+        if not probe.exists():
+            return
+        r = subprocess.run(["ffmpeg", "-loglevel", "error", "-hwaccel", name, "-i", str(probe), "-vf", "scale=320:180", "-f", "null", "-"],
+                           capture_output=True, text=True)
+        if r.returncode == 0 and not r.stderr.strip():
+            _HW.update(args=["-hwaccel", name], name=name)
 
 
 def pick_encoder(cfg):
@@ -98,6 +127,15 @@ def pick_encoder(cfg):
     _X264["crf"] = str(cfg.get("x264_crf") or 16)
     from .load import cpu_threads
     _X264["threads"] = str(cpu_threads(cfg))                          # not every core: the PC stays usable (ucf/load.py)
+    e = _pick_encoder(cfg)
+    try:
+        _pick_hwdec(cfg, e)
+    except Exception:
+        _HW.update(args=[], name="")
+    return e
+
+
+def _pick_encoder(cfg):
     want = cfg.get("encoder", "auto")
     enc = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True).stdout
     if want != "auto":
@@ -172,7 +210,7 @@ class Renderer:
         d = b - a
         if d <= 0.05:
             raise RuntimeError(f"empty cut {a}-{b}")
-        cmd = ["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{a:.3f}", "-t", f"{d:.3f}", "-i", srcpath]
+        cmd = ["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{a:.3f}", "-t", f"{d:.3f}", *hwdec(), "-i", srcpath]
         chain = f"[0:v]{NORM}[v0]"
         last, idx = "v0", 1
         if logo and self.logo:

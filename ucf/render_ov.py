@@ -18,7 +18,7 @@ from . import ov_gfx as G
 from . import ov_layout as L
 from . import tts
 from . import timeline as TL
-from .render import AENC, AUDIO_NORM, TS, court_audio, probe_dur, run, run_progress, venc
+from .render import AENC, AUDIO_NORM, TS, court_audio, hwdec, probe_dur, run, run_progress, venc
 from .render_tt import TTRenderer, _thumb
 from .timeutil import fmt_dur, fmt_tc, parse_tc
 
@@ -140,7 +140,7 @@ class OVRenderer(TTRenderer):
 
     def _compose_run(self, path, a, dr, geo, layers, t0, out, *, blur, wav, lead, wav_t0, fade_out, d_total, prog):
         cmd = ["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-framerate", "30", "-t", f"{dr:.3f}", "-i", self.bg,
-               "-ss", f"{a:.3f}", "-t", f"{dr:.3f}", "-i", path]
+               "-ss", f"{a:.3f}", "-t", f"{dr:.3f}", *hwdec(), "-i", path]
         nxt = 2
         widx = None
         if wav:
