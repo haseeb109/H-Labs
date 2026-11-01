@@ -74,7 +74,8 @@ def detect(img_path):
     if not det:
         return []
     from PIL import Image
-    im = Image.open(img_path).convert("RGB")
+    with Image.open(img_path) as _f:
+        im = _f.convert("RGB")
     W, H = im.size
     boxes = []
     try:

@@ -543,13 +543,16 @@ def _thumb(self, plan, video, outdir):
                  "-vf", f"crop={COURT_CROP[layout]}", tile])
             fs = FC.detect(tile)
             if fs:
-                im = Image.open(tile)
-                if fs[0]["h"] * im.height >= min_face:
-                    x0, y0, w, h = FC.face_crop_box(fs[0], im.width, im.height)
-                    q = cdir / f"cand_{i + 1}_{stamp}_face.jpg"
-                    im.crop((x0, y0, x0 + w, y0 + h)).convert("RGB").resize((1280, 720), Image.LANCZOS).save(q, quality=92)
-                    add(q)
-            tile.unlink(missing_ok=True)
+                with Image.open(tile) as im:            # closed before the unlink below: Windows cannot delete an open file
+                    if fs[0]["h"] * im.height >= min_face:
+                        x0, y0, w, h = FC.face_crop_box(fs[0], im.width, im.height)
+                        q = cdir / f"cand_{i + 1}_{stamp}_face.jpg"
+                        im.crop((x0, y0, x0 + w, y0 + h)).convert("RGB").resize((1280, 720), Image.LANCZOS).save(q, quality=92)
+                        add(q)
+            try:
+                tile.unlink(missing_ok=True)
+            except OSError:                              # still locked (antivirus / face model): a leftover temp png is harmless
+                pass
     _score, best, best_faces = max(cands, key=lambda c: c[0])
     out = Path(outdir) / "thumbnail.jpg"
     cards.thumbnail(best, th["text"], th["gold_word"], FC.text_placement(best_faces, th["placement"]), out)

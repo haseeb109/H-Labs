@@ -54,6 +54,27 @@ def _caps_words(t):
     return out
 
 
+# words in a case "name" that are not a person's name ("Unnamed female defendant", "Kevin Rodriguez (counsel appointment)")
+_NAME_GENERIC = {"unnamed", "unknown", "female", "male", "defendant", "defendants", "counsel", "appointment", "attorney",
+                 "state", "versus", "juvenile", "minor", "case", "hearing", "probation", "plea", "bond", "jury", "trial"}
+
+
+def _clean_name(name):
+    """'Kevin Rodriguez (counsel appointment)' -> 'kevin rodriguez'; 'Mr. Satanawa' -> 'mr satanawa'."""
+    n = re.sub(r"\(.*?\)", " ", str(name or "")).lower()
+    return " ".join(re.sub(r"[^\w\s'-]", " ", n).split())
+
+
+def names_other(text_low, other_name, mine):
+    """Does this VO text name the OTHER case's person? Full name, or their surname - unless someone IN this video has the same
+    surname (two Vasquez cases on one docket) or the 'name' is only generic words ('Unnamed female defendant')."""
+    nm = _clean_name(other_name)
+    toks = [x for x in nm.split() if len(x) >= 4 and x not in _NAME_GENERIC]
+    last = toks[-1] if toks and toks[-1] not in mine else None
+    return bool((len(toks) >= 2 and re.search(r"\b" + re.escape(nm) + r"\b", text_low))
+                or (last and re.search(r"\b" + re.escape(last) + r"\b", text_low)))
+
+
 def validate(plan, stream_len, segs=None, cfg=None):
     cfg = cfg or {}
     mode = cfg.get("mode")
@@ -348,6 +369,7 @@ def validate(plan, stream_len, segs=None, cfg=None):
             limits["final"] = (45, 70)          # read as 2 sentence-aligned clips, each <= 18 s
             limits["bridge"] = (35, 40)          # one recap clip, <= 18 s
         others = [c for c in cases if c["id"] not in ids]
+        mine = {t for c in cases if c["id"] in ids for t in _clean_name(c.get("name")).split()}
         for k, t in texts.items():
             lo, hi = limits.get(k, limits["bridge"] if k.startswith("bridge") and "bridge" in limits else (35, 45))
             nw = V.n_words(t)
@@ -361,9 +383,7 @@ def validate(plan, stream_len, segs=None, cfg=None):
                 if ph in low:
                     E.append(f"{w}: {k} uses banned phrase '{ph}'")
             for c in others:
-                nm = (c.get("name") or "").strip().lower()
-                toks = [x for x in re.split(r"\s+", nm) if len(x) >= 4]
-                if (nm and nm in low) or (toks and toks[-1] in low):
+                if names_other(low, c.get("name"), mine):
                     E.append(f"{w}: {k} names '{c['name']}' who is NOT in this video")
             if cfg.get("_renderer") == "tt":
                 for sn in V.clip_issues(t, V.CLIP_TARGET, cfg.get("wps", 2.6)):

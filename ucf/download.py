@@ -1,5 +1,6 @@
 """yt-dlp wrappers. Must run on a residential IP (the Mac / HP laptop) - cloud IPs get bot-blocked."""
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -38,7 +39,13 @@ def info(url, cfg):
     if r.returncode != 0:
         raise RuntimeError("yt-dlp could not read the URL:\n" + r.stderr[-1500:] + _hint(r.stderr))
     d = json.loads(r.stdout)
+    # the best video YouTube offers (same rule as video_format: no AV1) - used to spot a cached download that is worse
+    vids = [f for f in d.get("formats") or [] if f.get("vcodec") not in (None, "none") and f.get("height")
+            and not str(f.get("vcodec", "")).startswith("av01") and int(f["height"]) <= int(cfg.get("max_height", 1080))]
+    best_h = max((int(f["height"]) for f in vids), default=0)
+    best_vbr = max((float(f.get("vbr") or f.get("tbr") or 0) for f in vids if int(f["height"]) == best_h), default=0)
     return {"id": d["id"], "title": d.get("title", ""), "duration": float(d.get("duration") or 0),
+            "best_height": best_h, "best_kbps": round(best_vbr),
             "upload_date": d.get("upload_date", ""), "channel": d.get("channel", ""),
             "is_live": bool(d.get("is_live")), "was_live": bool(d.get("was_live")),
             "url": d.get("webpage_url", url)}
@@ -71,6 +78,32 @@ def video_format(cfg):
             f"bv*[height<={h}]+ba/b[height<={h}]")
 
 
+def probe_video(path):
+    """-> (height, video bits per second) of a downloaded stream, (0, 0) when unreadable."""
+    try:
+        r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=height,bit_rate:format=duration",
+                            "-of", "json", str(path)], capture_output=True, text=True)
+        d = json.loads(r.stdout or "{}")
+        st, dur = (d.get("streams") or [{}])[0], float((d.get("format") or {}).get("duration") or 0)
+        vbr = float(st.get("bit_rate") or 0) or (Path(path).stat().st_size * 8 / dur - 130_000 if dur else 0)
+        return int(st.get("height") or 0), vbr
+    except Exception:
+        return 0, 0
+
+
+def worse_than_available(path, meta):
+    """Reason string when a downloaded file is clearly below what YouTube offers for this stream (else '')."""
+    bh, bk = int(meta.get("best_height") or 0), float(meta.get("best_kbps") or 0)
+    if not bh:
+        return ""
+    h, vbr = probe_video(path)
+    if h and h < bh - 10:
+        return f"{h}p but YouTube has {bh}p"
+    if h and vbr and bk and vbr < bk * 1000 * 0.6:
+        return f"{vbr / 1e6:.2f} Mbps but YouTube has {bk / 1000:.2f} Mbps"
+    return ""
+
+
 def describe(path):
     """-> (one line 'source: 1280x720 vp9 30fps 1.68 Mbps', low_bitrate_bool) for a downloaded stream."""
     try:
@@ -94,10 +127,13 @@ def describe(path):
         return f"source: could not read ({e})", False
 
 
-def fetch_video(url, vid, workdir, cfg):
+def fetch_video(url, vid, workdir, cfg, meta=None):
+    """Download the stream. With `meta` (from info()), a download that comes out below the best YouTube offers (some fallback
+    clients only get 360p) is kept aside while the next strategy tries for the real quality; the best file wins."""
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
     out = workdir / "source.mp4"
+    low = workdir / "source_low.mp4"
     if out.exists() and out.stat().st_size > 10_000_000:
         return out
     fmt = video_format(cfg)
@@ -110,7 +146,21 @@ def fetch_video(url, vid, workdir, cfg):
                                         "-o", str(workdir / "source.%(ext)s"), "--newline", url])
         if r.returncode == 0 and out.exists():
             print("  " + describe(out)[0], flush=True)
+            why = worse_than_available(out, meta or {})
+            if why and k < len(tries):
+                print(f"  this download is {why} - keeping it aside and trying the next way for the full quality", flush=True)
+                if not low.exists() or probe_video(out)[0] > probe_video(low)[0]:
+                    os.replace(out, low)
+                else:
+                    out.unlink()
+                continue
+            if low.exists():
+                low.unlink()
             return out
+    if low.exists():                               # nothing better came: use the best one we got
+        os.replace(low, out)
+        print("  (the full quality could not be downloaded - using the best copy: " + describe(out)[0] + ")", flush=True)
+        return out
     raise RuntimeError("video download failed after " + str(len(tries)) + " tries. Update yt-dlp (H Labs.bat -> option 8) and run again; "
                        "if it keeps failing send the first ERROR line." + _hint(""))
 

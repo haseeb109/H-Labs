@@ -1095,6 +1095,60 @@ def t29_download_quality():
     return "picks 609+140 (VP9 1.7 Mbps) over 136 (H.264 0.47 Mbps), AV1 skipped; low-bitrate source is flagged"
 
 
+def t30_windows_run_fixes():
+    """2026-11-01 run: shared surname is not 'another person'; a 360p cached download is spotted; a 360p download makes the
+    next strategy try for 720p; the thumbnail temp png is closed before it is deleted."""
+    from ucf import download as D, validate as VAL
+    mk = lambda cid, name: {"id": cid, "name": name}                                      # noqa: E731
+    cases = [mk(2, "Leila Vasquez"), mk(7, "Marco Antonio Moreno Vasquez"), mk(16, "Unnamed female defendant"),
+             mk(18, "Kevin Rodriguez (counsel appointment)")]
+    low = "the defendant vasquez told the court he was sorry. subscribe for the next hearing."
+    mine = {t for c in cases if c["id"] == 7 for t in VAL._clean_name(c["name"]).split()}
+    hits = [c["name"] for c in cases if c["id"] != 7 and VAL.names_other(low, c["name"], mine)]
+    assert not hits, f"false 'not in this video' hits: {hits}"
+    assert VAL.names_other("then kevin rodriguez walked in", "Kevin Rodriguez (counsel appointment)", mine), "a real other name still counts"
+    assert VAL.names_other("leila vasquez was next", "Leila Vasquez", mine), "the other person's full name still counts"
+    assert "rodriguez" in VAL._clean_name("Kevin Rodriguez (counsel appointment)") and "counsel" not in VAL._clean_name("Kevin Rodriguez (counsel appointment)")
+    tmp = Path(tempfile.mkdtemp())
+    real = subprocess.run
+    try:
+        real(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=640x360:r=30:d=3", "-c:v", "libx264", "-b:v", "180k",
+              str(tmp / "s360.mp4")], check=True)
+        real(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=1280x720:r=30:d=3", "-c:v", "libx264", "-b:v", "1600k",
+              str(tmp / "s720.mp4")], check=True)
+        meta = {"best_height": 720, "best_kbps": 1677}
+        assert "360p but YouTube has 720p" in D.worse_than_available(tmp / "s360.mp4", meta)
+        assert D.worse_than_available(tmp / "s720.mp4", meta) == ""
+        work, n = tmp / "w", [0]
+        work.mkdir()
+
+        def fake(cmd, *a, **k):
+            if cmd[0] != "ffprobe" and "--help" not in cmd and "yt-dlp" in " ".join(map(str, cmd[:3])):
+                n[0] += 1                                   # 1st strategy only gets 360p, 2nd gets 720p
+                shutil.copy(tmp / ("s360.mp4" if n[0] == 1 else "s720.mp4"), work / "source.mp4")
+                with (work / "source.mp4").open("ab") as f:
+                    f.write(b"\0" * 11_000_000)
+                return subprocess.CompletedProcess(cmd, 0, stdout="--remote-components", stderr="")
+            return real(cmd, *a, **k)
+        D._HELP.clear()
+        subprocess.run = fake
+        try:
+            out = D.fetch_video("https://youtu.be/x", "x", work, {"max_height": 1080}, meta)
+        finally:
+            subprocess.run = real
+        assert n[0] == 2 and D.probe_video(out)[0] == 720 and not (work / "source_low.mp4").exists(), (n, D.probe_video(out))
+        from ucf import faces as FC
+        if FC.available():
+            png = tmp / "t.png"
+            real(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=320x180:d=1", "-frames:v", "1", str(png)], check=True)
+            FC.detect(png)
+            png.unlink()                                    # Windows: fails if detect() left the file open
+    finally:
+        subprocess.run = real
+        shutil.rmtree(tmp, ignore_errors=True)
+    return "shared surname / generic words not flagged; 360p cache spotted; 360p download -> next strategy got 720p"
+
+
 def t25_nvenc_levels():
     """An old GPU/driver that rejects the best NVENC options gets the next simpler set; one that rejects all falls back to x264."""
     from ucf import render
@@ -1158,6 +1212,7 @@ def main():
     check(27, "processing time", t27_processing_time)
     check(28, "end of run: cleanup + upload list", t28_finish)
     check(29, "download picks best quality", t29_download_quality)
+    check(30, "Windows run fixes (names, 360p cache, thumbnail lock)", t30_windows_run_fixes)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))

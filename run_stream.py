@@ -11,6 +11,7 @@ Useful:  --stage plan            stop after the plan + contact sheet (check case
 import argparse
 import atexit
 import json
+import os
 import shutil
 import sys
 import time
@@ -132,9 +133,22 @@ def main():
     if upto >= 1 and not video_path.exists():
         CLOCK.stage("download")
         ui("downloading stream (this is the slow part)...")
-        video_path = download.fetch_video(url, sid, work, cfg)
+        video_path = download.fetch_video(url, sid, work, cfg, meta)
     elif video_path.exists() and upto >= 1:
         ui(download.describe(video_path)[0])       # cached download: show its quality (an old one may be the starved H.264 copy)
+        why = "" if a.video_file else download.worse_than_available(video_path, meta)
+        if why and url:
+            # an older run downloaded a worse copy (360p / starved H.264): get the real quality, keep the old file if that fails
+            CLOCK.stage("download")
+            ui(f"the saved download is {why} - downloading the full quality again (transcript and plan are kept)...")
+            old = work / "source_old.mp4"
+            os.replace(video_path, old)
+            try:
+                video_path = download.fetch_video(url, sid, work, cfg, meta)
+                old.unlink()
+            except Exception as e:
+                os.replace(old, video_path)
+                ui(f"  re-download failed ({str(e).splitlines()[0][:120]}) - continuing with the saved copy")
     if video_path.exists() and not stream_len:
         stream_len = tts.dur(video_path)
     source_file = f"{sid}.mp4"
@@ -274,7 +288,9 @@ def main():
     report += ["", "ERRORS (block the render):"] + ([f" - {e}" for e in errs] or [" none"])
     report += ["", "WARNINGS:"] + ([f" - {w}" for w in warns] or [" none"])
     for c in plan["cases"]:
-        report.append(f"  case {c['id']:>2} {c['name']:<24} {c['in']}-{c['out']} = {fmt_dur(c.get('_dur', 0)):>6}  {c['status']}")
+        why = "" if c.get("status") == "used" else (c.get("reject_reason") or "")
+        report.append(f"  case {c['id']:>2} {c['name']:<24} {c['in']}-{c['out']} = {fmt_dur(c.get('_dur', 0)):>6}  {c['status']}"
+                      + (f"  ({why[:90]})" if why else ""))
     (work / "plan_report.txt").write_text("\n".join(report), encoding="utf-8")
     save_json(plan_path, plan)
     print("\n".join(report))
