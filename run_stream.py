@@ -29,6 +29,42 @@ STAGES = ["info", "download", "transcript", "scan", "evidence", "plan", "render"
 IX = {s: i for i, s in enumerate(STAGES)}
 
 
+class _Tee:
+    """Console output also goes to work/<id>/run_log.txt (send that file when something fails)."""
+    def __init__(self, stream, path):
+        self.stream, self.f = stream, open(path, "a", encoding="utf-8", errors="replace")
+        if stream is sys.__stdout__:
+            self.f.write(f"\n===== run {time.strftime('%Y-%m-%d %H:%M:%S')}  {' '.join(sys.argv[1:])} =====\n")
+
+    def write(self, s):
+        self.stream.write(s)
+        try:
+            self.f.write(s)
+            self.f.flush()
+        except Exception:
+            pass
+        return len(s)
+
+    def flush(self):
+        self.stream.flush()
+
+    def __getattr__(self, k):
+        return getattr(self.stream, k)
+
+
+def check_disk(root, need_gb=5.0, warn_gb=20.0):
+    """Stop before a download when the disk is (almost) full; warn when it is getting low."""
+    try:
+        free = shutil.disk_usage(root).free / 1e9
+    except OSError:
+        return
+    if free < need_gb:
+        sys.exit(f"DISK FULL: only {free:.1f} GB free on the H Labs drive - a stream needs ~5-10 GB while it is processed. "
+                 "Delete old output folders (videos already uploaded) and run again.")
+    if free < warn_gb:
+        ui(f"WARNING: only {free:.1f} GB free on the H Labs drive - delete old output folders soon")
+
+
 def ui(*a):
     print(time.strftime("%H:%M:%S"), *a, flush=True)
 
@@ -129,6 +165,10 @@ def main():
     work = root / cfg["work_dir"] / sid
     _WORK["dir"] = work
     work.mkdir(parents=True, exist_ok=True)
+    if not isinstance(sys.stdout, _Tee):
+        sys.stdout = _Tee(sys.stdout, work / "run_log.txt")
+        sys.stderr = _Tee(sys.stderr, work / "run_log.txt")      # errors / tracebacks too
+    check_disk(work)
     if meta:
         save_json(work / "meta.json", meta)
         ui(f"stream: {meta['title']}  ({fmt_dur(meta['duration'])}, id {sid})")

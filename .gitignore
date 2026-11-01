@@ -33,3 +33,6 @@ runtime/
 # Per-PC run state (every run writes these; tracking them blocked git pull on the team PCs)
 state/*.json
 state/*.csv
+
+# this PC's own settings (overrides config.json, never blocks git pull)
+config.local.json

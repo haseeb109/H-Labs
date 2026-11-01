@@ -249,13 +249,15 @@ def doctor(pause=True):
         try:
             sys.path.insert(0, str(ROOT))
             from ucf import render
-            enc = render.pick_encoder({"encoder": "auto"})
+            from ucf import config as _C
+            enc = render.pick_encoder(_C.load())          # same settings as a run (config.json + config.local.json)
             (ok if enc != "libx264" else warn)(f"video encoder that will be used: {enc}" + ("  (GPU encodes - the CPU stays free)" if enc != "libx264" else
                 "  (no GPU encoder works: the CPU does ALL the encoding -> high CPU load. NVIDIA GPU + driver: run nvidia-smi and send this check)"))
             (ok if render._HW["name"] else warn)("video decode: " + (f"GPU ({render._HW['name']}) - the CPU only runs the filters"
                                                                     if render._HW["name"] else "CPU (GPU decode needs a working GPU encoder)"))
             from ucf.load import cpu_threads
-            cfg_now = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+            from ucf import config as _C
+            cfg_now = _C.load()
             ok(f"CPU load limit: {cpu_threads(cfg_now)} of {os.cpu_count()} threads, priority {cfg_now.get('process_priority', 'below_normal')}"
                "  (config cpu_threads / process_priority)")
             if enc == "libx264" and "nvenc" in subprocess.run([ff, "-hide_banner", "-encoders"], capture_output=True, text=True).stdout:

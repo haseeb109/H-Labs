@@ -129,10 +129,18 @@ def _find_style_dir(sid):
 
 
 def load(path=None, style=None):
-    """Merge order: engine DEFAULTS <- style pack (style.json) <- config.json <- env. CLI flags win last."""
+    """Merge order: engine DEFAULTS <- style pack (style.json) <- config.json <- config.local.json <- env. CLI flags win last.
+    config.local.json = this PC's own settings (e.g. "x264_preset": "fast", "cpu_threads": 6). It is not in git, so a team PC can
+    change settings without ever blocking an update (an edited config.json makes `git pull` refuse)."""
     cfg = dict(DEFAULTS)
     p = Path(path) if path else ROOT / "config.json"
     user = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    local = ROOT / "config.local.json"
+    if not path and local.exists():
+        try:
+            user.update(json.loads(local.read_text(encoding="utf-8-sig")))
+        except ValueError as e:
+            raise RuntimeError(f"config.local.json is not valid JSON ({e}) - fix or delete it")
     sid = style or user.get("style") or cfg["style"]
     d = _find_style_dir(str(sid))
     if d:
