@@ -22,6 +22,7 @@ _backup_*/
 .brain
 .mode
 .style
+.output
 
 # Secrets must never live here (keys belong in ~/.config/umf/*.env)
 *.env

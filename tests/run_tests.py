@@ -1245,17 +1245,20 @@ def t34_bulk_queue():
     """Bulk queue: links run one after the other, a failure does not stop the queue, the queue file empties, failed links are kept."""
     sys.path.insert(0, str(ROOT / "tools"))
     import launcher as LA
-    answers = iter(["https://youtu.be/AAA https://youtu.be/BBB", "https://youtu.be/CCC", "", "1", "4", ""])
+    answers = iter(["https://youtu.be/AAA https://youtu.be/BBB", "https://youtu.be/CCC", "", ""])
     ran = []
-    orig = (LA.ask, LA.subprocess.run, LA.pick_style, LA.QUEUE)
+    orig = (LA.ask, LA.subprocess.run, LA.pick_run, LA.QUEUE)
     tmp = Path(tempfile.mkdtemp())
+
+    seen_cmds = []
 
     def fake_run(cmd, *a, **k):
         ran.append(cmd[2])
+        seen_cmds.append(cmd)
         return subprocess.CompletedProcess(cmd, 1 if "BBB" in cmd[2] else 0)
     LA.ask = lambda prompt, default="": next(answers, default)
     LA.subprocess.run = fake_run
-    LA.pick_style = lambda: "trial_tales"
+    LA.pick_run = lambda: ("trial_tales", "clips")      # never touches the PC's own .style / .mode choices
     LA.QUEUE = tmp / "queue.txt"
     failed_file = ROOT / "state" / "queue_failed.txt"
     had_failed = failed_file.exists()
@@ -1266,10 +1269,11 @@ def t34_bulk_queue():
         LA.bulk()
         F.notify, F.open_folder = n0, o0
         assert [u.rsplit("/", 1)[1] for u in ran] == ["AAA", "BBB", "CCC"], ran
+        assert all("--mode" in c and c[c.index("--mode") + 1] == "clips" for c in seen_cmds), "every queued stream gets the chosen mode"
         assert not LA.QUEUE.exists(), "queue file must be gone when the queue is done"
         assert "BBB" in failed_file.read_text(encoding="utf-8")
     finally:
-        LA.ask, LA.subprocess.run, LA.pick_style, LA.QUEUE = orig
+        LA.ask, LA.subprocess.run, LA.pick_run, LA.QUEUE = orig
         if not had_failed:
             failed_file.unlink(missing_ok=True)
         shutil.rmtree(tmp, ignore_errors=True)
@@ -1299,6 +1303,33 @@ def t35_render_cache():
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return "stale render pieces dropped after a code / style / plan change, reused otherwise"
+
+
+def t36_template_menu():
+    """Template menu: a template = fully edited videos (then the mode question); the extra last entry = CLIPS ONLY for a chosen
+    channel. A remembered 'clips' choice can no longer turn a Court Beacon run into clips (bug 2026-11-02)."""
+    sys.path.insert(0, str(ROOT / "tools"))
+    import launcher as LA
+    st = LA.styles()
+    cb = next(i for i, (sid, _) in enumerate(st, 1) if sid == "court_beacon")
+    saved = {f: (ROOT / f).read_text(encoding="utf-8") if (ROOT / f).exists() else None for f in (".style", ".mode", ".output")}
+    orig = LA.ask
+    try:
+        for answers, want in (([str(cb), "3"], ("court_beacon", "all")),                 # template + mode
+                              ([str(len(st) + 1), str(cb)], ("court_beacon", "clips")),  # clips only, for Court Beacon
+                              ([str(cb), ""], ("court_beacon", "all"))):                 # after clips: a template is a template again
+            it = iter(answers)
+            LA.ask = lambda prompt, default="", it=it: next(it, "") or default
+            got = LA.pick_run()
+            assert got == want, (answers, got, want)
+    finally:
+        LA.ask = orig
+        for f, v in saved.items():
+            if v is None:
+                (ROOT / f).unlink(missing_ok=True)
+            else:
+                (ROOT / f).write_text(v, encoding="utf-8")
+    return "template -> edited videos + mode; last entry -> clips only for a chosen channel; no sticky clips"
 
 
 def t25_nvenc_levels():
@@ -1370,6 +1401,7 @@ def main():
     check(33, "run_stream smoke (all + clips)", t33_run_smoke)
     check(34, "bulk queue", t34_bulk_queue)
     check(35, "render cache invalidation", t35_render_cache)
+    check(36, "template menu (clips only is its own entry)", t36_template_menu)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))

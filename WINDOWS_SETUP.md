@@ -34,12 +34,14 @@ It replaces the old `.venv` automatically. Python / ffmpeg / Git installed earli
 * Option **8** updates everything: the newest code from GitHub, any new pinned tool or package, and the newest yt-dlp.
   Do this before starting work. The window re-opens by itself afterwards.
 * Option **1**: paste the YouTube stream URL -> pick the style -> pick the mode -> answer the voice question -> wait.
-  Many streams: option **9** (bulk queue). Mode **4** = clips for your editor (see below).
+  Many streams: option **9** (bulk queue). Clips for your editor: the last entry of the channel-template list (see below).
   Videos land in `output\<date>_<stream id>\`.
 * The first video on a new PC downloads the speech-recognition model once (a few hundred MB, into `runtime\hf`).
 
-## Clips only (mode 4)
-For channels where your own editor finishes the video. Pick mode **4) Clips only**. For every verified case of 8:00 or more:
+## Clips only (last entry of the template list)
+For channels where your own editor finishes the video. In the channel-template list pick the last entry, **CLIPS ONLY**,
+then the channel the clips are for (its name and title style go into the guide). There is no mode question: every verified
+case of 8:00 or more becomes a clip:
 * `clip.mp4`: the hook (10-20 s, from inside the case) + the whole case, dead air cut out. Native resolution (no upscale),
   frame-accurate cuts, H.264 (opens in Premiere / CapCut / Resolve). No overlays, no AI voice, no graphics, no watermark.
 * `EDITOR_GUIDE.txt`: what the full render would have added, with **clip** timestamps: the hook title text, every text overlay

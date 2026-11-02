@@ -56,37 +56,67 @@ def ask(prompt, default=""):
     return v or default
 
 
+def _pick_from(st, prompt, cur):
+    d = next((i for i, (sid, _) in enumerate(st, 1) if sid == cur), 1)
+    s = ask(f"{prompt} [1-{len(st)}, Enter={d}]: ", str(d))
+    try:
+        return st[int(s) - 1][0]
+    except (ValueError, IndexError):
+        return st[d - 1][0]
+
+
 def pick_style():
+    """Channel template for this run -> (style id, clips_only). The last entry is CLIPS ONLY (no template): clean clips + an
+    editor guide; the tool then asks which channel the clips are for (its name / title rules go into the guide)."""
     st = styles()
     if not st:
         print("no style packs found in styles/")
-        return None
+        return None, False
     cur = _read(".style", st[0][0])
-    d = next((i for i, (sid, _) in enumerate(st, 1) if sid == cur), 1)
-    print("\nEditing style for this run:")
+    c = len(st) + 1
+    print("\nChannel template for this run:")
     for i, (sid, name) in enumerate(st, 1):
-        print(f"  {i}) {sid}  ({name})")
-    s = ask(f"Pick [1-{len(st)}, Enter={d}]: ", str(d))
-    try:
-        sid = st[int(s) - 1][0]
-    except (ValueError, IndexError):
-        sid = st[d - 1][0]
+        print(f"  {i}) {name}  ({sid})   - fully edited videos in this channel's style")
+    print(f"  {c}) CLIPS ONLY - no template: hook + case, dead air cut, no overlays / voice / watermark + EDITOR_GUIDE.txt")
+    d = c if _read(".output", "video") == "clips" else next((i for i, (sid, _) in enumerate(st, 1) if sid == cur), 1)
+    s = ask(f"Pick [1-{c}, Enter={d}]: ", str(d))
+    clips = s.strip() == str(c)
+    if clips:
+        print("\nThe clips are for which channel? (its name and title style go into the editor guide)")
+        for i, (sid, name) in enumerate(st, 1):
+            print(f"  {i}) {name}  ({sid})")
+        sid = _pick_from(st, "Pick", cur)
+    else:
+        try:
+            sid = st[int(s) - 1][0]
+        except (ValueError, IndexError):
+            sid = st[d - 1][0] if d <= len(st) else cur
     _write(".style", sid)
-    print("style:", sid)
-    return sid
+    _write(".output", "clips" if clips else "video")
+    print("\n>>> " + (f"CLIPS ONLY for {dict(st).get(sid, sid)} (no template, editor guide)" if clips
+                       else f"{dict(st).get(sid, sid)}: fully edited videos"))
+    return sid, clips
 
 
 def pick_mode():
+    """Video length mode for fully edited videos (clips only has no mode: every case >= 8:00 becomes a clip)."""
     print("\nVideo mode for this run:\n  1) 30 min video   (v9 bundles, 20-40 min)\n  2) 1 hour video   (v9 bundles, 50-70 min)\n"
-          "  3) All cases      (every case >= 8:00 becomes its own video, ranked)\n"
-          "  4) Clips only     (every case >= 8:00 -> hook + case, dead air cut, NO overlays/voice/watermark + EDITOR_GUIDE.txt)")
-    cur = _read(".mode", "60")
-    d = {"30": 1, "60": 2, "all": 3, "clips": 4}.get(cur, 2)
-    m = ask(f"Pick [1-4, Enter={d}]: ", str(d))
-    mode = {"1": "30", "2": "60", "3": "all", "4": "clips"}.get(m, "60")
+          "  3) All cases      (every case >= 8:00 becomes its own video, ranked)")
+    cur = _read(".mode", "all")
+    d = {"30": 1, "60": 2, "all": 3}.get(cur, 3)
+    m = ask(f"Pick [1-3, Enter={d}]: ", str(d))
+    mode = {"1": "30", "2": "60", "3": "all"}.get(m, {1: "30", 2: "60", 3: "all"}[d])
     _write(".mode", mode)
     print("mode:", mode)
     return mode
+
+
+def pick_run():
+    """Template (or clips only) + mode -> (style id, mode) or (None, None)."""
+    sid, clips = pick_style()
+    if not sid:
+        return None, None
+    return sid, ("clips" if clips else pick_mode())
 
 
 def set_brain():
@@ -139,10 +169,9 @@ def bulk():
     if not urls:
         print("no links.")
         return
-    sid = pick_style()
+    sid, mode = pick_run()
     if not sid:
         return
-    mode = pick_mode()
     tts_ok = mode != "clips" and confirm_tts()
     QUEUE.parent.mkdir(exist_ok=True)
     QUEUE.write_text("\n".join(urls) + "\n", encoding="utf-8")
@@ -331,8 +360,10 @@ def doctor(pause=True):
 
 def main():
     while True:
+        last = (f"CLIPS ONLY ({_read('.style', 'trial_tales')})" if _read(".output", "video") == "clips"
+                else f"{_read('.style', 'trial_tales')}, mode {_read('.mode', 'all')}")
         print("\n==============================================\n  H LABS  -  UMF Case Factory"
-              f"\n  brain: {_read('.brain', 'hive')}   |   style: {_read('.style', 'trial_tales')}   |   mode: {_read('.mode', '60')}"
+              f"\n  brain: {_read('.brain', 'hive')}   |   last run: {last}"
               f"\n  output: {ROOT / 'output'}\n==============================================")
         print("  1) New video from a YouTube stream URL (full pipeline)\n  2) Local file mode (already downloaded / pre-cut clips)\n"
               "  3) Change brain provider\n  4) Edit API keys\n  5) Open output folder\n  6) Run self-test\n  7) Setup check (what is installed?)\n  8) Update H Labs (GitHub code + yt-dlp)\n"
@@ -342,10 +373,9 @@ def main():
             url = ask("YouTube URL: ")
             if not url:
                 continue
-            sid, mode = pick_style(), None
+            sid, mode = pick_run()
             if not sid:
                 continue
-            mode = pick_mode()
             args = [url, "--brain", _read(".brain", "hive"), "--style", sid, "--mode", mode]
             if mode != "clips" and confirm_tts():          # clips mode makes no AI voice
                 args.append("--confirm-tts")
@@ -355,10 +385,9 @@ def main():
             sid_ = ask("Stream ID (e.g. lVQ79x0Hd_w): ")
             slen = ask("Stream length H:MM:SS: ")
             tr = ask("Transcript file (empty = reuse work/<id>/transcript.json): ")
-            sid = pick_style()
+            sid, mode = pick_run()
             if not sid:
                 continue
-            mode = pick_mode()
             args = ["--stream-id", sid_, "--brain", _read(".brain", "hive"), "--style", sid, "--mode", mode]
             if vf:
                 args += ["--video-file", vf]
