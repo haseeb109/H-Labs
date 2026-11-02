@@ -113,12 +113,12 @@ class JSRenderer(OVRenderer):
             geo = js_geometry(lay, tpl, act)
             ls = [dict(l) for l in layers]
             if not blur:
-                fr = JG.tile_frames(geo["small"], geo["big"], self.gdir / f"fr_{lay}_{act}_{tpl}.png")
-                ls.insert(0, dict(png=fr, s=0, e=d))
+                # no tile frames (green box + amber corner ticks): they follow the detected layout, and when the footage is placed
+                # differently (e.g. the hook) the box sat off the picture (owner, 2026-11-02: remove it)
                 if ticker:
-                    ls.insert(1, dict(png=ticker, s=0, e=d))
+                    ls.insert(0, dict(png=ticker, s=0, e=d))
                 if header:
-                    ls.insert(1, dict(png=header, s=0, e=d))
+                    ls.insert(0, dict(png=header, s=0, e=d))       # same stacking as before: header, ticker, then the cards
                 if brief:
                     geom, mode = geo["brief"]
                     if mode == "always":
