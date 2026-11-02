@@ -73,10 +73,6 @@ Settings for one computer only go into `config.local.json` (not in git). A new P
 run `uv lock` (`runtime/uv/uv lock`), commit both files - the next menu 8 installs it on every Mac and PC.
 Optional: `npm i -g hyperframes && hyperframes browser ensure` (Trial Tales motion labels).
 
-**Releasing to the team (Mac -> Windows):** develop and push on `main`, test on the Mac (a real stream), then Mac menu **r**
-(RELEASE): it runs the self-test, shows what is new and, after you type RELEASE, moves branch `stable` to this version.
-Team PCs only ever install `stable` (Windows menu 8), so work in progress on `main` can never break production.
-
 ## Captions, faces, court audio (added 2026-10-25)
 
 | Feature | Needs | Config (config.json) |

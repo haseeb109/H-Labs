@@ -231,33 +231,6 @@ def open_path(p):
         print("could not open", p, "-", e)
 
 
-def release():
-    """Mac (owner): send the tested code on main to the team PCs (branch stable; Windows menu 8 follows stable)."""
-    def git(*a):
-        return subprocess.run(["git", *a], cwd=ROOT, capture_output=True, text=True)
-    if git("status", "--porcelain", "--untracked-files=no").stdout.strip():
-        print("\nYou have changes that are not committed yet - commit and push them first (or undo them).")
-        return ask("Press Enter...")
-    git("fetch", "origin")
-    if git("rev-parse", "HEAD").stdout.strip() != git("rev-parse", "origin/main").stdout.strip():
-        print("\nThis folder is not exactly the code on GitHub main (git pull / git push first).")
-        return ask("Press Enter...")
-    new = git("log", "--oneline", "origin/stable..HEAD").stdout.strip()
-    if not new:
-        print("\nThe team already has this version - nothing to release.")
-        return ask("Press Enter...")
-    print("\nNEW FOR THE TEAM:\n" + "\n".join("  " + x for x in new.splitlines()))
-    print("\nRunning the self-test first...")
-    subprocess.run([sys.executable, "tests/run_tests.py", "--quick"], cwd=ROOT)
-    print("\nOnly release what you have tested on this Mac (a real stream, the styles you changed).")
-    if ask("Type RELEASE to send it to the team PCs (they get it with menu 8): ") != "RELEASE":
-        print("not released.")
-        return ask("Press Enter...")
-    r = subprocess.run(["git", "push", "origin", "HEAD:stable"], cwd=ROOT)
-    print("\nRELEASED - team PCs get it with menu 8." if r.returncode == 0 else "\nrelease failed (see above).")
-    ask("Press Enter...")
-
-
 def update_unix():
     """Mac / Linux menu 8: newest code, then the same locked packages as Windows (uv) + the newest yt-dlp."""
     r = subprocess.run(["git", "pull", "--ff-only"], cwd=ROOT)
@@ -394,8 +367,7 @@ def main():
               f"\n  output: {ROOT / 'output'}\n==============================================")
         print("  1) New video from a YouTube stream URL (full pipeline)\n  2) Local file mode (already downloaded / pre-cut clips)\n"
               "  3) Change brain provider\n  4) Edit API keys\n  5) Open output folder\n  6) Run self-test\n  7) Setup check (what is installed?)\n  8) Update H Labs (GitHub code + yt-dlp)\n"
-              "  9) BULK QUEUE - many stream links, one after the other, until all are done\n"
-              + ("" if WIN else "  r) RELEASE the tested version to the team PCs (Windows menu 8 then installs it)\n") + "  q) Quit")
+              "  9) BULK QUEUE - many stream links, one after the other, until all are done\n  q) Quit")
         pick = ask("Pick: ", "q").lower()
         if pick == "1":
             url = ask("YouTube URL: ")
@@ -440,8 +412,6 @@ def main():
             doctor()
         elif pick == "9":
             bulk()
-        elif pick == "r" and not WIN:
-            release()
         elif pick == "8" and WIN:
             sys.exit(88)              # H Labs.bat runs tools/win/setup.ps1 -Update once this process (and the files it holds) is closed
         elif pick == "8":

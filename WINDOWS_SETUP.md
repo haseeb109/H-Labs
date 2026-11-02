@@ -31,9 +31,7 @@ It replaces the old `.venv` automatically. Python / ffmpeg / Git installed earli
 ## Every day
 
 * Double-click `H Labs.bat`.
-* Option **8** updates everything: the newest **released** code (branch `stable`), any new pinned tool or package, and the
-  newest yt-dlp. The owner tests every change on the Mac first and then releases it, so an untested change never reaches
-  the team. (A test PC can follow the newest code instead: `config.local.json` -> `{ "update_channel": "main" }`.)
+* Option **8** updates everything: the newest code from GitHub, any new pinned tool or package, and the newest yt-dlp.
   Do this before starting work. The window re-opens by itself afterwards.
 * Option **1**: paste the YouTube stream URL -> pick the style -> pick the mode -> answer the voice question -> wait.
   Many streams: option **9** (bulk queue). Clips for your editor: the last entry of the channel-template list (see below).
