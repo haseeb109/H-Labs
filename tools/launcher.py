@@ -194,7 +194,6 @@ def bulk():
     for u in failed:
         print("  FAILED:", u)
     if failed:
-        (ROOT / "state").mkdir(exist_ok=True)            # a fresh clone has no state folder (it is per PC, not in git)
         (ROOT / "state" / "queue_failed.txt").write_text("\n".join(failed) + "\n", encoding="utf-8")
         print("  (saved in state\\queue_failed.txt - paste them into menu 9 again after a look at the error)")
     try:
@@ -231,24 +230,6 @@ def open_path(p):
         print("could not open", p, "-", e)
 
 
-def update_unix():
-    """Mac / Linux menu 8: newest code, then the same locked packages as Windows (uv) + the newest yt-dlp."""
-    r = subprocess.run(["git", "pull", "--ff-only"], cwd=ROOT)
-    if r.returncode != 0:
-        print("\ngit pull failed - local edits? (`git status` shows them; your own settings belong in config.local.json)")
-    uv = ROOT / "runtime" / "uv" / "uv"
-    if uv.exists() and (ROOT / ".venv" / ".hlabs-uv").exists():
-        env = dict(os.environ, UV_PYTHON_INSTALL_DIR=str(ROOT / "runtime" / "python"), UV_CACHE_DIR=str(ROOT / "runtime" / "uv-cache"),
-                   UV_PYTHON_PREFERENCE="only-managed")
-        subprocess.run([str(uv), "sync", "--frozen", "--inexact", "--project", str(ROOT)], cwd=ROOT, env=env)
-        print("\nUpdating yt-dlp (YouTube changes often; an old yt-dlp is the usual reason a download fails)...")
-        subprocess.run([str(uv), "pip", "install", "--no-config", "--python", sys.executable, "--upgrade", "yt-dlp[default]"], cwd=ROOT, env=env)
-    else:
-        print("\nThis folder was not set up with 'Setup Mac.command' - run it once (it gives the same locked packages as Windows).")
-        subprocess.run([sys.executable, "-m", "pip", "install", "-U", "yt-dlp[default]"], cwd=ROOT)
-    ask("\nIf git says 'Already up to date' you have the latest code. Press Enter...")
-
-
 def edit_keys():
     KEYS.mkdir(parents=True, exist_ok=True)
     for fn, var in KEY_FILES.items():
@@ -260,8 +241,6 @@ def edit_keys():
     if os.name == "nt":
         for fn in KEY_FILES:
             subprocess.Popen(["notepad", str(KEYS / fn)])
-    elif platform.system() == "Darwin":
-        subprocess.run(["open", "-e", *[str(KEYS / fn) for fn in KEY_FILES]])   # TextEdit
     else:
         open_path(KEYS)
 
@@ -291,7 +270,7 @@ def doctor(pause=True):
     if (ROOT / ".venv").exists():
         ok(".venv found")
     else:
-        warn(".venv missing - run Setup.bat (Windows) / Setup Mac.command (Mac) first")
+        warn(".venv missing - run Setup.bat first (Windows) or create one")
     ff = shutil.which("ffmpeg")
     if ff:
         ver = subprocess.run([ff, "-hide_banner", "-version"], capture_output=True, text=True).stdout.split(" ")[2:3]
@@ -415,7 +394,10 @@ def main():
         elif pick == "8" and WIN:
             sys.exit(88)              # H Labs.bat runs tools/win/setup.ps1 -Update once this process (and the files it holds) is closed
         elif pick == "8":
-            update_unix()
+            subprocess.run(["git", "pull"], cwd=ROOT)
+            print("\nUpdating yt-dlp (YouTube changes often; an old yt-dlp is the usual reason a download fails)...")
+            subprocess.run([sys.executable, "-m", "pip", "install", "-U", "yt-dlp[default]"], cwd=ROOT)
+            ask("\nIf git says 'Already up to date' you have the latest code. Press Enter...")
         elif pick in ("q", ""):
             return
 
