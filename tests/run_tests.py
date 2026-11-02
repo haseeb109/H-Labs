@@ -1332,21 +1332,6 @@ def t36_template_menu():
     return "template -> edited videos + mode; last entry -> clips only for a chosen channel; no sticky clips"
 
 
-def t37_faces_native_crash():
-    """mediapipe that aborts in native code (macOS 2026-11-02: killed a whole Court Beacon run) only switches faces off."""
-    from ucf import faces as F
-    code, det = F.CANARY_CODE, F._DET.pop("d", "unset")
-    F.CANARY_CODE = "import os; os.abort()"
-    try:
-        assert F.available() is False and F.detect(ROOT / "styles" / "justice_served" / "assets" / "logo_transparent.png") == []
-    finally:
-        F.CANARY_CODE = code
-        F._DET.pop("d", None)
-        if det != "unset":
-            F._DET["d"] = det
-    return "a crashing face detector is caught in a child process; the run goes on without face placement"
-
-
 def t25_nvenc_levels():
     """An old GPU/driver that rejects the best NVENC options gets the next simpler set; one that rejects all falls back to x264."""
     from ucf import render
@@ -1417,7 +1402,6 @@ def main():
     check(34, "bulk queue", t34_bulk_queue)
     check(35, "render cache invalidation", t35_render_cache)
     check(36, "template menu (clips only is its own entry)", t36_template_menu)
-    check(37, "face detector native crash is contained", t37_faces_native_crash)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))

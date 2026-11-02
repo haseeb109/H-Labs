@@ -212,7 +212,7 @@ def main():
         ui("downloading stream (this is the slow part)...")
         video_path = download.fetch_video(url, sid, work, cfg, meta)
     elif video_path.exists() and upto >= 1:
-        ui(download.describe(video_path, meta)[0])       # cached download: show its quality (an old one may be the starved H.264 copy)
+        ui(download.describe(video_path)[0])       # cached download: show its quality (an old one may be the starved H.264 copy)
         why = "" if a.video_file else download.worse_than_available(video_path, meta)
         if why and url:
             # an older run downloaded a worse copy (360p / starved H.264): get the real quality, keep the old file if that fails
