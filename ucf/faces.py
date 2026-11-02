@@ -14,9 +14,38 @@ _DET = {}
 MIN_SCORE = 0.6
 
 
+CANARY_CODE = ("import sys; sys.path.insert(0, sys.argv[1]); from PIL import Image; from ucf import faces as F; d = F._detector(); "
+               "F._run(d, Image.new('RGB', (320, 180), (90, 90, 90))) if d else None; print('ok' if d else 'none')")
+
+
+def _canary_ok():
+    """Run one detection in a CHILD process first. Some mediapipe builds abort the whole process from native code (macOS,
+    mediapipe 1.0.x: 'Check failed: service_ Service is unavailable' in the Metal helper) - a Python try/except cannot catch
+    that, and it killed a whole render before the first video was written. A failing child = faces off for this run."""
+    import os
+    import subprocess
+    import sys
+    if os.environ.get("HL_FACES_CHILD"):
+        return True
+    try:
+        r = subprocess.run([sys.executable, "-c", CANARY_CODE, str(ROOT)], capture_output=True, text=True, timeout=120,
+                           env=dict(os.environ, HL_FACES_CHILD="1"))
+    except Exception:
+        return False
+    if r.returncode != 0 or "ok" not in r.stdout:
+        if r.returncode != 0:
+            print("  face detection is not usable on this computer (mediapipe crashed in a test run) - thumbnails use the "
+                  "sharpest frame instead", flush=True)
+        return False
+    return True
+
+
 def _detector():
     if "d" in _DET:
         return _DET["d"]
+    if not _canary_ok():
+        _DET["d"] = None
+        return None
     det = None
     try:
         import mediapipe as mp
@@ -26,8 +55,10 @@ def _detector():
         elif TASK_MODEL.exists():
             from mediapipe.tasks import python as mpt
             from mediapipe.tasks.python import vision
-            opts = vision.FaceDetectorOptions(base_options=mpt.BaseOptions(model_asset_path=str(TASK_MODEL)),
-                                              min_detection_confidence=0.5)
+            bo = mpt.BaseOptions(model_asset_path=str(TASK_MODEL))
+            if hasattr(mpt.BaseOptions, "Delegate"):
+                bo = mpt.BaseOptions(model_asset_path=str(TASK_MODEL), delegate=mpt.BaseOptions.Delegate.CPU)   # no Metal / GPU path
+            opts = vision.FaceDetectorOptions(base_options=bo, min_detection_confidence=0.5)
             det = ("tasks", vision.FaceDetector.create_from_options(opts))
     except Exception:
         det = None

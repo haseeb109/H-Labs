@@ -104,8 +104,9 @@ def worse_than_available(path, meta):
     return ""
 
 
-def describe(path):
-    """-> (one line 'source: 1280x720 vp9 30fps 1.68 Mbps', low_bitrate_bool) for a downloaded stream."""
+def describe(path, meta=None):
+    """-> (one line 'source: 1280x720 vp9 30fps 1.68 Mbps', low_bitrate_bool) for a downloaded stream. With `meta` (info()), a low
+    bitrate that is simply the best YouTube has for this stream is said as such (re-downloading would not help)."""
     try:
         r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
                             "stream=codec_name,width,height,avg_frame_rate,bit_rate:format=bit_rate,duration",
@@ -121,9 +122,15 @@ def describe(path):
         fps = float(num) / float(den or 1) if float(den or 1) else 0
         h = int(st.get("height") or 0)
         low = bool(vbr) and h >= 700 and vbr < 900_000
-        line = (f"source: {st.get('width')}x{h} {st.get('codec_name')} {fps:.0f}fps {vbr / 1e6:.2f} Mbps video"
-                + ("   <- LOW bitrate: this file looks soft. Delete it (work\\<id>\\source.mp4) and run again to re-download"
-                   " the best version" if low else ""))
+        best = float((meta or {}).get("best_kbps") or 0) * 1000
+        if low and best and vbr >= best * 0.6:
+            note = "   (low, but it is the best YouTube has for this stream - the footage itself will look soft)"
+        elif low:
+            note = ("   <- LOW bitrate: this file looks soft. Delete it (work\\<id>\\source.mp4) and run again to re-download"
+                    " the best version")
+        else:
+            note = ""
+        line = f"source: {st.get('width')}x{h} {st.get('codec_name')} {fps:.0f}fps {vbr / 1e6:.2f} Mbps video" + note
         return line, low
     except Exception as e:
         return f"source: could not read ({e})", False
@@ -147,7 +154,7 @@ def fetch_video(url, vid, workdir, cfg, meta=None):
         r = subprocess.run(_cmd(cfg, extra) + (["-S", sort] if sort else []) + ["-f", fmt, "--merge-output-format", "mp4", "--no-playlist",
                                         "-o", str(workdir / "source.%(ext)s"), "--newline", url])
         if r.returncode == 0 and out.exists():
-            print("  " + describe(out)[0], flush=True)
+            print("  " + describe(out, meta)[0], flush=True)
             why = worse_than_available(out, meta or {})
             if why and k < len(tries):
                 print(f"  this download is {why} - keeping it aside and trying the next way for the full quality", flush=True)
