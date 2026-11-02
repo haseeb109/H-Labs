@@ -111,8 +111,23 @@ if ($Update) {
         Get-ChildItem (Join-Path $Root "state") -File -ErrorAction SilentlyContinue | Copy-Item -Destination $stBak
         $tracked = & $gitExe -C $Root ls-files state
         if ($tracked) { & $gitExe -C $Root checkout -- state }
-        & $gitExe -C $Root pull --ff-only
-        if ($LASTEXITCODE -ne 0) { Warn "git pull failed (local edits in the folder? see the message above). Setup continues with the current code." }
+        # Team PCs follow the "stable" branch: the owner develops and tests on the Mac (branch main) and releases to stable
+        # when it works, so an untested change never reaches production. A test PC can follow main instead:
+        # config.local.json -> { "update_channel": "main" }
+        $chan = "stable"
+        $lc = Join-Path $Root "config.local.json"
+        if (Test-Path $lc) {
+            try { $j = Get-Content $lc -Raw | ConvertFrom-Json; if ($j.update_channel) { $chan = [string]$j.update_channel } } catch { }
+        }
+        Write-Host "  update channel: $chan"
+        & $gitExe -C $Root fetch origin $chan
+        if ($LASTEXITCODE -ne 0) {
+            Warn "could not get '$chan' from GitHub (internet / access?) - setup continues with the current code."
+        } else {
+            & $gitExe -C $Root checkout -B "hlabs-$chan" "origin/$chan"
+            if ($LASTEXITCODE -ne 0) { Warn "update blocked by local edits in the folder (see above; own settings belong in config.local.json). Setup continues with the current code." }
+            else { Ok "code = $chan  ($(& $gitExe -C $Root log -1 --format='%h %cd' --date=short))" }
+        }
         Get-ChildItem $stBak -File | Copy-Item -Destination (Join-Path $Root "state") -Force
         Remove-Item $stBak -Recurse -Force
     }
@@ -143,10 +158,10 @@ if (-not (Test-Path (Join-Path $Root ".git")) -and -not $NoPrompt) {
     $gitExe = (Get-Command git).Source
     & $gitExe -C $Root init -q -b main
     & $gitExe -C $Root remote add origin "https://github.com/haseeb109/H-Labs.git"
-    & $gitExe -C $Root fetch -q origin main
+    & $gitExe -C $Root fetch -q origin stable
     if ($LASTEXITCODE -eq 0) {
-        & $gitExe -C $Root reset -q --hard origin/main
-        & $gitExe -C $Root branch -q --set-upstream-to=origin/main main
+        & $gitExe -C $Root reset -q --hard origin/stable
+        & $gitExe -C $Root branch -q -m hlabs-stable
         Ok "linked - updates work through menu option 8"
     } else {
         Remove-Item (Join-Path $Root ".git") -Recurse -Force
