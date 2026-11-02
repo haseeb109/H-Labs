@@ -1276,6 +1276,31 @@ def t34_bulk_queue():
     return "3 links in order, the failed one noted and the queue went on, queue file cleared"
 
 
+def t35_render_cache():
+    """A re-render after an update must not reuse stale pieces (the removed Justice Served frame came back from an old 00_hook)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("rs_mod", ROOT / "run_stream.py")
+    rs = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rs)
+    from ucf import config
+    cfg = config.load(style="justice_served")
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        (tmp / "_work").mkdir()
+        (tmp / "_work" / "00_hook.mp4").write_bytes(b"old")            # piece from an older version (no stamp)
+        v, cs = {"n": 1, "hook": {"in": "0:01:00"}}, [{"id": 1}]
+        rs.fresh_render_cache(tmp, cfg, v, cs)
+        assert not (tmp / "_work" / "00_hook.mp4").exists(), "unstamped old pieces must be dropped"
+        (tmp / "_work" / "00_hook.mp4").write_bytes(b"new")
+        rs.fresh_render_cache(tmp, cfg, v, cs)
+        assert (tmp / "_work" / "00_hook.mp4").exists(), "same code + plan: pieces are reused"
+        rs.fresh_render_cache(tmp, cfg, dict(v, hook={"in": "0:02:00"}), cs)
+        assert not (tmp / "_work" / "00_hook.mp4").exists(), "changed plan: pieces dropped"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return "stale render pieces dropped after a code / style / plan change, reused otherwise"
+
+
 def t25_nvenc_levels():
     """An old GPU/driver that rejects the best NVENC options gets the next simpler set; one that rejects all falls back to x264."""
     from ucf import render
@@ -1344,6 +1369,7 @@ def main():
     check(32, "clips only + editor guide", t32_clips_only)
     check(33, "run_stream smoke (all + clips)", t33_run_smoke)
     check(34, "bulk queue", t34_bulk_queue)
+    check(35, "render cache invalidation", t35_render_cache)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))

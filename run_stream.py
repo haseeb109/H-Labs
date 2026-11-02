@@ -52,6 +52,30 @@ class _Tee:
         return getattr(self.stream, k)
 
 
+def fresh_render_cache(folder, cfg, video, cases):
+    """The renderers reuse finished pieces in <video folder>/_work (hook, case parts, cards) when a video is rendered again.
+    After an update of the render code / style / plan those pieces are stale (e.g. a removed graphic came back from an old
+    00_hook.mp4), so the cache is dropped whenever the fingerprint of code + style + this video's plan changes."""
+    import hashlib
+    h = hashlib.sha1()
+    style_dir = config.style_path(cfg)
+    files = sorted((config.ROOT / "ucf").glob("*.py")) + sorted(Path(style_dir).rglob("*.py")) + sorted(Path(style_dir).glob("*.json"))
+    for f in files:
+        try:
+            h.update(f.read_bytes())
+        except OSError:
+            pass
+    h.update(json.dumps({"video": video, "cases": cases}, sort_keys=True, default=str).encode())
+    stamp = h.hexdigest()
+    wd = Path(folder) / "_work"
+    mark = wd / ".render_stamp"
+    if wd.exists() and (not mark.exists() or mark.read_text(encoding="utf-8").strip() != stamp):
+        shutil.rmtree(wd, ignore_errors=True)
+        ui("  (old render pieces of this video dropped - code, style or plan changed since)")
+    wd.mkdir(parents=True, exist_ok=True)
+    mark.write_text(stamp, encoding="utf-8")
+
+
 def check_disk(root, need_gb=5.0, warn_gb=20.0):
     """Stop before a download when the disk is (almost) full; warn when it is getting low."""
     try:
@@ -432,6 +456,7 @@ def main():
         CLOCK.stage(f"video {v['n']} render")
         _t_video = time.time()
         rn.log = []
+        fresh_render_cache(folder, cfg, v, [by_id[i] for i in v["case_ids"]])
         res = rn.render_video(plan, v, folder, work / "tts", ui)
         wm_text, wm_err = None, None
         try:
