@@ -194,6 +194,7 @@ def bulk():
     for u in failed:
         print("  FAILED:", u)
     if failed:
+        (ROOT / "state").mkdir(exist_ok=True)            # a fresh clone has no state folder (it is per PC, not in git)
         (ROOT / "state" / "queue_failed.txt").write_text("\n".join(failed) + "\n", encoding="utf-8")
         print("  (saved in state\\queue_failed.txt - paste them into menu 9 again after a look at the error)")
     try:
