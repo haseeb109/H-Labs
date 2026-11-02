@@ -288,7 +288,10 @@ def main():
 
     # ---------------- plan ----------------
     CLOCK.stage("brain (plan)")
-    plan_path = Path(a.plan) if a.plan else work / "plan.json"
+    # one plan per style + mode: titles follow the style's own rules and a bundle plan is not an all-cases plan, so a stream run
+    # again in another style / mode must not reuse the first plan (it failed the validator: "CAPS word ... not in this style's
+    # banks"). Clips use the all-cases plan of the same style.
+    plan_path = Path(a.plan) if a.plan else work / f"plan_{cfg['style']}_{mode}.json"
     carried = [] if mode == "all" else load_json(state / "carry_forward.json", [])
     inputs = {"source_file": source_file, "stream_length": fmt_tc(stream_len), "channel_name": cfg["channel_name"]}
     lines = transcript.compact_lines(segs)

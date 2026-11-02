@@ -18,11 +18,9 @@ os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 WIN = os.name == "nt"
 KEYS = Path.home() / ".config" / "umf"
 KEY_FILES = {"hive.env": "HIVE_API_KEY", "ai33.env": "AI33_API_KEY"}      # the only two keys this setup needs (brain + AI voice)
-BRAINS = {"1": ("hive", "Hive - DeepSeek V4.1 Flash   - default, ~$0.01/video, Claude fixes the cases it cannot"),
-          "2": ("anthropic", "Anthropic (Claude)           - best quality, ~$0.34/video"),
-          "3": ("deepseek", "DeepSeek direct              - backup if Hive is down"),
-          "4": ("openai", "OpenAI (GPT)"),
-          "5": ("manual", "manual                       - pipeline writes the prompt, you paste it into any chat, run again with the plan")}
+BRAINS = {"1": ("hive", "Hive - DeepSeek V4.1 Flash   - the brain of H Labs (~$0.01/video, needs hive.env)"),
+          "2": ("manual", "manual                       - pipeline writes the prompt, you paste it into any chat, run again with the plan")}
+# Anthropic / DeepSeek / OpenAI stay in the code (ucf/brain.py) but are not offered: the team PCs only have the Hive + ai33 keys.
 
 
 def _read(name, default):
@@ -31,6 +29,12 @@ def _read(name, default):
         return v or default
     except OSError:
         return default
+
+
+def _brain():
+    """The brain for a run: an old choice that is no longer offered (anthropic / deepseek / openai - no key on team PCs) -> hive."""
+    b = _read(".brain", "hive")
+    return b if b in {v[0] for v in BRAINS.values()} else "hive"
 
 
 def _write(name, value):
@@ -123,12 +127,12 @@ def set_brain():
     print("\nChoose the brain provider (writes the plan JSON from the transcript):")
     for k, (_, label) in BRAINS.items():
         print(f"  {k}) {label}")
-    b = ask("Pick 1-5: ")
+    b = ask(f"Pick 1-{len(BRAINS)}: ")
     if b in BRAINS:
         _write(".brain", BRAINS[b][0])
         print("Brain set to:", BRAINS[b][0])
     else:
-        print("keeping current:", _read(".brain", "hive"))
+        print("keeping current:", _brain())
 
 
 def confirm_tts():
@@ -180,7 +184,7 @@ def bulk():
     t0, done, failed = _t.time(), [], []
     for i, url in enumerate(urls, 1):
         print("\n" + "#" * 64 + f"\n#  QUEUE {i}/{len(urls)}:  {url}\n" + "#" * 64)
-        args = [url, "--brain", _read(".brain", "hive"), "--style", sid, "--mode", mode, "--queued"] + (["--confirm-tts"] if tts_ok else [])
+        args = [url, "--brain", _brain(), "--style", sid, "--mode", mode, "--queued"] + (["--confirm-tts"] if tts_ok else [])
         try:
             r = subprocess.run([sys.executable, "run_stream.py"] + args, cwd=ROOT)
             (done if r.returncode == 0 else failed).append(url)
@@ -343,7 +347,7 @@ def main():
         last = (f"CLIPS ONLY ({_read('.style', 'trial_tales')})" if _read(".output", "video") == "clips"
                 else f"{_read('.style', 'trial_tales')}, mode {_read('.mode', 'all')}")
         print("\n==============================================\n  H LABS  -  UMF Case Factory"
-              f"\n  brain: {_read('.brain', 'hive')}   |   last run: {last}"
+              f"\n  brain: {_brain()}   |   last run: {last}"
               f"\n  output: {ROOT / 'output'}\n==============================================")
         print("  1) New video from a YouTube stream URL (full pipeline)\n  2) Local file mode (already downloaded / pre-cut clips)\n"
               "  3) Change brain provider\n  4) Edit API keys\n  5) Open output folder\n  6) Run self-test\n  7) Setup check (what is installed?)\n  8) Update H Labs (GitHub code + yt-dlp)\n"
@@ -356,7 +360,7 @@ def main():
             sid, mode = pick_run()
             if not sid:
                 continue
-            args = [url, "--brain", _read(".brain", "hive"), "--style", sid, "--mode", mode]
+            args = [url, "--brain", _brain(), "--style", sid, "--mode", mode]
             if mode != "clips" and confirm_tts():          # clips mode makes no AI voice
                 args.append("--confirm-tts")
             run_stream(args)
@@ -368,7 +372,7 @@ def main():
             sid, mode = pick_run()
             if not sid:
                 continue
-            args = ["--stream-id", sid_, "--brain", _read(".brain", "hive"), "--style", sid, "--mode", mode]
+            args = ["--stream-id", sid_, "--brain", _brain(), "--style", sid, "--mode", mode]
             if vf:
                 args += ["--video-file", vf]
             if slen:

@@ -2,6 +2,7 @@
 Playwright/Chromium (so type, slanted slabs and gradients look exactly like the approved storyboard).
 PNGs are cached by content hash, so re-runs and repeated cards are free."""
 import atexit
+import os
 import hashlib
 import re
 import html as H
@@ -79,7 +80,7 @@ def _browser():
     if _pw["b"] is None:
         from playwright.sync_api import sync_playwright
         _pw["p"] = sync_playwright().start()
-        _pw["b"] = _pw["p"].chromium.launch()
+        _pw["b"] = _pw["p"].chromium.launch(executable_path=os.environ.get("HL_CHROMIUM") or None)  # same override as Justice Served
         atexit.register(close)
     return _pw["b"]
 
