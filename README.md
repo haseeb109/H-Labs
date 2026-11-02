@@ -57,12 +57,21 @@ or menu option 3 (an explicit `--brain` runs every pass on that brain).
 
 **Windows (team PCs):** see `WINDOWS_SETUP.md` (`Setup.bat` once - everything goes inside the folder - then `H Labs.bat`).
 
-## Setup (already done on this Mac, Oct 2026)
+## Setup - one code base for Mac (development / testing) and Windows (production)
 
-ffmpeg + node (brew, vp9 + videotoolbox verified), Python deps in `.venv/` (yt-dlp, pillow, numpy,
-faster-whisper, av<16), HyperFrames + headless Chrome, key templates in `~/.config/umf/*.env` (chmod 600).
-If rebuilding elsewhere: `brew install ffmpeg node python@3.12`, create a venv, `pip install yt-dlp pillow
-numpy faster-whisper "av<16"`, `npm i -g hyperframes && hyperframes browser ensure`.
+Same repo, same menu, same locked packages (`uv.lock`) on both:
+
+| | Mac | Windows |
+|---|---|---|
+| first time / repair | double-click `Setup Mac.command` | double-click `Setup.bat` |
+| start | `H Labs.command` | `H Labs.bat` |
+| update | menu 8 | menu 8 |
+
+Both setups put Python 3.12 + the exact packages into this folder (`runtime/`, `.venv/`), whatever Python the computer has.
+Mac extras: ffmpeg from Homebrew (`brew install ffmpeg-full` for burned-in captions), mlx-whisper + ocrmac (Apple Silicon).
+Settings for one computer only go into `config.local.json` (not in git). A new Python package: add it to `pyproject.toml`,
+run `uv lock` (`runtime/uv/uv lock`), commit both files - the next menu 8 installs it on every Mac and PC.
+Optional: `npm i -g hyperframes && hyperframes browser ensure` (Trial Tales motion labels).
 
 ## Captions, faces, court audio (added 2026-10-25)
 

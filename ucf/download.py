@@ -111,7 +111,9 @@ def describe(path):
                             "stream=codec_name,width,height,avg_frame_rate,bit_rate:format=bit_rate,duration",
                             "-of", "json", str(path)], capture_output=True, text=True)
         d = json.loads(r.stdout or "{}")
-        st, fo = (d.get("streams") or [{}])[0], d.get("format") or {}
+        if not d.get("streams"):
+            return "source: could not read the video stream", False
+        st, fo = d["streams"][0], d.get("format") or {}
         size = Path(path).stat().st_size
         dur = float(fo.get("duration") or 0)
         vbr = float(st.get("bit_rate") or 0) or (size * 8 / dur - 130_000 if dur else 0)   # webm/vp9 streams often have no bit_rate
