@@ -166,17 +166,75 @@ def _pass_a_once(cfg_a, prompt_a, stream_len, segs, ui, work, tag="", soft=False
             plan = B.extract_json(txt)
         except Exception as e:
             plan, errs = None, [f"Pass A: not valid JSON ({e})"]
-            msgs_a += [{"role": "assistant", "content": txt}, {"role": "user", "content": errs[0]}]
+            # only the LAST reply goes back (not every earlier round): on a 3-hour docket the growing conversation ran
+            # past the model's context and the repair was cut off (BTI5Ydgo7-E, 2026-11-03)
+            msgs_a = [msgs_a[0], {"role": "assistant", "content": txt}, {"role": "user", "content": errs[0]}]
             continue
         errs, _w = VAL.validate(plan, stream_len, segs, cfg_a)
+        if errs:
+            plan, errs = _autofix(plan, errs, stream_len, segs, cfg_a, ui)
         if not errs:
             break
         ui(f"  validator: {len(errs)} problem(s) -> sending back")
         for e in errs[:4]:
             ui("    - " + str(e)[:150])
-        msgs_a += [{"role": "assistant", "content": txt},
-                   {"role": "user", "content": "The validator rejected this plan. Fix EVERY item and return the "
-                    "COMPLETE corrected JSON (same schema):\n- " + "\n- ".join(errs[:40])}]
+        msgs_a = [msgs_a[0], {"role": "assistant", "content": json.dumps(plan, ensure_ascii=False)},
+                  {"role": "user", "content": "The validator rejected this plan. Fix EVERY item and return the "
+                   "COMPLETE corrected JSON (same schema):\n- " + "\n- ".join(errs[:40])}]
+    return plan, errs
+
+
+_COVER = re.compile(r"^coverage: (\d+:\d\d:\d\d)-(\d+:\d\d:\d\d) ")
+
+
+def _autofix(plan, errs, stream_len, segs, cfg_a, ui):
+    """Script fixes for the two stream-level mistakes the brain keeps making on long dockets, so no repair round is spent on them:
+    * overlapping cases: a docket case ends where the next one is called -> the earlier case's OUT moves to the next IN
+      (a 'case' that starts within 2:00 of the previous one is a duplicate and is dropped)
+    * an unexplained hole > 3:00 between cases -> classified as a NON-CASE gap (it is never part of a video anyway)
+    -> (plan, errs) - the fixed plan when it has fewer validator errors, else the plan unchanged."""
+    import copy
+    p = copy.deepcopy(plan)
+    notes = []
+    cs = []
+    for c in p.get("cases", []):
+        try:
+            cs.append((parse_tc(c["in"]), parse_tc(c["out"]), c))
+        except Exception:
+            continue
+    cs.sort(key=lambda x: x[0])
+    drop = set()
+    keep = []
+    for a, b, c in cs:
+        if keep:
+            pa, pb, pc = keep[-1]
+            if a < pb - 1:
+                if a - pa < 120:                                  # the same call-out twice: keep the longer one
+                    loser = c if (b - a) <= (pb - pa) else pc
+                    drop.add(id(loser))
+                    notes.append(f"dropped duplicate case {loser.get('name')} ({loser.get('in')})")
+                    if loser is pc:
+                        keep[-1] = (a, b, c)
+                    continue
+                pc["out"] = fmt_tc(a)
+                keep[-1] = (pa, a, pc)
+                notes.append(f"{pc.get('name')}: OUT moved to {fmt_tc(a, False)} (next case starts there)")
+        keep.append((a, b, c))
+    if drop:
+        p["cases"] = [c for c in p.get("cases", []) if id(c) not in drop]
+    e2, _w = VAL.validate(p, stream_len, segs, cfg_a)
+    holes = [m.groups() for m in (_COVER.match(str(e)) for e in e2) if m]
+    if holes:
+        p.setdefault("gaps", [])
+        for a, b in holes:
+            p["gaps"].append({"in": a, "out": b, "kind": "NON-CASE", "label": "unclassified (filled by the script)"})
+            notes.append(f"hole {a}-{b} marked NON-CASE")
+        e2, _w = VAL.validate(p, stream_len, segs, cfg_a)
+    def stream_level(es):                       # errors that are not about one case (those a script fix or salvage can handle)
+        return sum(1 for e in es if not _CASE_ERR.match(str(e)))
+    if notes and (stream_level(e2), len(e2)) < (stream_level(errs), len(errs)):
+        ui(f"  script fixed {len(notes)} thing(s): " + "; ".join(notes[:4]) + (" ..." if len(notes) > 4 else ""))
+        return p, e2
     return plan, errs
 
 
@@ -194,6 +252,14 @@ def _pass_a_loop(cfg_a, prompt_a, stream_len, segs, ui, work, tag=""):
             return plan, []
         if plan is not None and (best is None or len(errs) < len(best[1])):
             best = (plan, errs)
+        if plan is not None and not last:
+            # only a few cases still wrong: set those aside now instead of spending another full attempt (~10 min on a long docket)
+            saved = _salvage_cases(plan, errs, stream_len, segs, cfg_a, lambda *m: None)
+            if saved is not None:
+                aside = sum(1 for c in saved.get("cases", []) if c.get("needs_review"))
+                used = sum(1 for c in plan.get("cases", []) if c.get("status") == "used")
+                if aside <= max(1, int(0.2 * used)):
+                    return _salvage_cases(plan, errs, stream_len, segs, cfg_a, ui), []
     if best:
         saved = _salvage_cases(best[0], best[1], stream_len, segs, cfg_a, ui)
         if saved is not None:
@@ -276,7 +342,7 @@ def _pass_b_once(c, pb, prompt_b, plan, judge, stream_len, segs, cfg, ui, work, 
             vobj = B.extract_json(txt).get("video", {})
         except Exception as e:
             vobj, berrs = None, [f"Pass B: not valid JSON ({e})"]
-            msgs_b += [{"role": "assistant", "content": txt}, {"role": "user", "content": berrs[0]}]
+            msgs_b = [msgs_b[0], {"role": "assistant", "content": txt}, {"role": "user", "content": berrs[0]}]
             continue
         probe = {"n": c["rank"], "schema": "v10", **vobj, "case_ids": [c["id"]], "bridges": vobj.get("bridges", [])}
         _fill_titles(probe)          # title/backup_title exist in the final plan, so check them here (thumbnail rule)
@@ -297,8 +363,8 @@ def _pass_b_once(c, pb, prompt_b, plan, judge, stream_len, segs, cfg, ui, work, 
         if not berrs:
             break
         ui(f"  validator: {len(berrs)} problem(s) -> sending back (first: {berrs[0][:110]})")
-        msgs_b += [{"role": "assistant", "content": txt},
-                   {"role": "user", "content": "The validator rejected this video. Fix EVERY item and return the "
+        msgs_b = [msgs_b[0], {"role": "assistant", "content": txt},
+                  {"role": "user", "content": "The validator rejected this video. Fix EVERY item and return the "
                     "COMPLETE corrected {\"video\": {...}} JSON:\n- " + "\n- ".join(berrs[:40])}]
     return vobj, berrs
 

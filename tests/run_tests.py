@@ -1332,6 +1332,46 @@ def t36_template_menu():
     return "template -> edited videos + mode; last entry -> clips only for a chosen channel; no sticky clips"
 
 
+def t38_long_docket_autofix():
+    """3-hour docket (BTI5Ydgo7-E, 2026-11-03): overlaps + unexplained holes are fixed by the script, not by repair rounds;
+    a repair round sends only the latest plan (the growing conversation overflowed the model)."""
+    from ucf import mode_all as MA
+    from ucf.timeutil import parse_tc, fmt_tc
+
+    def fake_validate(plan, sl, segs, cfg):                        # the two stream-level rules, same messages as validate.py
+        E, sp = [], sorted((parse_tc(c["in"]), parse_tc(c["out"]), c["id"]) for c in plan["cases"])
+        for (a1, b1, i1), (a2, b2, i2) in zip(sp, sp[1:]):
+            if a2 < b1 - 1:
+                E.append(f"cases {i1} and {i2} overlap ({fmt_tc(a2)} < {fmt_tc(b1)})")
+        allsp = sorted([(a, b) for a, b, _ in sp] + [(parse_tc(g["in"]), parse_tc(g["out"])) for g in plan.get("gaps", [])])
+        cur = 0.0
+        for a, b in allsp + [(sl, sl)]:
+            if a - cur > 180:
+                E.append(f"coverage: {fmt_tc(cur)}-{fmt_tc(a)} (x) is neither a case nor a classified GAP (...)")
+            cur = max(cur, b)
+        return E, []
+    plan = {"cases": [{"id": 1, "name": "A", "status": "used", "in": "0:00:00", "out": "0:40:00"},
+                      {"id": 2, "name": "B", "status": "used", "in": "0:30:00", "out": "0:45:00"},      # overlaps A
+                      {"id": 3, "name": "B again", "status": "used", "in": "0:30:30", "out": "0:35:00"},  # duplicate call-out
+                      {"id": 4, "name": "C", "status": "used", "in": "0:55:00", "out": "1:00:00"}],   # 10-min hole before
+            "gaps": []}
+    orig = MA.VAL.validate
+    MA.VAL.validate = fake_validate
+    try:
+        errs = fake_validate(plan, 3600, [], {})[0]
+        fixed, e2 = MA._autofix(plan, errs, 3600, [], {}, lambda *a: None)
+    finally:
+        MA.VAL.validate = orig
+    assert errs and not e2, (errs, e2)
+    by = {c["id"]: c for c in fixed["cases"]}
+    assert by[1]["out"] == "0:30:00" and 3 not in by and fixed["gaps"][0]["kind"] == "NON-CASE", fixed
+    assert plan["cases"][0]["out"] == "0:40:00", "the original plan is not changed"
+    import inspect
+    src = inspect.getsource(MA._pass_a_once)
+    assert "msgs_a = [msgs_a[0]" in src and "msgs_a +=" not in src, "repair rounds must send only the latest plan"
+    return "overlap trimmed, duplicate dropped, hole classified - 0 errors left for Hive; repairs send only the latest plan"
+
+
 def t25_nvenc_levels():
     """An old GPU/driver that rejects the best NVENC options gets the next simpler set; one that rejects all falls back to x264."""
     from ucf import render
@@ -1402,6 +1442,7 @@ def main():
     check(34, "bulk queue", t34_bulk_queue)
     check(35, "render cache invalidation", t35_render_cache)
     check(36, "template menu (clips only is its own entry)", t36_template_menu)
+    check(38, "long docket: script fixes overlaps / holes", t38_long_docket_autofix)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))
