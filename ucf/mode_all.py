@@ -175,7 +175,8 @@ def _pass_a_once(cfg_a, prompt_a, stream_len, segs, ui, work, tag="", soft=False
             plan, errs = _autofix(plan, errs, stream_len, segs, cfg_a, ui)
         if not errs:
             break
-        ui(f"  validator: {len(errs)} problem(s) -> sending back")
+        more = rnd < int(cfg_a["max_repair_rounds"])
+        ui(f"  validator: {len(errs)} problem(s)" + (" -> sending back" if more else " left after the last repair round"))
         for e in errs[:4]:
             ui("    - " + str(e)[:150])
         msgs_a = [msgs_a[0], {"role": "assistant", "content": json.dumps(plan, ensure_ascii=False)},
