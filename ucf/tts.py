@@ -31,8 +31,13 @@ def _ai33(text, out_wav, cfg, tmp):
     txt = tmp / "vo.txt"
     txt.write_text(text, encoding="utf-8")
     mp3 = tmp / "vo.mp3"
-    subprocess.run([sys.executable, str(script), "tts", "--voice", cfg["ai33_voice"], "--text-file", str(txt),
-                    "--out", str(mp3)], check=True, timeout=300)
+    r = subprocess.run([sys.executable, str(script), "tts", "--voice", cfg["ai33_voice"], "--text-file", str(txt),
+                        "--out", str(mp3)], capture_output=True, text=True, timeout=900)   # 900: room for the network retries
+    if r.stdout:
+        print(r.stdout.rstrip(), flush=True)
+    if r.returncode != 0:
+        raise RuntimeError((r.stderr or r.stdout or "").strip().splitlines()[-1][:300] if (r.stderr or r.stdout).strip()
+                           else f"exit {r.returncode}")
     _to_wav(mp3, out_wav)
 
 
@@ -65,6 +70,19 @@ PROVIDERS = {"ai33": _ai33, "voicestudio": _voicestudio, "say": _say, "dummy": _
 
 
 def synth(text, cache_dir, cfg):
+    """One voice line -> wav. A network blip (ai33 not reachable) gets one more round after a short wait before giving up."""
+    import time
+    try:
+        return _synth_once(text, cache_dir, cfg)
+    except RuntimeError as e:
+        if not any(k in str(e) for k in ("not reachable", "10060", "10054", "timed out", "Connection", "URLError")):
+            raise
+        print("  voice provider not reachable - waiting 30 s and trying once more...", flush=True)
+        time.sleep(30)
+        return _synth_once(text, cache_dir, cfg)
+
+
+def _synth_once(text, cache_dir, cfg):
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
     order = cfg.get("tts_order", ["ai33", "voicestudio", "say"])

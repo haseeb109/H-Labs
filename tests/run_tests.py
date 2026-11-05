@@ -1372,6 +1372,45 @@ def t38_long_docket_autofix():
     return "overlap trimmed, duplicate dropped, hole classified - 0 errors left for Hive; repairs send only the latest plan"
 
 
+def t39_network_and_failed_video():
+    """2026-11-05: an ai33 timeout killed a whole Trial Tales run. Now a read is retried after a network error, and a video
+    that still fails is reported while the next one is made (run_stream keeps the stream for a --only rerun)."""
+    import importlib.util
+    import os
+    import urllib.error
+    os.environ.setdefault("AI33_API_KEY", "test")
+    spec = importlib.util.spec_from_file_location("ai33_t", ROOT / "tools" / "ai33_tts.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    calls = []
+
+    class R:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b'{"status": "done"}'
+
+    def fake_open(req, timeout=0):
+        calls.append(1)
+        if len(calls) < 3:
+            raise urllib.error.URLError(TimeoutError("WinError 10060"))
+        return R()
+    m.urllib.request.urlopen, real = fake_open, m.urllib.request.urlopen
+    m.time.sleep, real_sleep = (lambda s: None), m.time.sleep
+    try:
+        got = m.req("/v1/task/x")
+    finally:
+        m.urllib.request.urlopen, m.time.sleep = real, real_sleep
+    assert got == {"status": "done"} and len(calls) == 3, (got, calls)
+    src = (ROOT / "run_stream.py").read_text(encoding="utf-8")
+    assert "failed_videos.append" in src and "going on with the next video" in src and "kept for the rerun" in src
+    return "ai33 read retried after 2 timeouts; a failing video is reported and the run goes on"
+
+
 def t25_nvenc_levels():
     """An old GPU/driver that rejects the best NVENC options gets the next simpler set; one that rejects all falls back to x264."""
     from ucf import render
@@ -1443,6 +1482,7 @@ def main():
     check(35, "render cache invalidation", t35_render_cache)
     check(36, "template menu (clips only is its own entry)", t36_template_menu)
     check(38, "long docket: script fixes overlaps / holes", t38_long_docket_autofix)
+    check(39, "network retry + one failed video does not stop the run", t39_network_and_failed_video)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))

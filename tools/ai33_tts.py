@@ -51,6 +51,13 @@ def req(path, method="GET", fields=None):
             if e.code in (429, 502, 503, 504) and method == "GET" and attempt < 11:
                 time.sleep(5); continue
             sys.exit(f"HTTP {e.code}: {body}")
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
+            # network blip (WinError 10060 timeout, reset, DNS): reads are retried with a growing wait (~5 min in all), so a
+            # short ai33 / internet hiccup no longer kills a whole render. A paid POST is not re-sent (it may have arrived).
+            if method == "GET" and attempt < 11:
+                print(f"  ai33 not reachable ({getattr(e, 'reason', e)}) - retrying in {5 + attempt * 5} s...", flush=True)
+                time.sleep(5 + attempt * 5); continue
+            sys.exit(f"ai33 not reachable: {getattr(e, 'reason', e)}")
 
 
 def find_url(obj):
@@ -125,8 +132,16 @@ def poll(tid, out, before=None):
     if not url:
         sys.exit(f"Done but no audio URL found: {json.dumps(st)[:800]}")
     dl = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(dl, timeout=300) as r, open(out, "wb") as f:
-        f.write(r.read())
+    for attempt in range(6):                     # the audio is already paid for: keep trying the download
+        try:
+            with urllib.request.urlopen(dl, timeout=300) as r, open(out, "wb") as f:
+                f.write(r.read())
+            break
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
+            if attempt == 5:
+                sys.exit(f"audio download failed: {getattr(e, 'reason', e)}")
+            print(f"  audio download failed ({getattr(e, 'reason', e)}) - retrying in {10 * (attempt + 1)} s...", flush=True)
+            time.sleep(10 * (attempt + 1))
     after = req("/v1/credits").get("credits")
     print(f"saved {out} | credits used: {before - after if isinstance(before, int) and isinstance(after, int) else '?'} | left: {after}")
 

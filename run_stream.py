@@ -314,6 +314,21 @@ def main():
                                                  video_path=video_path if video_path.exists() else None)
             except brain.BrainStop as e:
                 sys.exit(f"BRAIN STOPPED: {e}\n  replies: work/{sid}/brain_reply_*.txt")
+            if plan is not None and errs and str(errs[0]).startswith("no case reached"):
+                # not an error of the tool: this stream simply has no case long enough for its own video
+                mc = cfg.get("min_case_minutes", 8)
+                def _len(c):
+                    try:
+                        return parse_tc(c["out"]) - parse_tc(c["in"])
+                    except Exception:
+                        return 0
+                cs = sorted(plan.get("cases", []), key=lambda c: -_len(c))
+                ui(f"NOTHING TO MAKE: no case in this stream has {mc:.0f}:00 or more of hearing (rule for one video per case).")
+                for c in cs[:8]:
+                    ui(f"   {c.get('name', '?'):<28} {c.get('in')}-{c.get('out')}  {fmt_dur(_len(c)):>6}  {c.get('status')}"
+                       + (f"  ({c.get('reject_reason')})" if c.get("reject_reason") else ""))
+                ui("   -> try the 30 min / 1 hour mode (several short cases in one video), or another stream.")
+                sys.exit(0 if a.queued else 2)
             if plan is None or errs:
                 sys.exit(f"mode-all plan failed: {errs[:3] if errs else 'no plan'} - see work/{sid}/brain_reply_A_*.txt")
             save_json(plan_path, plan)
@@ -447,7 +462,7 @@ def main():
         rn = (TTRenderer if cfg.get("_renderer", "tt") == "tt" else Renderer)(cfg, sources, root)
     from ucf.render import _HW
     ui(f"encoder: {rn.enc}  |  decode: {('GPU (' + _HW['name'] + ')') if _HW['name'] else 'CPU'}")
-    summary, rows = [], []
+    summary, rows, failed_videos = [], [], []
     for v in plan["videos"]:
         if only and v["n"] not in only:
             continue
@@ -455,52 +470,61 @@ def main():
         prefix = f"{v.get('rank', v['n']):02d}" if mode == "all" else f"Video_{v['n']:02d}"
         folder = outroot / f"{prefix}_{safe_slug(lead['name'], 24)}"
         folder.mkdir(exist_ok=True)
-        ui(f"VIDEO {v['n']}: {[by_id[i]['name'] for i in v['case_ids']]}")
-        CLOCK.stage(f"video {v['n']} render")
-        _t_video = time.time()
-        rn.log = []
-        fresh_render_cache(folder, cfg, v, [by_id[i] for i in v["case_ids"]])
-        res = rn.render_video(plan, v, folder, work / "tts", ui)
-        wm_text, wm_err = None, None
         try:
-            from ucf import watermark as WM
-            wm_text = WM.apply_in_place(res["final"], cfg, f"{sid}:{v['n']}", rn.enc, ui)   # channel name, 25%, moving; same file name
-        except Exception as e:                       # never lose the render over a watermark problem, but flag it
-            wm_err = str(e).splitlines()[0][:160] if str(e) else repr(e)
-            ui(f"  WATERMARK FAILED: {wm_err}  (video.mp4 is the un-watermarked render)")
-        thumb = rn.thumbnail(plan, v, folder)
-        tl = res["timeline"]
-        (folder / "edit_sheet.txt").write_text(sheets.edit_sheet(plan, v, tl, res["durs"]), encoding="utf-8")
-        md, chs = sheets.metadata(plan, v, tl, cfg, url)
-        (folder / "metadata.txt").write_text(md, encoding="utf-8")
-        rn.write_footage_log(folder / "footage_log.csv")
-        rn.contact_sheet(res["final"], res["rows"], folder / "contact_sheet.jpg")
-        qc = rn.qc(res["final"], res["measured_total"])
-        if res.get("ai_clips"):
-            qc["ai_clip_seconds"] = res["ai_clips"]
-            qc["ai_clips_ok"] = max(res["ai_clips"]) <= cfg.get("vo_clip_max", 18.0)
-            qc["ok"] = qc["ok"] and qc["ai_clips_ok"]
-        qc["chapters"] = [(fmt_tc(o, False), l) for o, l in chs]
-        qc["watermark"] = wm_text or False
-        if wm_err:
-            qc["ok"] = False
-            qc["note"] = "watermark failed: " + wm_err
-        if chs and chs[-1][0] > res["measured_total"] - 60:
-            qc["ok"] = False
-            qc["note"] = "a chapter sits in the final 60 s"
-        qc["processing_seconds"] = round(time.time() - _t_video)
-        save_json(folder / "qc.json", qc)
-        save_json(folder / "video_plan.json", {"video": v, "cases": [by_id[i] for i in v["case_ids"]]})
-        log = load_json(state / "used_cases.json", [])
-        log.append({"stream_id": sid, "cause_no": lead.get("cause_no", ""), "name": lead.get("name", ""),
-                    "in": lead.get("in", ""), "out": lead.get("out", ""), "style": cfg["style"],
-                    "mode": cfg.get("mode", ""), "folder": folder.name, "date": time.strftime("%Y-%m-%d")})
-        save_json(state / "used_cases.json", log)
-        shutil.rmtree(folder / "_work" / "frames", ignore_errors=True)
-        ui(f"  done: {res['final']}  {fmt_dur(res['measured_total'])}  QC {'OK' if qc['ok'] else 'CHECK'}  {qc['loudness_lufs']} LUFS"
-           f"  (took {CLOCK.hms(qc['processing_seconds'])})")
-        summary.append((v["n"], folder.name, res["measured_total"], qc["ok"]))
-        rows.append((v["n"], folder.name, res["measured_total"], qc["ok"], v, qc))
+            ui(f"VIDEO {v['n']}: {[by_id[i]['name'] for i in v['case_ids']]}")
+            CLOCK.stage(f"video {v['n']} render")
+            _t_video = time.time()
+            rn.log = []
+            fresh_render_cache(folder, cfg, v, [by_id[i] for i in v["case_ids"]])
+            res = rn.render_video(plan, v, folder, work / "tts", ui)
+            wm_text, wm_err = None, None
+            try:
+                from ucf import watermark as WM
+                wm_text = WM.apply_in_place(res["final"], cfg, f"{sid}:{v['n']}", rn.enc, ui)   # channel name, 25%, moving; same file name
+            except Exception as e:                       # never lose the render over a watermark problem, but flag it
+                wm_err = str(e).splitlines()[0][:160] if str(e) else repr(e)
+                ui(f"  WATERMARK FAILED: {wm_err}  (video.mp4 is the un-watermarked render)")
+            thumb = rn.thumbnail(plan, v, folder)
+            tl = res["timeline"]
+            (folder / "edit_sheet.txt").write_text(sheets.edit_sheet(plan, v, tl, res["durs"]), encoding="utf-8")
+            md, chs = sheets.metadata(plan, v, tl, cfg, url)
+            (folder / "metadata.txt").write_text(md, encoding="utf-8")
+            rn.write_footage_log(folder / "footage_log.csv")
+            rn.contact_sheet(res["final"], res["rows"], folder / "contact_sheet.jpg")
+            qc = rn.qc(res["final"], res["measured_total"])
+            if res.get("ai_clips"):
+                qc["ai_clip_seconds"] = res["ai_clips"]
+                qc["ai_clips_ok"] = max(res["ai_clips"]) <= cfg.get("vo_clip_max", 18.0)
+                qc["ok"] = qc["ok"] and qc["ai_clips_ok"]
+            qc["chapters"] = [(fmt_tc(o, False), l) for o, l in chs]
+            qc["watermark"] = wm_text or False
+            if wm_err:
+                qc["ok"] = False
+                qc["note"] = "watermark failed: " + wm_err
+            if chs and chs[-1][0] > res["measured_total"] - 60:
+                qc["ok"] = False
+                qc["note"] = "a chapter sits in the final 60 s"
+            qc["processing_seconds"] = round(time.time() - _t_video)
+            save_json(folder / "qc.json", qc)
+            save_json(folder / "video_plan.json", {"video": v, "cases": [by_id[i] for i in v["case_ids"]]})
+            log = load_json(state / "used_cases.json", [])
+            log.append({"stream_id": sid, "cause_no": lead.get("cause_no", ""), "name": lead.get("name", ""),
+                        "in": lead.get("in", ""), "out": lead.get("out", ""), "style": cfg["style"],
+                        "mode": cfg.get("mode", ""), "folder": folder.name, "date": time.strftime("%Y-%m-%d")})
+            save_json(state / "used_cases.json", log)
+            shutil.rmtree(folder / "_work" / "frames", ignore_errors=True)
+            ui(f"  done: {res['final']}  {fmt_dur(res['measured_total'])}  QC {'OK' if qc['ok'] else 'CHECK'}  {qc['loudness_lufs']} LUFS"
+               f"  (took {CLOCK.hms(qc['processing_seconds'])})")
+            summary.append((v["n"], folder.name, res["measured_total"], qc["ok"]))
+            rows.append((v["n"], folder.name, res["measured_total"], qc["ok"], v, qc))
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:                      # one broken video must not cost the others (2026-11-05: an ai33 timeout)
+            import traceback
+            traceback.print_exc()
+            why = (str(e).strip().splitlines() or [repr(e)])[-1][:200]
+            ui(f"  VIDEO {v['n']} FAILED: {why} - going on with the next video (rerun later: --only {v['n']})")
+            failed_videos.append((v['n'], folder.name, why))
     CLOCK.stage("report")
     carry_txt = ["CARRIED FORWARD (state/carry_forward.json): " + (brain.carried_text(carry) if carry else "none")]
     if mode == "all":
@@ -508,13 +532,16 @@ def main():
         from ucf import mode_all
         mode_all.write_ranking(plan, outroot, cfg, sid)
     rep = [f"RUN REPORT {sid} - {time.strftime('%Y-%m-%d %H:%M')}", ""] + \
-          [f"Video {n}: {f}  {fmt_dur(d)}  QC {'OK' if ok else 'CHECK'}" for n, f, d, ok in summary] + [""] + carry_txt
+          [f"Video {n}: {f}  {fmt_dur(d)}  QC {'OK' if ok else 'CHECK'}" for n, f, d, ok in summary] + \
+          [f"Video {n}: {f}  FAILED - {why}  (rerun only this one: --only {n})" for n, f, why in failed_videos] + [""] + carry_txt
     ulines, ut = brain.usage_summary()
     brain.save_usage(outroot / "usage.json")
     if ut.get("cost") is not None and summary:
         ulines.append(f"  per video  ${ut['cost'] / len(summary):.2f}  ({len(summary)} videos)")
     rep += [""] + ulines
-    rep += [""] + CLOCK.lines(stream_len, len(summary), "completed" if all(ok for *_, ok in summary) else "completed, some QC CHECK")
+    status = (f"{len(failed_videos)} video(s) FAILED" if failed_videos
+              else "completed" if all(ok for *_, ok in summary) else "completed, some QC CHECK")
+    rep += [""] + CLOCK.lines(stream_len, len(summary), status)
     CLOCK.history(state / "run_history.csv", stream_id=sid, style=cfg["style"], mode=mode, encoder=rn.enc,
                   stream_min=round(stream_len / 60, 1), videos=len(summary), qc_ok=sum(1 for *_, ok in summary if ok),
                   cost_usd=round(ut.get("cost") or 0, 3))
@@ -529,10 +556,17 @@ def main():
     n_rev = sum(1 for c in plan.get("cases", []) if c.get("needs_review"))
     if cfg.get("notify_when_done", True):
         FINISH.notify("H Labs - done", f"{sid}: {len(summary)} videos ({n_ok} QC OK"
-                      + (f", {n_rev} need review" if n_rev else "") + f") in {CLOCK.hms(CLOCK.total())}", ok=n_ok == len(summary))
+                      + (f", {len(failed_videos)} FAILED" if failed_videos else "")
+                      + (f", {n_rev} need review" if n_rev else "") + f") in {CLOCK.hms(CLOCK.total())}",
+                      ok=n_ok == len(summary) and not failed_videos)
     if cfg.get("open_output_after_run", True):
         FINISH.open_folder(outroot)
-    FINISH.cleanup(cfg, work, outroot, a.video_file, ui)
+    if failed_videos:
+        ui(f"downloaded stream kept for the rerun ({len(failed_videos)} video(s) failed) - cleanup skipped")
+    else:
+        FINISH.cleanup(cfg, work, outroot, a.video_file, ui)
+    if failed_videos and not summary:
+        sys.exit(1)                                # nothing was made: a bulk queue counts this stream as failed
 
 
 def clips_output(plan, plan_path, work, state, sid, upload, url, video_path, segs, cfg, mode, only, a):
@@ -558,7 +592,13 @@ def clips_output(plan, plan_path, work, state, sid, upload, url, video_path, seg
         ui(f"CLIP {v.get('rank', v['n'])}: {case['name']}")
         CLOCK.stage(f"clip {v.get('rank', v['n'])}")
         t0 = time.time()
-        res = CLIPS.make(plan, v, case, segs, video_path, folder, cfg, enc, ui, url)
+        try:
+            res = CLIPS.make(plan, v, case, segs, video_path, folder, cfg, enc, ui, url)
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:                       # one broken clip must not cost the others
+            ui(f"  CLIP {v.get('rank', v['n'])} FAILED: {(str(e).strip().splitlines() or [repr(e)])[-1][:200]} - going on")
+            continue
         qc = dict(res["qc"], processing_seconds=round(time.time() - t0))
         save_json(folder / "qc.json", qc)
         ui(f"  done: {res['final']}  {fmt_dur(res['total'])}  (took {CLOCK.hms(qc['processing_seconds'])})")
