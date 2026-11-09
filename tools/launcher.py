@@ -313,8 +313,13 @@ def doctor(pause=True):
         try:
             __import__(mod)
             ok(f"{mod} ({why})")
-        except Exception:
-            (bad if mod in ("yt_dlp", "PIL", "numpy", "playwright") else warn)(f"{mod} missing ({why})")
+        except Exception as e:
+            msg = str(e)
+            if "Application Control" in msg or "blocked" in msg.lower():
+                bad(f"{mod} BLOCKED by Windows Smart App Control ({why}) - turn it off: Windows Security -> App & browser control "
+                    "-> Smart App Control settings -> Off, then run Setup.bat again")
+            else:
+                (bad if mod in ("yt_dlp", "PIL", "numpy", "playwright") else warn)(f"{mod} missing ({why}): {msg[:80]}")
     try:
         from playwright.sync_api import sync_playwright
         with sync_playwright() as p:

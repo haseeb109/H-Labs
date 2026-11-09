@@ -175,12 +175,15 @@ function Sync-Venv {
     }
     if ($LASTEXITCODE -ne 0) { Fail "installing the Python packages failed (see above)" }
     Set-Content -Path $venvMark -Value "uv" -Encoding Ascii
+    Write-Host "  newest yt-dlp (YouTube changes often) ..."
+    & $uv pip install --no-config --python $py --upgrade "yt-dlp[default]"   # --no-config: the package date cutoff in pyproject must not hold yt-dlp back
+    if ($LASTEXITCODE -ne 0) { Fail "installing yt-dlp failed" }
 }
 
 function Test-Imports {
     # -> "" when Python + the main packages load, else the error text
     $old = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-    $out = & $py -c "import socket, ssl, ctypes, sqlite3, numpy, PIL.Image, av; print('IMPORT-OK')" 2>&1 | Out-String
+    $out = & $py -c "import socket, ssl, ctypes, sqlite3, unicodedata, numpy, PIL.Image, av, yt_dlp, Cryptodome.Cipher.AES; print('IMPORT-OK')" 2>&1 | Out-String
     $ErrorActionPreference = $old
     if ($out -match "IMPORT-OK") { return "" } else { return $out }
 }
@@ -224,14 +227,14 @@ if ($why -and -not $sysPy -and ($why -match "Application Control|blocked")) {
 }
 if ($why) {
     if ($why -match "Application Control|blocked") {
-        Fail ("Windows Smart App Control still blocks Python packages on this PC. Turn it off: Windows Security -> App & browser control " +
-              "-> Smart App Control settings -> Off (it cannot be switched back on without resetting Windows), or ask your IT. Then run Setup.bat again.")
+        Write-Host ""
+        Write-Host $why
+        Fail ("Windows Smart App Control blocks Python package files on this PC (no signed version of them exists, so no setup can work around it). " +
+              "Turn it off: Windows Security -> App & browser control -> Smart App Control settings -> Off " +
+              "(it cannot be switched back on without resetting Windows), or ask your IT. Then run Setup.bat again.")
     }
     Fail ("Python does not start correctly:`n" + $why)
 }
-Write-Host "  newest yt-dlp (YouTube changes often) ..."
-& $uv pip install --no-config --python $py --upgrade "yt-dlp[default]"   # --no-config: the package date cutoff in pyproject must not hold yt-dlp back
-if ($LASTEXITCODE -ne 0) { Fail "installing yt-dlp failed" }
 Ok "python $(& $py -c "import platform; print(platform.python_version())")"
 
 # ---- 3. graphics browser ----
