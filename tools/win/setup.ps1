@@ -157,14 +157,78 @@ if (-not (Test-Path (Join-Path $Root ".git")) -and -not $NoPrompt) {
 # ---- 2. Python + locked packages ----
 Step "Python 3.12 + packages from uv.lock (first time: a few minutes)"
 $venvMark = Join-Path $Root ".venv\.hlabs-uv"
+$py = Join-Path $Root ".venv\Scripts\python.exe"
+# Windows Smart App Control / Application Control blocks the unsigned files of the Python that uv downloads
+# ("DLL load failed while importing _socket: An Application Control policy has blocked this file"). On such a PC the venv is
+# built on the SIGNED python.org Python 3.12 instead; runtime\python-signed.txt remembers that for every later update.
+$sysMark = Join-Path $RT "python-signed.txt"
+$sysPy = $null
+if (Test-Path $sysMark) { $sysPy = (Get-Content $sysMark -Raw).Trim(); if (-not (Test-Path $sysPy)) { $sysPy = $null } }
+
+function Sync-Venv {
+    if ($sysPy) {
+        $env:UV_PYTHON_PREFERENCE = "only-system"
+        & $uv sync --frozen --inexact --project $Root --python $sysPy
+    } else {
+        $env:UV_PYTHON_PREFERENCE = "only-managed"
+        & $uv sync --frozen --inexact --project $Root
+    }
+    if ($LASTEXITCODE -ne 0) { Fail "installing the Python packages failed (see above)" }
+    Set-Content -Path $venvMark -Value "uv" -Encoding Ascii
+}
+
+function Test-Imports {
+    # -> "" when Python + the main packages load, else the error text
+    $old = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    $out = & $py -c "import socket, ssl, ctypes, sqlite3, numpy, PIL.Image, av; print('IMPORT-OK')" 2>&1 | Out-String
+    $ErrorActionPreference = $old
+    if ($out -match "IMPORT-OK") { return "" } else { return $out }
+}
+
+function Find-SignedPython {
+    $c = @()
+    try { $p = & py -3.12 -c "import sys; print(sys.executable)" 2>$null; if ($LASTEXITCODE -eq 0 -and $p) { $c += ([string]$p).Trim() } } catch { }
+    $c += (Join-Path $env:LOCALAPPDATA "Programs\Python\Python312\python.exe")
+    $c += (Join-Path $env:ProgramFiles "Python312\python.exe")
+    foreach ($x in $c) {
+        if ($x -and (Test-Path $x) -and ($x -notmatch "WindowsApps") -and (-not $x.StartsWith($Root))) { return $x }
+    }
+    return $null
+}
+
 if ((Test-Path (Join-Path $Root ".venv")) -and -not (Test-Path $venvMark)) {
     Write-Host "  replacing the old .venv (made by the previous installer) with a locked one"
     Remove-Item (Join-Path $Root ".venv") -Recurse -Force
 }
-& $uv sync --frozen --inexact --project $Root
-if ($LASTEXITCODE -ne 0) { Fail "installing the Python packages failed (see above)" }
-Set-Content -Path $venvMark -Value "uv" -Encoding Ascii
-$py = Join-Path $Root ".venv\Scripts\python.exe"
+Sync-Venv
+$why = Test-Imports
+if ($why -and -not $sysPy -and ($why -match "Application Control|blocked")) {
+    Warn "Windows Smart App Control blocks the downloaded Python - switching to the signed python.org Python 3.12"
+    $sysPy = Find-SignedPython
+    if (-not $sysPy) {
+        if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+            Fail "install Python 3.12 from python.org (Windows installer, 'Install for me only'), then run Setup.bat again"
+        }
+        Write-Host "  installing Python 3.12 from python.org (signed) with winget ..."
+        $old = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+        & winget install -e --id Python.Python.3.12 --scope user --silent --accept-package-agreements --accept-source-agreements
+        $ErrorActionPreference = $old
+        $sysPy = Find-SignedPython
+        if (-not $sysPy) { Fail "Python 3.12 could not be installed - install it from python.org ('Install for me only'), then run Setup.bat again" }
+    }
+    Ok "signed Python: $sysPy"
+    Set-Content -Path $sysMark -Value $sysPy -Encoding Ascii
+    Remove-Item (Join-Path $Root ".venv") -Recurse -Force
+    Sync-Venv
+    $why = Test-Imports
+}
+if ($why) {
+    if ($why -match "Application Control|blocked") {
+        Fail ("Windows Smart App Control still blocks Python packages on this PC. Turn it off: Windows Security -> App & browser control " +
+              "-> Smart App Control settings -> Off (it cannot be switched back on without resetting Windows), or ask your IT. Then run Setup.bat again.")
+    }
+    Fail ("Python does not start correctly:`n" + $why)
+}
 Write-Host "  newest yt-dlp (YouTube changes often) ..."
 & $uv pip install --no-config --python $py --upgrade "yt-dlp[default]"   # --no-config: the package date cutoff in pyproject must not hold yt-dlp back
 if ($LASTEXITCODE -ne 0) { Fail "installing yt-dlp failed" }

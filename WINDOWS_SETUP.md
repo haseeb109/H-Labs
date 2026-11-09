@@ -25,6 +25,11 @@ everything (Python 3.12, ffmpeg 8.0.1, Node.js, Chromium, the Python packages fr
 **PC that was set up with the old installer (`install_windows.bat`):** do option 8 once (or `git pull`), then double-click `Setup.bat`.
 It replaces the old `.venv` automatically. Python / ffmpeg / Git installed earlier with winget can stay; the tool no longer uses them.
 
+**"An Application Control policy has blocked this file" (Windows Smart App Control):** run `Setup.bat` again. It notices
+the block and rebuilds the tool on the signed python.org Python 3.12 (installs it with winget if the PC has none). Only if
+Windows still blocks the packages after that, Smart App Control has to be switched off (Windows Security -> App & browser
+control -> Smart App Control settings -> Off; it cannot be switched back on without resetting Windows) - or ask IT.
+
 **Broken install / strange error after an update:** just run `Setup.bat` again. To start completely clean, delete the
 `runtime` and `.venv` folders first (your videos in `output\` and the keys are not touched).
 
