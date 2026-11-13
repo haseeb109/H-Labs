@@ -12,6 +12,7 @@ import argparse
 import atexit
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -203,6 +204,9 @@ def main():
     url = meta.get("url") or a.url or ""
     upload = meta.get("upload_date", "") or time.strftime("%Y%m%d")
     stream_len = meta.get("duration") or (parse_tc(a.stream_length) if a.stream_length else 0)
+    # court for the on-screen court line, from the stream title ("... /187TH DISTRICT COURT/ ...") - never a judge's name
+    _cm = re.search(r"(\d{1,3})\s*(st|nd|rd|th)\s+district\s+court", meta.get("title") or "", re.I)
+    cfg["court"] = f"{_cm.group(1)}{_cm.group(2).lower()} District Court" if _cm else cfg.get("court", "District Court")
     _WORK["stream_len"] = stream_len
 
     # ---------------- download ----------------
@@ -426,6 +430,12 @@ def main():
 
     # ---------------- render ----------------
     CLOCK.stage("render setup")
+    # owner rule 2026-11-13: voice-over + on-screen text say "the judge", never the judge's name (other judges' dockets too);
+    # titles / description / tags keep the name. A safety net on top of the prompt rule.
+    from ucf.judge_neutral import judge_names, neutralize
+    _jn = neutralize(plan, judge_names(plan.get("judge_name"), cfg.get("judge_name"), meta.get("title")))
+    if _jn:
+        ui(f"judge-neutral: {_jn} voice-over / on-screen text(s) now say 'the judge' instead of the name")
     only = {int(x) for x in a.only.split(",")} if a.only else None
     if cfg.get("output_kind") == "clips":
         return clips_output(plan, plan_path, work, state, sid, upload, url, video_path, segs, cfg, mode, only, a)

@@ -11,3 +11,5 @@ words, chapters per the v10 count rule, thumbnail 2-5 words not repeating the
 primary title). Titles follow TITLES CORE + TITLE RULES below. Overlays follow
 OVERLAY RULES below. Reply with ONE JSON object {"video": {...}} in a single
 ```json fence and nothing else.
+NEVER NAME THE JUDGE in hook (headline / spoken), vo_final, quiz or overlays: write
+"the judge". The channel covers many judges; only the 5 titles use the judge's name.

@@ -19,7 +19,7 @@ SOURCE FILE NAME:    {{SOURCE_FILE}}
 STREAM TOTAL LENGTH: {{STREAM_LENGTH}}
 CARRIED FORWARD FROM LAST BUILD: {{CARRIED}}
 
-Court: 187th District Court, Bexar County — Judge Stephanie Boyd
+Court: a Bexar County, Texas district court (the judge's name is in the stream title / transcript - titles only)
 Channel: {{CHANNEL_NAME}}
 
 ════════════════════════════════════════════════════════════════
@@ -133,6 +133,10 @@ with the same 22 words it had already used in VO-1.
 
 COUNT THE WORDS. Print the real count. A previous run wrote a
 22-word VO and labelled it 29.
+
+NEVER NAME THE JUDGE in a voiceover, the hook headline, an overlay, a
+card or the quiz: write "the judge" ("The judge reads his record").
+The channel covers many judges. Only the TITLES use the judge's name.
 
 VO may ONLY name cases that are IN THIS VIDEO. A previous run
 wrote a closing line about a defendant who had been rejected and
@@ -548,7 +552,7 @@ DESCRIPTION
 
 [3-4 lines on what happens, without the ruling]
 
-[if pending: "Judge Boyd rules on this case tomorrow. The
+[if pending: "The judge rules on this case tomorrow. The
 decision will be posted on this channel."]
 
 [a real search question on its own line]

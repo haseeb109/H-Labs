@@ -17,7 +17,7 @@
   },
   "intro_seconds": 6,
   "vo_final": {
-   "text": "A man with a 0.317 BAC while on parole for drunk driving now asks for treatment instead of prison. The prosecutor wants ten years. Judge Boyd reads his record out, year by year, from 1996 on. Can treatment beat a history like that? Watch to the end, and like and subscribe for more real courtroom stories."
+   "text": "A man with a 0.317 BAC while on parole for drunk driving now asks for treatment instead of prison. The prosecutor wants ten years. The judge reads his record out, year by year, from 1996 on. Can treatment beat a history like that? Watch to the end, and like and subscribe for more real courtroom stories."
   },
   "quiz": {
    "question": "How many DWIs did Salvador Garcia say he has?",

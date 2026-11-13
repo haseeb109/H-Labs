@@ -17,7 +17,7 @@
     "hook_min": 10.0,
     "hook_max": 15.0,
     "ai33_voice": "elevenlabs_z9ihBMCAnrOeGUbPDiwi",
-    "court_line": "187th District Court · Judge Stephanie Boyd · Bexar County, Texas",
+    "court_line": "{court} · Bexar County, Texas",
     "base_tags": [
       "court beacon tv",
       "judge boyd",

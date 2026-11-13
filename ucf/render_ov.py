@@ -278,7 +278,7 @@ class OVRenderer(TTRenderer):
         cfg = self.cfg
         name = c.get("headline_name") or f"State v. {c['name']}"
         kicker = f"CASE {n} · {(c.get('proceeding') or 'HEARING').upper()}"
-        sub = c.get("sub_line") or cfg.get("court_line", "187th District Court · Judge Stephanie Boyd · Bexar County, Texas")
+        sub = c.get("sub_line") or cfg.get("court_line", "{court} · Bexar County, Texas").replace("{court}", cfg.get("court", "District Court"))
         rows = [("THE DEFENDANT", _short(c.get("defendant_line") or c["name"], 60)),
                 ("THE CHARGE", _short(c.get("charge") or "", 70)),
                 ("THE QUESTION", _short(c.get("question") or "", 70))]

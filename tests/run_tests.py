@@ -1411,6 +1411,33 @@ def t39_network_and_failed_video():
     return "ai33 read retried after 2 timeouts; a failing video is reported and the run goes on"
 
 
+def t40_judge_neutral():
+    """Owner rule 2026-11-13: voice-over and on-screen text say "the judge", never a judge's name; titles keep the name."""
+    from ucf.judge_neutral import judge_names, neutralize
+    names = judge_names("Judge Boyd", "THURS., OCT 15, 2026/JUDGE STEPHANIE BOYD/187TH DISTRICT COURT/AFTERNOON DOCKET")
+    plan = {"judge_name": "Judge Boyd",
+            "videos": [{"hook": {"headline": "JUDGE BOYD SAYS NO", "spoken": ""}, "vo1": {"text": ""},
+                        "vo_final": {"text": "Judge Boyd read his record. Boyd's ruling? Subscribe for more."},
+                        "bridges": [{"text": "Then Judge Stephanie Boyd turned to the next file."}],
+                        "quiz": {"question": "What did Judge Boyd decide?", "options": {"A": "Boyd denied it"}, "answer": "A"},
+                        "titles": [{"text": "He Lied — Judge Boyd REFUSES"}], "title": "He Lied — Judge Boyd REFUSES"}],
+            "cases": [{"question": "Will Judge Boyd believe him?", "overlays": [{"text": "Judge Boyd asked about 2019", "evidence": "Judge Boyd"}],
+                       "phases": [{"evidence": "judge boyd calls the case"}]}]}
+    n = neutralize(plan, names)
+    v, c = plan["videos"][0], plan["cases"][0]
+    assert v["hook"]["headline"] == "THE JUDGE SAYS NO", v["hook"]
+    assert v["vo_final"]["text"] == "The judge read his record. The judge's ruling? Subscribe for more.", v["vo_final"]
+    assert v["bridges"][0]["text"] == "Then the judge turned to the next file."
+    assert "Boyd" not in v["quiz"]["question"] + v["quiz"]["options"]["A"] and "Boyd" not in c["question"]
+    assert c["overlays"][0]["text"] == "The judge asked about 2019"
+    assert "Boyd" in v["title"] and "Boyd" in v["titles"][0]["text"], "titles keep the judge's name"
+    assert c["overlays"][0]["evidence"] == "Judge Boyd" and "boyd" in c["phases"][0]["evidence"], "transcript evidence stays verbatim"
+    for st in ("court_beacon", "justice_served", "overruled", "trial_tales"):
+        txt = (ROOT / "styles" / st / "style.json").read_text(encoding="utf-8") + (ROOT / "styles" / st / "prompts" / "master_v9.md").read_text(encoding="utf-8")
+        assert "Judge Stephanie Boyd ·" not in txt and "NEVER NAME THE JUDGE" in txt, st
+    return f"{n} texts neutral ('the judge'), titles + transcript evidence unchanged, prompts + court lines without the name"
+
+
 def t25_nvenc_levels():
     """An old GPU/driver that rejects the best NVENC options gets the next simpler set; one that rejects all falls back to x264."""
     from ucf import render
@@ -1483,6 +1510,7 @@ def main():
     check(36, "template menu (clips only is its own entry)", t36_template_menu)
     check(38, "long docket: script fixes overlaps / holes", t38_long_docket_autofix)
     check(39, "network retry + one failed video does not stop the run", t39_network_and_failed_video)
+    check(40, "judge-neutral voice-over + on-screen text", t40_judge_neutral)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))

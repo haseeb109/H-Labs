@@ -3,6 +3,7 @@
 ════════════════════════════════════════════════════════════════
 For every used case write "overlays": a list of {"tc","kind","text","dur","ref_tc",
 "evidence"}. They appear in a bottom band that never covers faces.
+Overlay text never names the judge: write "the judge".
 
 HOW MANY. About one per 4.5 minutes of case time (a 9-minute case gets 2, a
 22-minute case gets 4-5). At least 3 minutes apart. Never in the first 40 seconds

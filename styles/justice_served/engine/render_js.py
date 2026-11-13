@@ -148,7 +148,7 @@ class JSRenderer(OVRenderer):
     def _case_info(self, plan, c, n):
         name = c.get("headline_name") or f"State v. {c['name']}"
         kicker = f"ROUND {n} · {(c.get('proceeding') or 'HEARING').upper()}"
-        sub = c.get("sub_line") or self.cfg.get("court_line", "187th District Court · Judge Stephanie Boyd · Bexar County, Texas")
+        sub = c.get("sub_line") or self.cfg.get("court_line", "{court} · Bexar County, Texas").replace("{court}", self.cfg.get("court", "District Court"))
         charge = c.get("charge") or ""
         if c.get("facing"):
             charge = f"{charge} · facing {c['facing']}" if charge else f"Facing {c['facing']}"

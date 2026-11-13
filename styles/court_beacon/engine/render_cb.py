@@ -284,7 +284,7 @@ class CBRenderer(OVRenderer):
     def _case_rows(self, c):
         return [("CHARGE", _short(c.get("charge") or "", 46)), ("FACING", _short(c.get("facing") or "", 46)),
                 ("HEARING", _short((c.get("proceeding") or c.get("what_it_is") or "").capitalize(), 46)),
-                ("COURT", "187th District, Judge Boyd")]
+                ("COURT", self.cfg.get("court", "District Court").replace(" Court", ""))]
 
     # ------------------------------------------------------------------ one video
     def render_video(self, plan, video, outdir, tts_cache, ui=print):
