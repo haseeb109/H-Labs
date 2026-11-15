@@ -18,7 +18,7 @@ from . import ov_gfx as G
 from . import ov_layout as L
 from . import tts
 from . import timeline as TL
-from .render import AENC, AUDIO_NORM, TS, court_audio, hwdec, probe_dur, run, run_progress, venc
+from .render import AENC, AUDIO_NORM, TS, court_audio, hwdec, join_segments, probe_dur, run, run_progress, still, venc
 from .render_tt import TTRenderer, _thumb
 from .timeutil import fmt_dur, fmt_tc, parse_tc
 
@@ -139,7 +139,7 @@ class OVRenderer(TTRenderer):
         return out
 
     def _compose_run(self, path, a, dr, geo, layers, t0, out, *, blur, wav, lead, wav_t0, fade_out, d_total, prog):
-        cmd = ["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-framerate", "30", "-t", f"{dr:.3f}", "-i", self.bg,
+        cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", self.bg,
                "-ss", f"{a:.3f}", "-t", f"{dr:.3f}", *hwdec(), "-i", path]
         nxt = 2
         widx = None
@@ -149,13 +149,13 @@ class OVRenderer(TTRenderer):
             cmd += ["-i", wav]
             widx = nxt
             nxt += 1
-        fc = []
+        fc = [still(0, dr, "bg")]                 # background + layers: decoded and converted once (render.still)
         n = len(geo["tiles"])
         if n == 1:
             fc.append("[1:v]fps=30[t0]")
         else:
             fc.append(f"[1:v]fps=30,split={n}" + "".join(f"[t{i}]" for i in range(n)))
-        cur = "0:v"
+        cur = "bg"
         for i, (src, dst) in enumerate(geo["tiles"]):
             cx, cy, cw, ch = L.cover_crop(src, dst)
             # optional per-style clean-up of soft Zoom footage: footage_pre runs before the upscale (denoise),
@@ -192,8 +192,8 @@ class OVRenderer(TTRenderer):
             fout = ly.get("fout", 0.0) if ly["e"] <= t0 + dr + 1e-6 and ly["e"] < d_total - 1e-6 else 0.0
             s0, e0 = max(s, 0.0), min(e, dr)
             cp, ox, oy = _crop_png(ly["png"])
-            cmd += ["-loop", "1", "-framerate", "30", "-t", f"{dr:.3f}", "-i", str(cp)]
-            chain = f"[{j}:v]format=rgba"
+            cmd += ["-i", str(cp)]
+            chain = still(j, dr, f"st{j}", "yuva420p") + f";[st{j}]null"
             if fin > 0:
                 chain += f",fade=t=in:st={s0:.3f}:d={fin:.2f}:alpha=1"
             if fout > 0:
@@ -206,9 +206,10 @@ class OVRenderer(TTRenderer):
             cur = f"o{j}"
             j += 1
         if prog:
-            cmd += ["-loop", "1", "-framerate", "30", "-t", f"{dr:.3f}", "-i", str(self.prog_png)]
+            cmd += ["-i", str(self.prog_png)]
             f0, f1 = prog
-            fc.append(f"[{cur}][{j}:v]overlay=x='-1920+1920*({f0:.5f}+({f1 - f0:.5f})*t/{dr:.3f})':y=1071:format=auto[o{j}]")
+            fc.append(still(j, dr, f"st{j}", "yuva420p"))
+            fc.append(f"[{cur}][st{j}]overlay=x='-1920+1920*({f0:.5f}+({f1 - f0:.5f})*t/{dr:.3f})':y=1071:format=auto[o{j}]")
             cur = f"o{j}"
             j += 1
         vtail = f",fade=t=out:st={max(0, dr - 0.9):.2f}:d=0.9" if fade_out else ""
@@ -498,8 +499,7 @@ class OVRenderer(TTRenderer):
         lst = work / "concat.txt"
         lst.write_text("".join(f"file '{p.resolve()}'\n" for _, p, _ in segfiles), encoding="utf-8")
         final = outdir / "video.mp4"
-        run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", lst, "-c:v", "copy",
-             "-af", f"loudnorm=I={cfg['loudness_lufs']}:TP=-1.5:LRA=11", *AENC, "-movflags", "+faststart", final])
+        join_segments(lst, final, cfg)
         real = {"hook": rows_[0]["dur"], "intro": rows_[1]["dur"], "recap": recap_durs, "final": fin_total}
         tcfg = dict(TL.DEFAULTS)
         tcfg.update({"cut_pad_out": cfg["cut_pad_out"], "vo_lead": lead, "vo_tail": tail, "style": "tt",

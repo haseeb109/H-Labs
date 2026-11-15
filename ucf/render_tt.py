@@ -15,6 +15,7 @@ Canvas is 1920x1080. The stream's two-up gallery (1280x360 band of a 1280x720 fr
 into a 1920x540 strip at y=270; top/bottom 270 px bands carry the fleur pattern, logo and labels.
 """
 import os
+import math
 import re
 import subprocess
 import sys
@@ -24,7 +25,7 @@ from PIL import Image, ImageDraw
 
 from . import cards, hf, tts
 from . import timeline as TL
-from .render import AENC, AUDIO_NORM, NORM, TS, Renderer, court_audio, hwdec, probe_dur, run, venc
+from .render import AENC, AUDIO_NORM, NORM, TS, Renderer, court_audio, hwdec, join_segments, probe_dur, run, still, venc
 from .timeutil import fmt_dur, fmt_tc, parse_tc
 
 ASSETS = Path(__file__).resolve().parent.parent / "styles" / "trial_tales" / "assets"   # module default; TTRenderer uses the active style pack
@@ -166,16 +167,18 @@ class TTRenderer(Renderer):
         others = [cl for cl in LAYOUTS if cl != "2up" and any(r[2] == cl for r in runs)]
         if not others:
             return f"[{src_label}]{base},setsar=1,fps=30[{out_label}]"
-        n = len(others) + 1
-        parts = [f"[{src_label}]split={n}" + "".join(f"[{tag}s{i}]" for i in range(n)),
-                 f"[{tag}s0]{base},setsar=1,fps=30[{tag}L0]"]
-        prev = f"{tag}L0"
-        for i, cl in enumerate(others, start=1):
-            en = "+".join(f"between(t,{t0:.2f},{t1:.2f})" for t0, t1, c in runs if c == cl)
-            parts.append(f"[{tag}s{i}]{LAYOUT_CHAIN[cl].format(t=f'{tag}{i}')},setsar=1,fps=30[{tag}L{i}]")
-            nxt = out_label if i == len(others) else f"{tag}M{i}"
-            parts.append(f"[{prev}][{tag}L{i}]overlay=0:0:enable='{en}'[{nxt}]")
-            prev = nxt
+        # One branch per RUN, cut to its own time (trim) and joined back in order (concat): every frame is cropped/scaled
+        # once, by the layout on screen. Before, every layout branch processed EVERY frame and an overlay switched
+        # between them (4 layouts = 3.2x the CPU, measured 2026-11-15).
+        n = len(runs)
+        # fps=30 BEFORE the split: at the end of a trimmed branch it would drop that branch's last frame (1 frame shift per switch)
+        parts = [f"[{src_label}]fps=30,split={n}" + "".join(f"[{tag}s{i}]" for i in range(n))]
+        for i, (t0, t1, cl) in enumerate(runs):
+            # frame numbers, not seconds: a frame belongs to the layout whose run it starts in (as the old overlay switch did)
+            f0, f1 = math.ceil(t0 * 30 - 1e-6), math.ceil(t1 * 30 - 1e-6)
+            cut = f"trim=start_frame={f0}" + (f":end_frame={f1}" if i < n - 1 else "")
+            parts.append(f"[{tag}s{i}]{cut},setpts=PTS-STARTPTS,{LAYOUT_CHAIN[cl].format(t=f'{tag}{i}')},setsar=1[{tag}L{i}]")
+        parts.append("".join(f"[{tag}L{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0[{out_label}]")
         return ";".join(parts)
 
     # ---------- overlays (HyperFrames -> transparent webm, else static PNG) ----------
@@ -226,39 +229,57 @@ class TTRenderer(Renderer):
         return off + ["-loop", "1", "-framerate", "30", "-t", f"{dur + delay:.3f}", "-i", ov]
 
     # ---------- segments ----------
-    def tt_cut(self, sname, a, b, out, bg, ov=None, ov_delay=0.0):
+    def _cards(self, cmd, chain, last, cards):
+        """Overlay cards inside a segment encode (was a separate pass over the whole video). cards = [(png, s, e, fin, fout)]
+        in segment time; fin / fout = this piece holds the card's real start / end (a card cut by a segment boundary does
+        not fade there). -> (chain, last label)."""
+        for k, (png, s, e, fin, fout) in enumerate(cards or []):
+            idx = sum(1 for x in cmd if x == "-i")
+            cmd += ["-i", str(png)]
+            d = e - s
+            fx = (["fade=in:st=0:d=0.5:alpha=1"] if fin else []) + ([f"fade=out:st={max(0.0, d - 0.5):.2f}:d=0.5:alpha=1"] if fout else [])
+            chain += (";" + still(idx, d + 1.0, f"cs{k}", "rgba") + f";[cs{k}]" + ",".join(fx + [f"setpts=PTS+{s:.3f}/TB"])
+                      + f"[cc{k}];[{last}][cc{k}]overlay=x=54:y={OVERLAY_Y}:eof_action=pass:enable='between(t,{s:.2f},{e:.2f})'[ck{k}]")
+            last = f"ck{k}"
+        return chain, last
+
+    def tt_cut(self, sname, a, b, out, bg, ov=None, ov_delay=0.0, cards=None):
         path, a, b = self.locate(sname, a, b)
         d = b - a
         if d <= 0.05:
             raise RuntimeError(f"empty cut {a}-{b}")
         runs = self.layout_runs(path, a, b)
-        cmd = ["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-framerate", "30", "-t", f"{d:.3f}", "-i", bg,
+        cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", bg,
                "-ss", f"{a:.3f}", "-t", f"{d:.3f}", *hwdec(), "-i", path]
-        chain = self.strip_chain("1:v", "f", runs) + f";[0:v][f]overlay=0:{STRIP_Y}:eof_action=pass[b]"
+        chain = (still(0, d, "bg") + ";" + self.strip_chain("1:v", "f", runs)
+                 + f";[bg][f]overlay=0:{STRIP_Y}:eof_action=pass[b]")
         last = "b"
         if ov:
             cmd += self._ov_input(ov, d, ov_delay)
             chain += f";[{last}][2:v]overlay=0:0:eof_action=pass:format=auto[b2]"
             last = "b2"
+        chain, last = self._cards(cmd, chain, last, cards)
         chain += f";[{last}]format=yuv420p[vout]"
         cmd += ["-filter_complex", chain, "-map", "[vout]", "-map", "1:a:0?", "-af", court_audio(self.cfg), "-t", f"{d:.3f}",
                 *venc(self.enc), *AENC, *TS, out]
         run(cmd)
         return out
 
-    def tt_recap(self, sname, blur_in, dur, wav, lead, out, fade_out=False):
+    def tt_recap(self, sname, blur_in, dur, wav, lead, out, fade_out=False, cards=None):
         """Blurred footage strip + AI voice. Original audio is muted so the narrator is clean."""
         path, blur_in, _ = self.locate(sname, max(0.0, blur_in), max(0.0, blur_in) + dur)
         runs = self.layout_runs(path, blur_in, blur_in + dur)
         lead_ms = int(lead * 1000)
         vf_tail = f",fade=t=out:st={dur - 0.9:.2f}:d=0.9" if fade_out else ""
         af_tail = f",afade=t=out:st={dur - 0.9:.2f}:d=0.9" if fade_out else ""
+        cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", self.bg_logo,
+               "-ss", f"{blur_in:.3f}", "-t", f"{dur:.3f}", *hwdec(), "-i", path, "-i", wav]
         fc = (self.strip_chain("1:v", "raw", runs) + ";[raw]scale=480:135,gblur=sigma=2.4,scale=1920:540:flags=bicubic[f];"
-              f"[0:v][f]overlay=0:{STRIP_Y}:eof_action=pass[b];[b]format=yuv420p{vf_tail}[v];"
-              f"[2:a]adelay={lead_ms}|{lead_ms},apad,{AUDIO_NORM}{af_tail}[a]")
-        run(["ffmpeg", "-y", "-loglevel", "error", "-loop", "1", "-framerate", "30", "-t", f"{dur:.3f}", "-i", self.bg_logo,
-             "-ss", f"{blur_in:.3f}", "-t", f"{dur:.3f}", *hwdec(), "-i", path, "-i", wav,
-             "-filter_complex", fc, "-map", "[v]", "-map", "[a]", "-t", f"{dur:.3f}", *venc(self.enc), *AENC, *TS, out])
+              f"{still(0, dur, 'bg')};[bg][f]overlay=0:{STRIP_Y}:eof_action=pass[b]")
+        fc, last = self._cards(cmd, fc, "b", cards)
+        fc += (f";[{last}]format=yuv420p{vf_tail}[v];"
+               f"[2:a]adelay={lead_ms}|{lead_ms},apad,{AUDIO_NORM}{af_tail}[a]")
+        run(cmd + ["-filter_complex", fc, "-map", "[v]", "-map", "[a]", "-t", f"{dur:.3f}", *venc(self.enc), *AENC, *TS, out])
         return out
 
     def tt_intro(self, out, workdir):
@@ -406,6 +427,41 @@ class TTRenderer(Renderer):
             self.tt_intro(p, work)
         seg("intro", p)
 
+        # ----- v10 overlay cards: scheduled BEFORE the cases are cut, so they are drawn inside the case encodes -----
+        # (the old way burned them in a second pass over the whole finished video). Same timeline + scheduler as before:
+        # every duration it needs (hook, intro, recaps, closing) is known at this point.
+        recap_est = [sum(probe_dur(w) + lead + tail for w in recap_clips[ids[i]]) for i in range(len(ids) - 1)]
+        fin_est = sum(probe_dur(w) + lead + tail for w in final_clips)
+        t_hook, t_intro = probe_dur(segfiles[0][1]), probe_dur(segfiles[1][1])
+        tcfg = dict(TL.DEFAULTS)
+        tcfg.update({"cut_pad_out": cfg["cut_pad_out"], "vo_lead": lead, "vo_tail": tail, "style": "tt",
+                     "wps": cfg.get("wps", 2.6), "final_min_hold": cfg.get("final_min_hold", 12.0)})
+        tl = TL.build(video, by_id, tcfg, {"hook": t_hook, "intro": t_intro, "recap": recap_est, "final": fin_est})
+        scheduled = []
+        try:
+            from . import overlay_sched as OS
+            if (self.cfg.get("overlays") or {}).get("enabled", True):
+                total = tl["total"] + cfg["cut_pad_in"]          # the first part of every case starts cut_pad_in earlier
+                busy = [(t_hook + t_intro + 0.3, t_hook + t_intro + 4.7)]
+                for cid in ids:
+                    scheduled += OS.schedule(by_id[cid], lambda tc, cid=cid: TL.src_to_out(tl, cid, tc), total, busy,
+                                             self.cfg, look=self.cfg.get("_look") or "tt")
+        except Exception as ex:  # noqa
+            ui("  overlays skipped:", ex)
+            scheduled = []
+        card_png = []
+        for n_, (_s, _e, o) in enumerate(scheduled):
+            card_png.append(self._overlay_card_png(o.get("kind", "fact"), o.get("text", ""), work / f"ov_card_{n_:02d}.png"))
+        t_at = [t_hook + t_intro]                         # where the next segment starts in the finished video
+
+        def cards_for(dur):
+            """The scheduled cards (or the piece of one) that fall inside the segment starting at t_at[0]."""
+            a0, b0, got = t_at[0], t_at[0] + dur, []
+            for png, (cs, ce, _o) in zip(card_png, scheduled):
+                if ce > a0 and cs < b0:
+                    got.append((png, max(cs, a0) - a0, min(ce, b0) - a0, cs >= a0, ce <= b0))
+            return got
+
         # ----- 3.. cases + recaps -----
         k = 2
         recap_durs = []
@@ -421,8 +477,9 @@ class TTRenderer(Renderer):
                     if j == 0:
                         kind, text = ("case_started", "") if i == 0 else ("nth", f"{hf.ordinal(i + 1)} Case")
                         ov = self.overlay(kind, text, LABEL_LEN, work)
-                    self.tt_cut(sname, a2, b, p, self.bg_logo, ov, LABEL_DELAY)
+                    self.tt_cut(sname, a2, b, p, self.bg_logo, ov, LABEL_DELAY, cards=cards_for(b - a2))
                 seg("case", p, case_id=cid, src=sname, a=a2, b=b)
+                t_at[0] += probe_dur(p)
                 k += 1
             if i < len(ids) - 1:
                 clips = recap_clips[cid]
@@ -433,8 +490,9 @@ class TTRenderer(Renderer):
                 for q, (w, dq) in enumerate(zip(clips, ds)):
                     p = work / f"{k:02d}_recap{i + 1}_{q}.mp4"
                     if not p.exists():
-                        self.tt_recap(sname, start + off, dq, w, lead, p)
+                        self.tt_recap(sname, start + off, dq, w, lead, p, cards=cards_for(dq))
                     seg("recap", p, case_id=cid, src=sname, a=start + off, b=start + off + dq)
+                    t_at[0] += probe_dur(p)
                     off += dq
                     k += 1
 
@@ -447,8 +505,10 @@ class TTRenderer(Renderer):
         for q, (w, dq) in enumerate(zip(final_clips, ds)):
             p = work / f"{k:02d}_final_{q}.mp4"
             if not p.exists():
-                self.tt_recap(srcname(last), start + off, dq, w, lead, p, fade_out=(q == len(final_clips) - 1))
+                self.tt_recap(srcname(last), start + off, dq, w, lead, p, fade_out=(q == len(final_clips) - 1),
+                              cards=cards_for(dq))
             seg("vo_final", p, case_id=ids[-1], src=srcname(last), a=start + off, b=start + off + dq)
+            t_at[0] += probe_dur(p)
             off += dq
             k += 1
 
@@ -464,34 +524,16 @@ class TTRenderer(Renderer):
         lst = work / "concat.txt"
         lst.write_text("".join(f"file '{p.resolve()}'\n" for _, p, _ in segfiles), encoding="utf-8")
         final = outdir / "video.mp4"
-        run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", lst, "-c:v", "copy",
-             "-af", f"loudnorm=I={cfg['loudness_lufs']}:TP=-1.5:LRA=11", *AENC, "-movflags", "+faststart", final])
+        join_segments(lst, final, cfg)
 
         real = {"hook": rows[0]["dur"], "intro": rows[1]["dur"], "recap": recap_durs, "final": fin_total}
-        tcfg = dict(TL.DEFAULTS)
-        tcfg.update({"cut_pad_out": cfg["cut_pad_out"], "vo_lead": lead, "vo_tail": tail, "style": "tt",
-                     "wps": cfg.get("wps", 2.6), "final_min_hold": cfg.get("final_min_hold", 12.0)})
         tl = TL.build(video, by_id, tcfg, real)
-        # v10 overlays: schedule inside cases, burn before QC
-        scheduled = []
-        try:
-            from . import overlay_sched as OS
-            if (self.cfg.get("overlays") or {}).get("enabled", True):
-                total = probe_dur(final)
-                busy = [(r["start"] + 0.3, r["start"] + 4.7) for r in rows if r["kind"] == "case"][:1]
-                for cid in video["case_ids"]:
-                    c = by_id[cid]
-                    scheduled += OS.schedule(c, lambda tc, cid=cid: TL.src_to_out(tl, cid, tc), total, busy,
-                                             self.cfg, look=self.cfg.get("_look") or "tt")
-                if scheduled:
-                    ui(f"  overlays scheduled: {len(scheduled)}")
-                    final = self._burn_overlays(final, scheduled, outdir / "_work", ui)
-                    rows.append({"kind": "overlay", "start": scheduled[0][0], "dur": scheduled[0][1] - scheduled[0][0],
-                                 "a": 0, "b": 0, "src": "", "label": "overlays"})
-                    video["_overlays_scheduled"] = [[round(s, 2), round(e, 2), o.get("kind"), o.get("text")]
-                                                    for s, e, o in scheduled]
-        except Exception as ex:  # noqa
-            ui("  overlays skipped:", ex)
+        if scheduled:
+            ui(f"  overlays: {len(scheduled)} (drawn inside the case renders)")
+            rows.append({"kind": "overlay", "start": scheduled[0][0], "dur": scheduled[0][1] - scheduled[0][0],
+                         "a": 0, "b": 0, "src": "", "label": "overlays"})
+            video["_overlays_scheduled"] = [[round(s, 2), round(e, 2), o.get("kind"), o.get("text")]
+                                            for s, e, o in scheduled]
         # word-by-word captions in the band under the strip; never over the hook/intro or an overlay card
         try:
             from . import captions as CAP

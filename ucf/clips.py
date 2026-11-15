@@ -109,20 +109,42 @@ def encode_args(enc, cfg):
     return venc(enc)
 
 
+def span_groups(rows, max_gap=60.0):
+    """Clip spans -> groups that one decoder can read straight through: a new group when the next span goes BACK in the
+    source (the hook comes from later in the case) or skips more than max_gap seconds (seeking beats decoding a recess)."""
+    groups = []
+    for r in rows:
+        _k, a, b, _o = r
+        if groups and groups[-1][-1][2] - 0.01 <= a <= groups[-1][-1][2] + max_gap:
+            groups[-1].append(r)
+        else:
+            groups.append([r])
+    return groups
+
+
 def cut_clip(src, rows, out, enc, cfg, ui=print):
-    """One ffmpeg pass: every span as its own accurately-seeked input -> concat -> one H.264 encode. Short audio fades at every
-    join so the cuts do not click."""
+    """One ffmpeg pass -> concat -> one H.264 encode. Spans that follow each other in the source share ONE input (one
+    decoder) and are cut with trim; before, every span opened its own GPU decoder (a case with many dead-air cuts could
+    open dozens on a 4 GB card). Short audio fades at every join so the cuts do not click."""
     from .render import hwdec, run_progress
     cmd, fc, n = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"], [], 0
     total = 0.0
-    for _k, a, b, _o in rows:
-        d = b - a
-        cmd += ["-ss", f"{a:.3f}", "-t", f"{d:.3f}", *hwdec(), "-i", str(src)]
-        f = min(0.04, d / 4)
-        fc.append(f"[{n}:v]setpts=PTS-STARTPTS,setsar=1[v{n}];"
-                  f"[{n}:a]asetpts=PTS-STARTPTS,afade=t=in:d={f:.3f},afade=t=out:st={max(0, d - f):.3f}:d={f:.3f}[a{n}]")
-        n += 1
-        total += d
+    for gi, grp in enumerate(span_groups(rows)):
+        g0, g1 = grp[0][1], grp[-1][2]
+        cmd += ["-ss", f"{g0:.3f}", "-t", f"{g1 - g0:.3f}", *hwdec(), "-i", str(src)]
+        m = len(grp)
+        if m > 1:
+            fc.append(f"[{gi}:v]split={m}" + "".join(f"[g{gi}v{k}]" for k in range(m)) + ";"
+                      f"[{gi}:a]asplit={m}" + "".join(f"[g{gi}a{k}]" for k in range(m)))
+        for k, (_kind, a, b, _o) in enumerate(grp):
+            d = b - a
+            f = min(0.04, d / 4)
+            vin, ain = (f"[g{gi}v{k}]", f"[g{gi}a{k}]") if m > 1 else (f"[{gi}:v]", f"[{gi}:a]")
+            fc.append(f"{vin}trim=start={a - g0:.3f}:end={b - g0:.3f},setpts=PTS-STARTPTS,setsar=1[v{n}];"
+                      f"{ain}atrim=start={a - g0:.3f}:end={b - g0:.3f},asetpts=PTS-STARTPTS,"
+                      f"afade=t=in:d={f:.3f},afade=t=out:st={max(0, d - f):.3f}:d={f:.3f}[a{n}]")
+            n += 1
+            total += d
     fc.append("".join(f"[v{i}][a{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=1[v][a]")
     cmd += ["-filter_complex", ";".join(fc), "-map", "[v]", "-map", "[a]", *encode_args(enc, cfg),
             "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", str(out)]

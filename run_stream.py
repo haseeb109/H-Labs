@@ -67,12 +67,35 @@ def fresh_render_cache(folder, cfg, video, cases):
         except OSError:
             pass
     h.update(json.dumps({"video": video, "cases": cases}, sort_keys=True, default=str).encode())
+    # the watermark and the overlay cards are drawn inside the cached pieces: a change there must drop them too
+    h.update(json.dumps({k: cfg.get(k) for k in sorted(cfg) if k.startswith("watermark") or k in ("channel_name", "overlays")},
+                        sort_keys=True, default=str).encode())
     stamp = h.hexdigest()
     wd = Path(folder) / "_work"
     mark = wd / ".render_stamp"
+    if FINISH.linked(wd) is not None and not wd.exists():          # its SSD folder was emptied by hand: drop the dead link
+        FINISH.remove_tree(wd)
     if wd.exists() and (not mark.exists() or mark.read_text(encoding="utf-8").strip() != stamp):
-        shutil.rmtree(wd, ignore_errors=True)
+        try:
+            FINISH.remove_tree(wd)
+        except OSError:
+            shutil.rmtree(wd, ignore_errors=True)
         ui("  (old render pieces of this video dropped - code, style or plan changed since)")
+    if not wd.exists():
+        # config render_temp_dir (e.g. "C:/HLabsTemp" in config.local.json): the pieces are written to that (SSD) folder,
+        # the finished video stays in output/. The pieces are written and read back several times; on a hard disk that costs.
+        tmp_root = str(cfg.get("render_temp_dir") or "").strip()
+        if tmp_root:
+            target = Path(tmp_root).expanduser() / f"{Path(folder).parent.name}__{Path(folder).name}"
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                free = shutil.disk_usage(target.parent).free / 1e9
+            except OSError:
+                free = 0
+            if free >= 15 and FINISH.make_linked_dir(wd, target):
+                ui(f"  render pieces on the fast disk: {target}")
+            else:
+                ui(f"  render_temp_dir {tmp_root} not usable ({free:.0f} GB free, 15 needed) - pieces stay next to the video")
     wd.mkdir(parents=True, exist_ok=True)
     mark.write_text(stamp, encoding="utf-8")
 
@@ -526,6 +549,24 @@ def main():
     from ucf.render import _HW
     ui(f"encoder: {rn.enc}  |  decode: {('GPU (' + _HW['name'] + ')') if _HW['name'] else 'CPU'}")
     summary, rows, failed_videos = [], [], []
+    todo = [v for v in plan["videos"] if not only or v["n"] in only]
+    if len(todo) > 1:
+        # the AI voice of the NEXT videos is made in the background while the GPU renders this one (network wait no longer
+        # sits in the render). Exactly the lines the renderer asks for (cache hits later: no extra credits); one line is never
+        # made twice at the same time (ucf.tts locks). A failure here is ignored - the renderer then makes that line itself.
+        import threading
+
+        def _prefetch_vo(videos):
+            for pv in videos:
+                try:
+                    ids_, brs = pv["case_ids"], {b["after_case_id"]: b for b in pv.get("bridges", [])}
+                    for i_ in range(len(ids_) - 1):
+                        if ids_[i_] in brs:
+                            tts.synth_clips(brs[ids_[i_]]["text"], work / "tts", cfg, lambda *m: None)
+                    tts.synth_clips(pv["vo_final"]["text"], work / "tts", cfg, lambda *m: None)
+                except Exception:  # noqa
+                    pass
+        threading.Thread(target=_prefetch_vo, args=(todo[1:],), daemon=True, name="vo-prefetch").start()
     for v in plan["videos"]:
         if only and v["n"] not in only:
             continue
@@ -539,14 +580,31 @@ def main():
             _t_video = time.time()
             rn.log = []
             fresh_render_cache(folder, cfg, v, [by_id[i] for i in v["case_ids"]])
-            res = rn.render_video(plan, v, folder, work / "tts", ui)
+            from ucf import render as RND
+            from ucf import watermark as WM
             wm_text, wm_err = None, None
+            try:                                         # the watermark is drawn inside every segment encode (one pass less)
+                wmf = WM.segment_finish(cfg, f"{sid}:{v['n']}", folder)
+            except Exception as e:                       # no PNG -> the old full-video pass below
+                wmf = None
+                ui(f"  watermark inside the render not possible ({str(e)[:120]}) - adding it in a separate pass")
+            RND.set_finish(wmf)
             try:
-                from ucf import watermark as WM
-                wm_text = WM.apply_in_place(res["final"], cfg, f"{sid}:{v['n']}", rn.enc, ui)   # channel name, 25%, moving; same file name
-            except Exception as e:                       # never lose the render over a watermark problem, but flag it
-                wm_err = str(e).splitlines()[0][:160] if str(e) else repr(e)
-                ui(f"  WATERMARK FAILED: {wm_err}  (video.mp4 is the un-watermarked render)")
+                res = rn.render_video(plan, v, folder, work / "tts", ui)
+                fin = dict(RND._FINISH)
+            finally:
+                RND.set_finish(None)
+            if wmf and not fin["missed"]:
+                wm_text = wmf["text"]
+                ui(f"  watermark '{wm_text}' drawn inside the render ({fin['applied']} new piece(s))")
+            elif WM.enabled(cfg):
+                try:                                     # old way: one more pass over the whole video (safety net)
+                    if fin.get("missed"):
+                        ui(f"  {fin['missed']} piece(s) could not take the watermark inside the render - separate pass")
+                    wm_text = WM.apply_in_place(res["final"], cfg, f"{sid}:{v['n']}", rn.enc, ui)
+                except Exception as e:                   # never lose the render over a watermark problem, but flag it
+                    wm_err = str(e).splitlines()[0][:160] if str(e) else repr(e)
+                    ui(f"  WATERMARK FAILED: {wm_err}  (video.mp4 is the un-watermarked render)")
             thumb = rn.thumbnail(plan, v, folder)
             tl = res["timeline"]
             (folder / "edit_sheet.txt").write_text(sheets.edit_sheet(plan, v, tl, res["durs"]), encoding="utf-8")

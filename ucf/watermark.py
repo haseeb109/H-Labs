@@ -40,15 +40,15 @@ def render_text_png(text, out, size=34, font=FONT):
     return w, h
 
 
-def filter_graph(opacity=0.25, every=9.0, fade=0.8, margin=48, seed=0):
+def filter_graph(opacity=0.25, every=9.0, fade=0.8, margin=48, seed=0, wm_in="1:v", main="0:v", out="v", key="wm"):
     d, f, m, s = float(every), float(fade), int(margin), int(seed)
     k = f"(floor(t/{d})+{s})"
     x = f"{m}+(W-w-{2 * m})*mod(abs(sin({k}*12.9898)*43758.5453),1)"
     y = f"{m}+(H-h-{2 * m})*mod(abs(sin({k}*78.233)*12543.7141),1)"
     p = f"mod(T,{d})"
     alpha = f"alpha(X,Y)*{float(opacity)}*clip(min({p},{d}-{p})/{f},0,1)"
-    return (f"[1:v]format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='{alpha}'[wm];"
-            f"[0:v][wm]overlay=x='{x}':y='{y}':eval=frame:shortest=1:format=auto,format=yuv420p[v]")
+    return (f"[{wm_in}]format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='{alpha}'[{key}];"
+            f"[{main}][{key}]overlay=x='{x}':y='{y}':eval=frame:shortest=1:format=auto,format=yuv420p[{out}]")
 
 
 def _encoder_args(enc=None):
@@ -84,6 +84,20 @@ def text_for(cfg):
 
 def enabled(cfg):
     return bool(cfg.get("watermark", True)) and bool(text_for(cfg))
+
+
+def segment_finish(cfg, seed_key, folder):
+    """The watermark for ONE video, drawn inside every segment encode (ucf.render.set_finish) -> dict, or None when it is off.
+    The text PNG is made once per video."""
+    if not enabled(cfg):
+        return None
+    wd = Path(folder) / "_work"
+    wd.mkdir(parents=True, exist_ok=True)
+    png = wd / "watermark.png"
+    render_text_png(text_for(cfg), png, cfg.get("watermark_size", 34))
+    return {"png": str(png), "text": text_for(cfg), "opacity": cfg.get("watermark_opacity", 0.25),
+            "every": cfg.get("watermark_every", 9.0), "fade": cfg.get("watermark_fade", 0.8),
+            "margin": cfg.get("watermark_margin", 48), "seed": zlib.crc32(str(seed_key).encode()) % 997}
 
 
 def apply_in_place(path, cfg, seed_key, enc=None, ui=print):

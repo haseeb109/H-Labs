@@ -82,6 +82,17 @@ def synth(text, cache_dir, cfg):
         return _synth_once(text, cache_dir, cfg)
 
 
+import threading
+_LOCKS, _LOCKS_GUARD = {}, threading.Lock()
+
+
+def _lock(key):
+    """One lock per voice line: the background pre-fetch (run_stream) and the renderer never make the same line twice at the
+    same time (same temp folder, same cache file)."""
+    with _LOCKS_GUARD:
+        return _LOCKS.setdefault(key, threading.Lock())
+
+
 def _synth_once(text, cache_dir, cfg):
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -94,17 +105,28 @@ def _synth_once(text, cache_dir, cfg):
         wav = cache_dir / f"{key}.wav"
         if wav.exists() and wav.stat().st_size > 1000:
             return wav
-        tmp = cache_dir / f"tmp_{key}"
-        tmp.mkdir(exist_ok=True)
-        try:
-            PROVIDERS[name](text, wav, cfg, tmp)
-            if wav.exists() and wav.stat().st_size > 1000:
-                shutil.rmtree(tmp, ignore_errors=True)
+        with _lock(str(wav)):
+            if wav.exists() and wav.stat().st_size > 1000:      # made by the other thread while this one waited
                 return wav
-        except Exception as e:  # noqa
-            errs.append(f"{name}: {e}")
-        shutil.rmtree(tmp, ignore_errors=True)
+            got = _make(name, text, wav, cache_dir, key, cfg, errs)
+        if got:
+            return got
     raise RuntimeError("all TTS providers failed -> " + " | ".join(errs))
+
+
+def _make(name, text, wav, cache_dir, key, cfg, errs):
+    """One provider attempt (caller holds the line's lock) -> wav, or None with the error noted in errs."""
+    tmp = cache_dir / f"tmp_{key}"
+    tmp.mkdir(exist_ok=True)
+    try:
+        PROVIDERS[name](text, wav, cfg, tmp)
+        if wav.exists() and wav.stat().st_size > 1000:
+            shutil.rmtree(tmp, ignore_errors=True)
+            return wav
+    except Exception as e:  # noqa
+        errs.append(f"{name}: {e}")
+    shutil.rmtree(tmp, ignore_errors=True)
+    return None
 
 
 def _atempo(src, dst, factor):
@@ -138,7 +160,9 @@ def synth_clips(text, cache_dir, cfg, warn=print):
         if factor > 1.25:
             warn(f"    ! one sentence reads {d:.1f}s - shorten the VO text (clip limit {cmax:.0f}s)")
         fast = wav.with_name(wav.stem + "_fit.wav")
-        _atempo(wav, fast, min(factor, 1.25))
+        with _lock(str(fast)):
+            if not (fast.exists() and fast.stat().st_size > 1000):
+                _atempo(wav, fast, min(factor, 1.25))
         out.append(fast)
 
     for part in V.split_clips(text, float(cfg.get("vo_clip_target", V.CLIP_TARGET)), float(cfg.get("wps", 2.6))):

@@ -101,6 +101,21 @@ Option 7 shows `video encoder` and `video decode`. With an NVIDIA GPU and a driv
 everything; the tool then uses 75% of the cores at low priority so the PC stays usable. Old driver? Update it from nvidia.com
 (GeForce 10 series and newer: Studio driver), restart, check option 7 again.
 
+What keeps the render light (2026-11-15):
+* every video is encoded **once**: the moving watermark (and the Trial Tales cards) are drawn inside the segment renders, there
+  is no second pass over the finished video any more
+* background pictures and graphic layers are decoded once per piece, not again for every frame
+* a Zoom layout change cuts the piece per layout instead of running every layout on every frame
+* the AI voice of the next videos is made in the background while the GPU renders
+* the finished video is joined and its loudness measured in the same step (QC does not read it again)
+
+**H Labs on a hard disk (HDD) and a small SSD in the PC?** Put the render pieces on the SSD: in `config.local.json`
+```json
+{ "render_temp_dir": "C:/HLabsTemp" }
+```
+The finished videos stay in `output\`; only the pieces (deleted after each run) go to the SSD. Needs 15 GB free there, else
+the tool quietly keeps the pieces next to the video as before.
+
 ## End of a run
 * A Windows notification + sound says the run is done (or that it stopped on an error), and the output folder opens.
 * The window shows **PROCESSING TIME** (total + every stage); `state\run_history.csv` keeps one line per run.

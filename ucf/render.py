@@ -30,7 +30,75 @@ def court_audio(cfg):
     return (COURT_CLEANUP + "," + AUDIO_NORM) if (cfg or {}).get("audio_cleanup", True) else AUDIO_NORM
 
 
+# ---------- finishing layer inside the segment encodes ----------
+# The moving channel watermark used to be a separate pass that decoded and re-encoded the WHOLE finished video. Now every
+# segment encode written into a video's _work folder gets it in the same pass: one encode less per video (and one generation
+# less). Each segment starts its own position sequence (seed from the file name) with the usual fade-in, so the jump at a
+# segment boundary falls on a scene cut. _FINISH["missed"] is set when a command shape is not understood: run_stream then
+# falls back to the old full-video pass, so a video can never come out without its watermark.
+_FINISH = {"wm": None, "missed": 0, "applied": 0}
+
+
+def set_finish(wm=None):
+    """wm = {"png", "opacity", "every", "fade", "margin", "seed"} while one video renders, None after."""
+    _FINISH.update(wm=wm, missed=0, applied=0)
+
+
+def _segment_encode(cmd):
+    """True for an ffmpeg command that ENCODES a video segment into a _work folder (not a probe, frame grab or copy)."""
+    if not cmd or Path(cmd[0]).stem.lower() != "ffmpeg" or "-c:v" not in cmd:
+        return False
+    if cmd[cmd.index("-c:v") + 1] == "copy" or "-frames:v" in cmd or any(a == "-f" and b == "null" for a, b in zip(cmd, cmd[1:])):
+        return False
+    out = Path(cmd[-1])
+    return out.suffix.lower() == ".mp4" and "_work" in out.parts
+
+
+def _with_finish(cmd):
+    """cmd (list of str) -> the same command with the watermark added to its video output, or unchanged."""
+    wm = _FINISH.get("wm")
+    if not wm or not _segment_encode(cmd):
+        return cmd
+    from . import watermark as WM
+    import zlib
+    c = list(cmd)
+    n_in = sum(1 for x in c if x == "-i")
+    last_i = max(i for i, x in enumerate(c) if x == "-i") + 1
+    seed = (int(wm.get("seed", 0)) + zlib.crc32(Path(c[-1]).name.encode())) % 997
+    def graph(main):
+        return WM.filter_graph(wm["opacity"], wm["every"], wm["fade"], wm["margin"], seed,
+                               wm_in=f"{n_in}:v", main=main, out="_wmv", key="_wmk")
+    maps = [i for i, x in enumerate(c) if x == "-map"]
+    if "-filter_complex" in c:
+        fi = c.index("-filter_complex")
+        vmap = next((i for i in maps if c[i + 1].startswith("[")), None)
+        if vmap is None or vmap != maps[0]:
+            _FINISH["missed"] += 1
+            return cmd
+        c[fi + 1] = c[fi + 1] + ";" + graph(c[vmap + 1][1:-1])
+        c[vmap + 1] = "[_wmv]"
+    elif "-vf" in c:
+        vi = c.index("-vf")
+        fc = f"[0:v]{c[vi + 1]}[_wf0];{graph('_wf0')}"
+        if maps:
+            vmap = next((i for i in maps if c[i + 1] in ("0:v", "0:v:0")), None)
+            if vmap is None:
+                _FINISH["missed"] += 1
+                return cmd
+            c[vmap + 1] = "[_wmv]"
+            c[vi:vi + 2] = ["-filter_complex", fc]
+        else:                                             # default stream selection: video from input 0 + its audio
+            c[vi:vi + 2] = ["-filter_complex", fc, "-map", "[_wmv]", "-map", "0:a?"]
+    else:
+        _FINISH["missed"] += 1
+        return cmd
+    c[last_i + 1:last_i + 1] = ["-loop", "1", "-framerate", "30", "-i", str(wm["png"])]
+    _FINISH["applied"] += 1
+    return c
+
+
 def run(cmd, quiet=True):
+    cmd = _with_finish([str(c) for c in cmd])
     r = subprocess.run([str(c) for c in cmd], capture_output=quiet, text=True)
     if r.returncode != 0:
         raise RuntimeError("ffmpeg failed:\n" + " ".join(str(c) for c in cmd)[:600] + "\n" + (r.stderr or "")[-1800:])
@@ -49,7 +117,7 @@ def run_progress(cmd, total, label="    rendering", every=20.0, ui=None):
     an hour or more) is never mistaken for a hang. `total` = seconds of OUTPUT video this command produces."""
     import threading
     import time
-    cmd = [str(c) for c in cmd]
+    cmd = _with_finish([str(c) for c in cmd])
     say = ui or (lambda m: print(m, flush=True))
     p = subprocess.Popen(cmd[:1] + ["-progress", "pipe:1", "-nostats"] + cmd[1:], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     err = []
@@ -78,6 +146,28 @@ def run_progress(cmd, total, label="    rendering", every=20.0, ui=None):
     say(f"{label}: done in {_hms(time.time() - start)}")
 
 
+# loudness of each finished video, measured while it was joined (QC then needs no second read of the whole file)
+_LOUD = {}
+
+
+def join_segments(lst, final, cfg):
+    """concat demuxer list -> final video: video stream copied, audio loudness-normalised, and the result measured (ebur128)
+    in the same pass. Before, QC decoded the whole finished file again only to read its loudness."""
+    final = Path(final)
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-nostats", "-loglevel", "info", "-f", "concat", "-safe", "0", "-i", str(lst),
+           "-c:v", "copy", "-af", f"loudnorm=I={cfg['loudness_lufs']}:TP=-1.5:LRA=11,ebur128=peak=true:framelog=verbose",
+           *AENC, "-movflags", "+faststart", str(final)]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError("ffmpeg failed:\n" + " ".join(cmd)[:600] + "\n" + (r.stderr or "")[-1800:])
+    m = re.findall(r"\bI:\s+(-?\d+\.\d+) LUFS", r.stderr)
+    tp = re.findall(r"Peak:\s+(-?\d+\.\d+) dBFS", r.stderr)
+    if m:
+        st = final.stat()
+        _LOUD[str(final.resolve())] = (float(m[-1]), float(tp[-1]) if tp else None, st.st_size, st.st_mtime)
+    return final
+
+
 def probe_dur(p):
     return tts.dur(p)
 
@@ -92,6 +182,15 @@ NVENC_LEVELS = [
 ]
 _NV = {"level": 0}
 _HW = {"args": [], "name": ""}       # GPU video DECODE for the source inputs (set by pick_encoder; [] = CPU decode)
+
+
+def still(idx, dur, label, fmt="yuv420p"):
+    """Filter fragment for a still image input (`-i image.png`, no -loop): decoded + converted ONCE, then repeated at 30 fps
+    for `dur` seconds. `-loop 1 -i image.png` re-reads, re-decodes and re-converts the PNG for every single frame: on a 1080p
+    background + 3 layers that was 3.5-5x the CPU of the whole picture work (measured 2026-11-15), with identical output.
+    fmt: "yuv420p" for an opaque background, "yuva420p" for a layer with transparency."""
+    return (f"[{idx}:v]format={fmt},loop=loop=-1:size=1:start=0,fps=30,trim=duration={dur:.3f},"
+            f"setpts=PTS-STARTPTS[{label}]")
 
 
 def hwdec():
@@ -167,7 +266,9 @@ def venc(enc):
 
 
 AENC = ["-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"]
-TS = ["-video_track_timescale", "30000", "-movflags", "+faststart"]
+# segment pieces only: no +faststart here. It rewrites the whole file after encoding (moov to the front), which only the
+# FINISHED video needs (join_segments) - the pieces are only read back by the concat join.
+TS = ["-video_track_timescale", "30000"]
 
 
 class Renderer:
@@ -407,8 +508,7 @@ class Renderer:
         lst = work / "concat.txt"
         lst.write_text("".join(f"file '{p.resolve()}'\n" for _, p, _ in segfiles), encoding="utf-8")
         final = outdir / "video.mp4"
-        run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", lst, "-c:v", "copy",
-             "-af", f"loudnorm=I={cfg['loudness_lufs']}:TP=-1.5:LRA=11", *AENC, "-movflags", "+faststart", final])
+        join_segments(lst, final, cfg)
 
         # real-duration timeline for chapters / mid-rolls
         real_durs = {"hook": durs["hook"], "intro": durs["intro"], "vo1": durs["vo1"],
@@ -469,10 +569,15 @@ class Renderer:
         return out
 
     def qc(self, final, expected_total):
-        r = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(final), "-af", "ebur128=peak=true",
-                            "-f", "null", "-"], capture_output=True, text=True)
-        m = re.findall(r"\bI:\s+(-?\d+\.\d+) LUFS", r.stderr)
-        tp = re.findall(r"Peak:\s+(-?\d+\.\d+) dBFS", r.stderr)
+        known = _LOUD.get(str(Path(final).resolve()))
+        st = Path(final).stat()
+        if known and known[2:] == (st.st_size, st.st_mtime):        # measured while joining, file unchanged since
+            m, tp = [f"{known[0]}"], ([f"{known[1]}"] if known[1] is not None else [])
+        else:
+            r = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(final), "-af", "ebur128=peak=true",
+                                "-f", "null", "-"], capture_output=True, text=True)
+            m = re.findall(r"\bI:\s+(-?\d+\.\d+) LUFS", r.stderr)
+            tp = re.findall(r"Peak:\s+(-?\d+\.\d+) dBFS", r.stderr)
         d = probe_dur(final)
         return {"duration": round(d, 2), "expected": round(expected_total, 2),
                 "loudness_lufs": float(m[-1]) if m else None, "true_peak_dbfs": float(tp[-1]) if tp else None,

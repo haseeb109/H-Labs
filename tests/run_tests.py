@@ -1728,6 +1728,131 @@ def t44_local_mincase_asis():
     return "folder -> video + transcript, no download; 5 min keeps a 6 min case (8 skips it); as-is = 1 case, whole video, 1 video"
 
 
+def t45_render_speed():
+    """Speed work 2026-11-15, Phase 1 + 2: watermark drawn inside every segment encode (one pass less), still images decoded
+    once, layout switches cut per run, one decoder per clip span group, loudness measured in the join, render pieces on an
+    optional SSD folder, voice lines never made twice at once."""
+    import importlib.util
+    import threading
+    import numpy as np
+    from PIL import Image
+    from ucf import render as R, watermark as WM, clips as CL, finish as FIN, tts as T, config
+    from ucf.render_tt import TTRenderer
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        # 1) finishing hook: every segment-encode shape gets the watermark; probes / copies / finished files never do
+        R.set_finish({"png": str(tmp / "wm.png"), "opacity": 0.25, "every": 9.0, "fade": 0.8, "margin": 48, "seed": 1})
+        shapes = [["ffmpeg", "-i", "a.mp4", "-filter_complex", "[0:v]null[v]", "-map", "[v]", "-c:v", "libx264", "o/_work/a.mp4"],
+                  ["ffmpeg", "-i", "p.png", "-vf", "null", "-map", "0:v", "-c:v", "libx264", "o/_work/b.mp4"],
+                  ["ffmpeg", "-i", "i.mp4", "-vf", "null", "-c:v", "libx264", "o/_work/c.mp4"]]
+        for c in shapes:
+            out = R._with_finish(c)
+            assert "[_wmv]" in out and str(tmp / "wm.png") in out, out
+        for c in (["ffmpeg", "-i", "a.mp4", "-c:v", "copy", "o/_work/x.mp4"], ["ffmpeg", "-i", "a.mp4", "-vf", "null", "-c:v", "libx264", "o/video.mp4"],
+                  ["ffmpeg", "-i", "a.mp4", "-frames:v", "1", "o/_work/f.jpg"]):
+            assert R._with_finish(c) == c, c
+        assert R._FINISH["applied"] == 3 and R._FINISH["missed"] == 0, R._FINISH
+        weird = ["ffmpeg", "-i", "a.mp4", "-filter_complex", "[0:v]null[v]", "-map", "0:a", "-map", "[v]", "-c:v", "libx264", "o/_work/w.mp4"]
+        assert R._with_finish(weird) == weird and R._FINISH["missed"] == 1, "an unknown shape is counted (-> old full pass)"
+        R.set_finish(None)
+
+        # a real segment: the watermark is visible inside it, and nothing outside _work is touched
+        cfg = config.load(style="trial_tales")
+        cfg.update({"encoder": "libx264", "use_hyperframes": False, "watermark_opacity": 1.0, "channel_name": "WATERMARK"})
+        R._X264["preset"] = "ultrafast"
+        src = tmp / "src.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=black:s=1280x720:r=30:d=6", "-f", "lavfi",
+                        "-i", "sine=d=6", "-shortest", "-c:v", "libx264", "-g", "30", str(src)], check=True)
+        rn = TTRenderer(cfg, {"s.mp4": {"path": str(src)}}, ROOT)
+        rn.enc = "libx264"
+        (tmp / "_work").mkdir()
+        for name, wmf in (("plain", None), ("wm", WM.segment_finish(dict(cfg, watermark=True), "t45", tmp))):
+            R.set_finish(wmf)
+            try:
+                rn.tt_cut("s.mp4", 0.0, 6.0, tmp / "_work" / f"{name}.mp4", rn.bg_logo)
+            finally:
+                R.set_finish(None)
+        def frame(n):
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", "4.5", "-i", str(tmp / "_work" / f"{n}.mp4"), "-frames:v", "1",
+                            str(tmp / f"{n}.png")], check=True)
+            return np.asarray(Image.open(tmp / f"{n}.png").convert("L")).astype(int)
+        diff = abs(frame("wm") - frame("plain"))
+        assert (diff > 60).sum() > 300, f"watermark not visible in the segment ({(diff > 60).sum()} px changed)"
+
+        # 2) still image decoded once + layout runs cut with trim/concat (fps before the split)
+        ch = rn.strip_chain("1:v", "f", [(0, 20, "2up"), (20, 30.5, "solo")])
+        assert ch.startswith("[1:v]fps=30,split=2") and "trim=start_frame=0:end_frame=600" in ch and "trim=start_frame=600," in ch and "concat=n=2" in ch, ch
+        assert R.still(0, 5, "bg").startswith("[0:v]format=yuv420p,loop=loop=-1:size=1"), R.still(0, 5, "bg")
+
+        # 3) clips: spans that follow each other share one decoder; the hook (later in the case) and a long recess do not
+        rows = [("hook", 40, 52, 0), ("case", 10, 30, 12), ("case", 35, 50, 32), ("case", 52, 70, 47), ("case", 200, 210, 65)]
+        assert [len(g) for g in CL.span_groups(rows)] == [1, 3, 1], CL.span_groups(rows)
+
+        # 4) join measures loudness; QC uses it without reading the file again
+        lst = tmp / "l.txt"
+        lst.write_text(f"file '{(tmp / '_work' / 'plain.mp4').resolve()}'\n", encoding="utf-8")
+        fin = R.join_segments(lst, tmp / "video.mp4", cfg)
+        assert str(fin.resolve()) in R._LOUD, "loudness not measured in the join"
+        real_run = subprocess.run
+        dur_ = R.probe_dur(fin)
+
+        def no_second_read(cmd, *a, **k):
+            if any("ebur128" in str(x) for x in cmd):
+                raise AssertionError("QC decoded the whole file again for its loudness")
+            return real_run(cmd, *a, **k)
+        subprocess.run = no_second_read
+        try:
+            q = rn.qc(fin, dur_)
+        finally:
+            subprocess.run = real_run
+        assert q["loudness_lufs"] is not None, q
+
+        # 5) render_temp_dir: _work is a link to the fast folder; dropping the cache and the cleanup empty that folder
+        spec = importlib.util.spec_from_file_location("rs45", ROOT / "run_stream.py")
+        rs = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(rs)
+        rs.ui = lambda *m: None
+        vid = tmp / "out" / "run1" / "01_x"
+        vid.mkdir(parents=True)
+        fast = tmp / "fast"
+        cfg2 = dict(cfg, render_temp_dir=str(fast))
+        rs.fresh_render_cache(vid, cfg2, {"n": 1}, [])
+        target = fast / "run1__01_x"
+        assert FIN.linked(vid / "_work") is not None and target.is_dir(), list(fast.iterdir()) if fast.exists() else "no fast dir"
+        (vid / "_work" / "piece.mp4").write_bytes(b"\0" * 5000)
+        assert (target / "piece.mp4").exists()
+        rs.fresh_render_cache(vid, cfg2, {"n": 2}, [])              # plan changed -> pieces dropped (on the fast disk too)
+        assert not (target / "piece.mp4").exists() and FIN.linked(vid / "_work") is not None
+        (vid / "_work" / "piece.mp4").write_bytes(b"\0" * 5000)
+        (vid / "video.mp4").write_bytes(b"\0" * 5000)
+        FIN.cleanup({"cleanup_after_run": "always"}, tmp / "w0", tmp / "out" / "run1", None, ui=lambda *m: None)
+        assert not (vid / "_work").exists() and not (target / "piece.mp4").exists() and (vid / "video.mp4").exists()
+
+        # 6) one voice line is made once, even when the pre-fetch and the renderer ask at the same time
+        calls = []
+        orig = T.PROVIDERS["dummy"]
+
+        def slow(text, wav, c, tmpd):
+            calls.append(text)
+            time.sleep(0.3)
+            return orig(text, wav, c, tmpd)
+        T.PROVIDERS["dummy"] = slow
+        try:
+            tc = dict(cfg, tts_order=["dummy"])
+            got = []
+            ths = [threading.Thread(target=lambda: got.append(T.synth("Fair or too harsh?", tmp / "tts", tc))) for _ in range(3)]
+            [t.start() for t in ths]
+            [t.join() for t in ths]
+        finally:
+            T.PROVIDERS["dummy"] = orig
+        assert len(calls) == 1 and len(set(map(str, got))) == 1, (calls, got)
+    finally:
+        R.set_finish(None)
+        shutil.rmtree(tmp, ignore_errors=True)
+    return "watermark inside segments (3 shapes, unknown shape -> full pass), stills once, per-run layouts, clip decoders, " \
+           "join loudness for QC, SSD temp folder + cleanup, one TTS call per line"
+
+
 def t25_nvenc_levels():
     """An old GPU/driver that rejects the best NVENC options gets the next simpler set; one that rejects all falls back to x264."""
     from ucf import render
@@ -1805,6 +1930,7 @@ def main():
     check(42, "H Labs Studio queue + web API", t42_studio)
     check(43, "whisper crash fallback (C++ runtime)", t43_whisper_crash_fallback)
     check(44, "own video / 5 min cases / as-is re-edit", t44_local_mincase_asis)
+    check(45, "render speed: one pass less, stills once, SSD temp", t45_render_speed)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))

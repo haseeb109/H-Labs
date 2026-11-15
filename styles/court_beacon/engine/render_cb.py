@@ -27,7 +27,7 @@ from PIL import Image
 from ucf import ov_layout as L
 from ucf import timeline as TL
 from ucf import tts
-from ucf.render import probe_dur, run
+from ucf.render import join_segments, probe_dur, run
 from ucf.render_ov import OVRenderer, _short
 from ucf.timeutil import fmt_dur, fmt_tc, parse_tc
 
@@ -511,7 +511,6 @@ class CBRenderer(OVRenderer):
 
     def _finish(self, plan, video, by_id, outdir, work, segfiles, recap_durs, fin_total, intro_d, recap_clips,
                 final_clips, subs, ui, items):
-        from ucf.render import AENC
         cfg = self.cfg
         default_src = plan["source_file"]
         t = 0.0
@@ -524,8 +523,7 @@ class CBRenderer(OVRenderer):
         lst = work / "concat.txt"
         lst.write_text("".join(f"file '{p.resolve()}'\n" for _, p, _ in segfiles), encoding="utf-8")
         final = outdir / "video.mp4"
-        run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", lst, "-c:v", "copy",
-             "-af", f"loudnorm=I={cfg['loudness_lufs']}:TP=-1.5:LRA=11", *AENC, "-movflags", "+faststart", final])
+        join_segments(lst, final, cfg)
         real = {"hook": rows_[0]["dur"], "intro": rows_[1]["dur"], "recap": recap_durs, "final": fin_total}
         tcfg = dict(TL.DEFAULTS)
         tcfg.update({"cut_pad_out": cfg["cut_pad_out"], "vo_lead": cfg["vo_lead"], "vo_tail": cfg["vo_tail"], "style": "tt",

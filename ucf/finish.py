@@ -14,8 +14,49 @@ import sys
 from pathlib import Path
 
 
-def _size(p):
+def linked(p):
+    """The real folder behind a link (render_temp_dir puts a video's _work on an SSD via a junction / symlink), else None."""
     p = Path(p)
+    try:
+        if p.is_symlink() or (hasattr(os.path, "isjunction") and os.path.isjunction(p)):
+            return Path(os.path.realpath(p))
+    except OSError:
+        pass
+    return None
+
+
+def remove_tree(p):
+    """Delete a folder. A linked _work: its contents on the SSD too (rmtree on a Windows junction only drops the link), then
+    the link itself."""
+    p = Path(p)
+    real = linked(p)
+    if real is None:
+        shutil.rmtree(p)
+        return
+    shutil.rmtree(real, ignore_errors=True)
+    try:
+        p.unlink()
+    except OSError:
+        os.rmdir(p)                                       # a Windows junction is removed like an (empty) folder
+
+
+def make_linked_dir(link, target):
+    """link -> target folder (junction on Windows: no admin rights needed; symlink elsewhere). False when not possible."""
+    link, target = Path(link), Path(target)
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        if os.name == "nt":
+            import _winapi
+            _winapi.CreateJunction(str(target), str(link))
+        else:
+            os.symlink(target, link, target_is_directory=True)
+        return True
+    except (OSError, ImportError, AttributeError):
+        return False
+
+
+def _size(p):
+    p = Path(linked(p) or p)
     if p.is_file():
         return p.stat().st_size
     return sum(f.stat().st_size for f in p.rglob("*") if f.is_file()) if p.is_dir() else 0
@@ -64,7 +105,7 @@ def cleanup(cfg, work, outroot, own_video_file=None, ui=print, ask=input):
     freed = 0
     for p, n, what in cands:
         try:
-            shutil.rmtree(p) if p.is_dir() else p.unlink()
+            remove_tree(p) if p.is_dir() else p.unlink()
             freed += n
             ui(f"  deleted {gb(n):>8}  {what}")
         except OSError as e:
