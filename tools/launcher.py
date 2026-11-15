@@ -12,6 +12,13 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def _version():
+    try:
+        return (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    except OSError:
+        return "dev"
 os.chdir(ROOT)
 os.environ.setdefault("PYTHONUTF8", "1")
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
@@ -287,7 +294,7 @@ def doctor(pause=True):
     def bad(m):
         fails.append(m)
         print("  [FAIL] " + m)
-    print(f"\nSetup check ({platform.system()} {platform.release()}, Python {platform.python_version()})")
+    print(f"\nSetup check  H Labs v{_version()}  ({platform.system()} {platform.release()}, Python {platform.python_version()})")
     (ok if sys.version_info >= (3, 10) else bad)(f"python {platform.python_version()} (3.10+ needed)")
     if (ROOT / ".venv").exists():
         ok(".venv found")
@@ -368,7 +375,7 @@ def main():
     while True:
         last = (f"CLIPS ONLY ({_read('.style', 'trial_tales')})" if _read(".output", "video") == "clips"
                 else f"{_read('.style', 'trial_tales')}, mode {_read('.mode', 'all')}")
-        print("\n==============================================\n  H LABS  -  UMF Case Factory"
+        print(f"\n==============================================\n  H LABS  -  UMF Case Factory   v{_version()}"
               f"\n  brain: {_brain()}   |   last run: {last}"
               f"\n  output: {ROOT / 'output'}\n==============================================")
         print("  1) New video from a YouTube stream URL (full pipeline)\n  2) Your own downloaded video / folder (no download; transcript optional)\n"

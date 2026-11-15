@@ -857,8 +857,8 @@ def t18_regressions():
     finally:
         TTS.PROVIDERS.update(saved)
     # 5. mode all passes the video file + scan to build_plan
-    src = inspect.getsource(run_stream.main)
-    assert "video_path=video_path" in src and "scan_rep=rep" in src, "mode all does not hand the video to build_plan"
+    src = inspect.getsource(run_stream.stage_plan)
+    assert "video_path=R.video_path" in src and "scan_rep=R.rep" in src, "mode all does not hand the video to build_plan"
     return "validator json, ruling floor, whole wrap-up line, empty wrap, tts cache per provider, mode-all video hand-over"
 
 

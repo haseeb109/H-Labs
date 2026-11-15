@@ -323,8 +323,10 @@ class Studio:
         import platform
         m["machine"] = platform.node() or os.environ.get("COMPUTERNAME", "")
         try:
-            m["version"] = subprocess.run(["git", "-C", str(ROOT), "log", "-1", "--format=%cd", "--date=short"],
-                                          capture_output=True, text=True, timeout=10).stdout.strip()
+            date = subprocess.run(["git", "-C", str(ROOT), "log", "-1", "--format=%cd", "--date=short"],
+                                  capture_output=True, text=True, timeout=10).stdout.strip()
+            m["version"] = ((ROOT / "VERSION").read_text(encoding="utf-8").strip() if (ROOT / "VERSION").exists() else "dev") \
+                + (f" ({date})" if date else "")
         except Exception:
             m["version"] = ""
         self.machine = m
