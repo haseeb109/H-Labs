@@ -356,7 +356,8 @@ def main():
               f"\n  output: {ROOT / 'output'}\n==============================================")
         print("  1) New video from a YouTube stream URL (full pipeline)\n  2) Local file mode (already downloaded / pre-cut clips)\n"
               "  3) Change brain provider\n  4) Edit API keys\n  5) Open output folder\n  6) Run self-test\n  7) Setup check (what is installed?)\n  8) Update H Labs (GitHub code + yt-dlp)\n"
-              "  9) BULK QUEUE - many stream links, one after the other, until all are done\n  q) Quit")
+              "  9) BULK QUEUE - many stream links, one after the other, until all are done\n"
+              "  0) Open H Labs Studio (browser app: queue, progress, upload kit)\n  q) Quit")
         pick = ask("Pick: ", "q").lower()
         if pick == "1":
             url = ask("YouTube URL: ")
@@ -401,6 +402,8 @@ def main():
             doctor()
         elif pick == "9":
             bulk()
+        elif pick == "0":
+            subprocess.run([sys.executable, str(ROOT / "tools" / "studio" / "server.py")], cwd=ROOT)
         elif pick == "8" and WIN:
             sys.exit(88)              # H Labs.bat runs tools/win/setup.ps1 -Update once this process (and the files it holds) is closed
         elif pick == "8":

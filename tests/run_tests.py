@@ -1494,6 +1494,78 @@ def t41_min_720p():
     return "format asks 720p+, a 360p-only download is refused, info tries the next client until 720p is listed"
 
 
+def t42_studio():
+    """H Labs Studio: a queued job is run, its @@stage / @@videos / progress / ALL DONE / VIDEO FAILED lines become live
+    state (partial -> retry only the failed video), and the web API serves state, styles, library and refuses paths
+    outside output/."""
+    import importlib.util
+    import threading
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+    spec = importlib.util.spec_from_file_location("hl_studio", ROOT / "tools" / "studio" / "server.py")
+    S = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(S)
+    tmp = Path(tempfile.mkdtemp())
+    S.STATE, S.QFILE, S.OUT = tmp / "state", tmp / "state" / "q.json", tmp / "output"
+    script = tmp / "fake_run.py"
+    script.write_text("\n".join([
+        "print('stream: Judge Court Day  (2:10:00, id abc)')", "print('@@stage download')",
+        "print('[download]  42.0% of 1.2GiB at 5MiB/s ETA 03:10')", "print('@@stage brain (plan)')",
+        "print('@@videos 3')", "print('@@stage video 2 render')",
+        "print('  video 2:  57%  1:00 of 2:00  speed 2.0x  ~1m left')",
+        "print('  VIDEO 3 FAILED: ai33 timeout - going on with the next')", "print('ALL DONE -> " + str(tmp / "output" / "run1").replace("\\", "/") + "')"]),
+        encoding="utf-8")
+    seen = []
+    st = S.Studio(command=lambda j: (seen.append(list(j.get("only") or [])), [sys.executable, str(script)])[1], autostart=False)
+    try:
+        jid = st.add(["https://youtu.be/abc"], "trial_tales", "all", {"voice": True})[0]
+        j = st._job(jid)
+        assert st._command(j)[-1] == "--queued" or "--confirm-tts" in st._command(j), st._command(j)
+        st._run(j)
+        assert j["status"] == "partial" and j["failed_videos"] == [3], (j["status"], j["failed_videos"], j["log"])
+        assert j["title"] == "Judge Court Day" and j["stream_len"] == 7800 and j["videos_total"] == 3 and j["video_now"] == 2, j
+        assert j["out_dir"].endswith("run1") and "ai33 timeout" in j["error"], j
+        st.retry(jid)
+        assert j["status"] == "queued" and j["only"] == [3] and "--only" in st._command(j), j
+        st._run(j)
+        assert seen[-1] == [3], seen
+        # web API
+        run = S.OUT / "run1" / "01_video"
+        run.mkdir(parents=True)
+        (run / "video_plan.json").write_text(json.dumps({"video": {"titles": [{"text": "Title A", "primary": True}]}}), encoding="utf-8")
+        (run / "video.mp4").write_bytes(b"\0" * 100)
+        (run / "metadata.txt").write_text("desc", encoding="utf-8")
+        (run.parent / "ranking.md").write_text("style: trial_tales — mode: all\n", encoding="utf-8")
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), S.make_handler(st))
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{httpd.server_address[1]}"
+        try:
+            get = lambda u: json.loads(urllib.request.urlopen(base + u, timeout=10).read())
+            assert get("/api/ping")["app"] == "hlabs-studio"
+            snap = get("/api/state")
+            assert snap["jobs"][0]["id"] == jid and "stats" in snap, snap.keys()
+            assert any(s["id"] == "trial_tales" for s in get("/api/styles"))
+            lib = get("/api/library")
+            assert lib and lib[0]["videos"][0]["title"] == "Title A", lib
+            assert get("/api/text?rel=run1/01_video/metadata.txt")["text"] == "desc"
+            try:
+                urllib.request.urlopen(base + "/files/..%2F..%2Fstate%2Fq.json", timeout=10)
+                raise AssertionError("a path outside output/ must be refused")
+            except urllib.error.HTTPError as e:
+                assert e.code in (403, 404), e.code
+            html = urllib.request.urlopen(base + "/", timeout=10).read().decode()
+            assert "app.js" in html
+            req = urllib.request.Request(base + "/api/jobs", data=json.dumps({"urls": ["https://youtu.be/x2"], "style": "overruled",
+                                         "mode": "clips", "options": {}}).encode(), headers={"Content-Type": "application/json"})
+            assert len(json.loads(urllib.request.urlopen(req, timeout=10).read())["added"]) == 1
+            assert "--confirm-tts" not in st._command(st.jobs[-1])   # clips make no AI voice
+        finally:
+            httpd.shutdown()
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return "queue runs a job, reads stage/progress/failed-video lines, retries only the failed video; API + path guard OK"
+
+
 def t25_nvenc_levels():
     """An old GPU/driver that rejects the best NVENC options gets the next simpler set; one that rejects all falls back to x264."""
     from ucf import render
@@ -1568,6 +1640,7 @@ def main():
     check(39, "network retry + one failed video does not stop the run", t39_network_and_failed_video)
     check(40, "judge-neutral voice-over + on-screen text", t40_judge_neutral)
     check(41, "download never below 720p", t41_min_720p)
+    check(42, "H Labs Studio queue + web API", t42_studio)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))

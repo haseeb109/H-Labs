@@ -35,13 +35,27 @@ control -> Smart App Control settings -> Off; it cannot be switched back on with
 
 ## Every day
 
-* Double-click `H Labs.bat`.
+* Double-click `H Labs Studio.bat` for the browser app (below), or `H Labs.bat` for the menu.
 * Option **8** updates everything: the newest code from GitHub, any new pinned tool or package, and the newest yt-dlp.
   Do this before starting work. The window re-opens by itself afterwards.
 * Option **1**: paste the YouTube stream URL -> pick the style -> pick the mode -> answer the voice question -> wait.
   Many streams: option **9** (bulk queue). Clips for your editor: the last entry of the channel-template list (see below).
   Videos land in `output\<date>_<stream id>\`.
 * The first video on a new PC downloads the speech-recognition model once (a few hundred MB, into `runtime\hf`).
+
+## H Labs Studio (browser app) - the easiest way
+Double-click **`H Labs Studio.bat`** (or menu **0** in `H Labs.bat`). A black window opens (keep it open - it does the work) and
+the browser shows the Studio at `http://127.0.0.1:8765` (only this PC can open it).
+* **New run**: paste 1, 5 or 20 stream links (one per line) -> **Check links** (title, length, quality - a stream still live or
+  below 720p is skipped) -> pick the channel template -> pick the output (30 min / 1 hour / one video per case / clips + editor
+  guide) -> **Add to the queue**. You can add more links to the same queue any time, with another template.
+* **Queue**: the stream that is running (download -> transcript -> plan -> render video 2 of 5 -> finish, with % and time left),
+  the streams waiting (move up/down, remove), and the finished ones. **Pause after this stream**, **Stop**, **Retry** (when one
+  video of a stream failed, Retry makes only that video again - the download and plan are kept), **Open** the output folder.
+* **Library**: every finished video with its thumbnail, QC result, titles (Copy), description / chapters / tags or the editor
+  guide (Copy all) and an upload checklist. **Mark as uploaded** moves it out of "Ready to upload".
+* Closed the window by accident? Open the Studio again: the queue goes on from the stream that was running.
+* The Studio runs the same pipeline as the menu (same quality, same cleanup); the menu still works as before.
 
 ## Clips only (last entry of the template list)
 For channels where your own editor finishes the video. In the channel-template list pick the last entry, **CLIPS ONLY**,

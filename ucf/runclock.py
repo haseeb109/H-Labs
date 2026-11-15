@@ -2,6 +2,7 @@
 run_stream.py calls stage("download"), stage("transcript"), ... ; lines() gives the end-of-run block, history() appends one row
 to state/run_history.csv (one line per run, so average speed per laptop / style can be compared later)."""
 import csv
+import os
 import time
 from pathlib import Path
 
@@ -18,6 +19,8 @@ def stage(name):
     if T["cur"]:
         T["done"].append((T["cur"], now - T["cur_t"]))
     T["cur"], T["cur_t"] = name, now
+    if name and os.environ.get("HL_STUDIO"):            # H Labs Studio (GUI) follows the run through these lines
+        print(f"@@stage {name}", flush=True)
 
 
 def total():

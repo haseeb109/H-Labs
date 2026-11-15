@@ -137,6 +137,7 @@ def main():
                                    "clips (one clean clip per case + editor guide, no overlays / voice / watermark)")
     ap.add_argument("--tts", help="force one TTS provider (ai33|voicestudio|say|dummy)")
     ap.add_argument("--no-watermark", action="store_true", help="skip the anti-copy watermark for this run")
+    ap.add_argument("--keep-source", action="store_true", help="keep the downloaded stream at the end (no cleanup)")
     ap.add_argument("--queued", action="store_true", help="part of a bulk queue: no per-stream notification / folder window "
                                                           "(the queue reports once at the end)")
     a = ap.parse_args()
@@ -148,6 +149,8 @@ def main():
     if a.queued:
         cfg["notify_when_done"] = False
         cfg["open_output_after_run"] = False
+    if a.keep_source:
+        cfg["cleanup_after_run"] = "never"
     _WORK["notify"] = cfg.get("notify_when_done", True)
     from ucf import load as LOAD
     _prio = LOAD.lower_priority(cfg)                     # ffmpeg / whisper children inherit it: the PC stays responsive
@@ -440,6 +443,8 @@ def main():
     if _jn:
         ui(f"judge-neutral: {_jn} voice-over / on-screen text(s) now say 'the judge' instead of the name")
     only = {int(x) for x in a.only.split(",")} if a.only else None
+    if os.environ.get("HL_STUDIO"):
+        print(f"@@videos {sum(1 for v in plan['videos'] if not only or v['n'] in only)}", flush=True)
     if cfg.get("output_kind") == "clips":
         return clips_output(plan, plan_path, work, state, sid, upload, url, video_path, segs, cfg, mode, only, a)
     # cross-channel reuse guard (spec 9.5): warn, never block
