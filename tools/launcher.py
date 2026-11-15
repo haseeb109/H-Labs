@@ -103,16 +103,32 @@ def pick_style():
 
 
 def pick_mode():
-    """Video length mode for fully edited videos (clips only has no mode: every case >= 8:00 becomes a clip)."""
+    """Video length mode for fully edited videos (clips only has no mode: every long-enough case becomes a clip)."""
     print("\nVideo mode for this run:\n  1) 30 min video   (v9 bundles, 20-40 min)\n  2) 1 hour video   (v9 bundles, 50-70 min)\n"
-          "  3) All cases      (every case >= 8:00 becomes its own video, ranked)")
+          "  3) All cases      (every case of 8:00 / 5:00+ becomes its own video, ranked)\n"
+          "  4) As-is re-edit  (the WHOLE video becomes ONE edited video: no case selection, nothing skipped -\n"
+          "                     for a single video link or your own file)")
     cur = _read(".mode", "all")
-    d = {"30": 1, "60": 2, "all": 3}.get(cur, 3)
-    m = ask(f"Pick [1-3, Enter={d}]: ", str(d))
-    mode = {"1": "30", "2": "60", "3": "all"}.get(m, {1: "30", 2: "60", 3: "all"}[d])
+    d = {"30": 1, "60": 2, "all": 3, "asis": 4}.get(cur, 3)
+    m = ask(f"Pick [1-4, Enter={d}]: ", str(d))
+    mode = {"1": "30", "2": "60", "3": "all", "4": "asis"}.get(m, {1: "30", 2: "60", 3: "all", 4: "asis"}[d])
     _write(".mode", mode)
     print("mode:", mode)
     return mode
+
+
+def min_case_args(mode):
+    """Mode all / clips: the shortest case that gets its own video -> ["--min-case", "5"] (or 8). Other modes: []."""
+    if mode not in ("all", "clips"):
+        return []
+    cur = _read(".mincase", "8")
+    d = "2" if cur == "5" else "1"
+    m = ask(f"\nShortest case for its own {'clip' if mode == 'clips' else 'video'}:\n  1) 8 minutes (default)\n  2) 5 minutes\n"
+            f"Pick [1-2, Enter={d}]: ", d)
+    mins = "5" if (m or d) == "2" else "8"
+    _write(".mincase", mins)
+    print(f"cases of {mins}:00 or more")
+    return ["--min-case", mins]
 
 
 def pick_run():
@@ -176,6 +192,7 @@ def bulk():
     sid, mode = pick_run()
     if not sid:
         return
+    mca = min_case_args(mode)
     tts_ok = mode != "clips" and confirm_tts()
     QUEUE.parent.mkdir(exist_ok=True)
     QUEUE.write_text("\n".join(urls) + "\n", encoding="utf-8")
@@ -184,7 +201,7 @@ def bulk():
     t0, done, failed = _t.time(), [], []
     for i, url in enumerate(urls, 1):
         print("\n" + "#" * 64 + f"\n#  QUEUE {i}/{len(urls)}:  {url}\n" + "#" * 64)
-        args = [url, "--brain", _brain(), "--style", sid, "--mode", mode, "--queued"] + (["--confirm-tts"] if tts_ok else [])
+        args = [url, "--brain", _brain(), "--style", sid, "--mode", mode, "--queued"] + mca + (["--confirm-tts"] if tts_ok else [])
         try:
             r = subprocess.run([sys.executable, "run_stream.py"] + args, cwd=ROOT)
             (done if r.returncode == 0 else failed).append(url)
@@ -354,7 +371,7 @@ def main():
         print("\n==============================================\n  H LABS  -  UMF Case Factory"
               f"\n  brain: {_brain()}   |   last run: {last}"
               f"\n  output: {ROOT / 'output'}\n==============================================")
-        print("  1) New video from a YouTube stream URL (full pipeline)\n  2) Local file mode (already downloaded / pre-cut clips)\n"
+        print("  1) New video from a YouTube stream URL (full pipeline)\n  2) Your own downloaded video / folder (no download; transcript optional)\n"
               "  3) Change brain provider\n  4) Edit API keys\n  5) Open output folder\n  6) Run self-test\n  7) Setup check (what is installed?)\n  8) Update H Labs (GitHub code + yt-dlp)\n"
               "  9) BULK QUEUE - many stream links, one after the other, until all are done\n"
               "  0) Open H Labs Studio (browser app: queue, progress, upload kit)\n  q) Quit")
@@ -366,23 +383,30 @@ def main():
             sid, mode = pick_run()
             if not sid:
                 continue
-            args = [url, "--brain", _brain(), "--style", sid, "--mode", mode]
+            args = [url, "--brain", _brain(), "--style", sid, "--mode", mode] + min_case_args(mode)
             if mode != "clips" and confirm_tts():          # clips mode makes no AI voice
                 args.append("--confirm-tts")
             run_stream(args)
         elif pick == "2":
-            vf = ask("Video file path (or leave empty if using pre-cut clips): ")
-            sid_ = ask("Stream ID (e.g. lVQ79x0Hd_w): ")
-            slen = ask("Stream length H:MM:SS: ")
-            tr = ask("Transcript file (empty = reuse work/<id>/transcript.json): ")
+            print("\nYour own downloaded video: give the video FILE, or a FOLDER that holds it (+ its transcript, if you have one:\n"
+                  ".json / .json3 / .vtt / .srt). The download is skipped; no transcript -> whisper makes one.")
+            src = ask("Video file or folder: ").strip('"')
+            if not src:
+                continue
+            try:
+                if str(ROOT) not in sys.path:
+                    sys.path.insert(0, str(ROOT))
+                from ucf import local_src
+                v, t = local_src.resolve(src)
+            except ValueError as e:
+                print("  ", e)
+                continue
+            print(f"  video:      {v}\n  transcript: {t or 'none - whisper will make one'}")
+            tr = ask("Other transcript file (Enter = as above): ").strip('"')
             sid, mode = pick_run()
             if not sid:
                 continue
-            args = ["--stream-id", sid_, "--brain", _brain(), "--style", sid, "--mode", mode]
-            if vf:
-                args += ["--video-file", vf]
-            if slen:
-                args += ["--stream-length", slen]
+            args = ["--local", src, "--brain", _brain(), "--style", sid, "--mode", mode] + min_case_args(mode)
             if tr:
                 args += ["--transcript-file", tr]
             if mode != "clips" and confirm_tts():

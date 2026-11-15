@@ -541,13 +541,9 @@ def t11_title_validator_v10():
     return "number normaliser + 8 title rule families"
 
 
-def t12_mode_all_orchestration():
-    """12.1 #8: two-pass mock brain, mode all - 2 cases >= 8:00 + 1 short -> 2 ranked videos,
-    ranking files, title/backup script-filled, carry-forward untouched."""
-    import json as _json
-    import os
-    import tempfile
-    from ucf import mode_all, config as CFG, transcript
+def _t12_fixtures():
+    """Mock docket shared by t12 (mode all) and t44 (as-is): segs, compact lines, 3 cases, Pass A reply, Pass B maker."""
+    from ucf import transcript
 
     def S(a, b, text):
         return {"start": float(a), "end": float(b), "text": text}
@@ -661,7 +657,18 @@ def t12_mode_all_orchestration():
                 "community_post": "New hearing out now: thirteen skipped dates and an old file read out loud. Was the judge fair? Tell us what you think below.",
                 "publish": {"slot": "9am ET"}, "verdict_pending": False, "followup_owed": None,
                 "overlays": case.get("overlays", [])}
+    return segs, lines, caseA, caseB, caseC, passA, video_obj
 
+
+def t12_mode_all_orchestration():
+    """12.1 #8: two-pass mock brain, mode all - 2 cases >= 8:00 + 1 short -> 2 ranked videos,
+    ranking files, title/backup script-filled, carry-forward untouched."""
+    import json as _json
+    import os
+    import tempfile
+    from ucf import mode_all, config as CFG
+
+    segs, lines, caseA, caseB, caseC, passA, video_obj = _t12_fixtures()
     tmp = Path(tempfile.mkdtemp())
     cfg = CFG.load(style="trial_tales")
     cfg.update({"brain": "mock", "mode": "all", "title_system": "v10", "_mode_source": "cli",
@@ -1559,6 +1566,22 @@ def t42_studio():
                                          "mode": "clips", "options": {}}).encode(), headers={"Content-Type": "application/json"})
             assert len(json.loads(urllib.request.urlopen(req, timeout=10).read())["added"]) == 1
             assert "--confirm-tts" not in st._command(st.jobs[-1])   # clips make no AI voice
+            for hdrs in ({"Content-Type": "text/plain"}, {"Content-Type": "application/json", "Origin": "https://evil.example"}):
+                bad = urllib.request.Request(base + "/api/stop", data=b"{}", headers=hdrs)
+                try:
+                    urllib.request.urlopen(bad, timeout=10)
+                    raise AssertionError(f"a request from another site must be refused: {hdrs}")
+                except urllib.error.HTTPError as e:
+                    assert e.code == 403, e.code
+            evil = urllib.request.Request(base + "/api/state", headers={"Host": "evil.example"})
+            try:
+                urllib.request.urlopen(evil, timeout=10)
+                raise AssertionError("a foreign Host (DNS rebinding) must be refused")
+            except urllib.error.HTTPError as e:
+                assert e.code == 403, e.code
+            loc = st.add([r"D:\Streams\case one"], "overruled", "all", {"min_case": "5"})[0]
+            cmd = st._command(st._job(loc))
+            assert cmd[2:4] == ["--local", r"D:\Streams\case one"] and cmd[cmd.index("--min-case") + 1] == "5", cmd
         finally:
             httpd.shutdown()
     finally:
@@ -1601,6 +1624,102 @@ def t43_whisper_crash_fallback():
     finally:
         subprocess.run = real
     return "crash with the voice filter -> retried without it; 3 crashes -> error names the C++ runtime + Setup.bat"
+
+
+def t44_local_mincase_asis():
+    """Owner request 2026-11-15: (1) shortest case 5 or 8 min, (2) your own video / folder (+ transcript) skips the download,
+    (3) as-is re-edit: the whole video = ONE case, nothing skipped, even with 3 hearings and one under 2 minutes inside."""
+    import copy
+    from ucf import local_src, mode_all, config as CFG, validate as VAL
+    from ucf.timeutil import fmt_tc
+    tmp = Path(tempfile.mkdtemp())
+    sid = None
+    try:
+        # (2) folder -> biggest video + its transcript; a file -> same-name transcript; ids
+        d = tmp / "My Stream"
+        d.mkdir()
+        (d / "small.mp4").write_bytes(b"\0" * 10)
+        (d / "Court day [abcDEF12345].mp4").write_bytes(b"\0" * 1000)
+        (d / "Court day [abcDEF12345].en.vtt").write_text("WEBVTT\n", encoding="utf-8")
+        (d / "meta.json").write_text("{}", encoding="utf-8")
+        v, t = local_src.resolve(str(d))
+        assert v.name.startswith("Court day") and t and t.suffix == ".vtt", (v, t)
+        assert local_src.stream_id(v) == "abcDEF12345" and local_src.stream_id(d / "small.mp4") == "local_small", "ids"
+        assert local_src.resolve(str(d / "small.mp4"))[1] is None
+        for bad in (tmp / "nope", tmp):
+            try:
+                local_src.resolve(str(bad))
+                raise AssertionError(f"{bad} must be refused")
+            except ValueError:
+                pass
+        # run_stream: --local folder + --min-case 5, and mode asis (stops after the transcript)
+        src = tmp / "src"
+        src.mkdir()
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=gray:s=320x180:d=20", "-f", "lavfi",
+                        "-i", "sine=d=20", "-shortest", str(src / "Hearing one.mp4")], check=True)
+        (src / "Hearing one.json").write_text(json.dumps([{"start": 0, "end": 5, "text": "calling CR1234 state versus test"},
+                                                          {"start": 5, "end": 20, "text": "hello court"}]), encoding="utf-8")
+        sid = local_src.stream_id(src / "Hearing one.mp4")
+        for args, want in ((["--mode", "all", "--min-case", "5"], "one video per case >= 5 min"),
+                           (["--mode", "asis"], "as-is")):
+            r = subprocess.run([sys.executable, str(ROOT / "run_stream.py"), "--local", str(src)] + args + ["--stage", "transcript"],
+                               capture_output=True, text=True, cwd=ROOT, timeout=120)
+            out = r.stdout + r.stderr
+            assert r.returncode == 0 and want in out and "local video:" in out and "downloading" not in out, out[-1500:]
+            assert "transcript: 2 segments" in out, out[-800:]
+        assert (src / "Hearing one.mp4").exists(), "your own file is never touched"
+
+        # (1) the 5 min rule: a 6-minute case is used with 5, skipped with 8
+        segs, lines, caseA, caseB, caseC, passA, video_obj = _t12_fixtures()
+        p6 = copy.deepcopy(passA)
+        p6["cases"][0]["out"] = "0:16:00"
+        for mins, status in ((5, "used"), (8, "skipped")):
+            pl = copy.deepcopy(p6)
+            mode_all.finalize_cases(pl, {"min_case_minutes": mins})
+            assert pl["cases"][0]["status"] == status, (mins, pl["cases"][0]["status"])
+
+        # (3) as-is: Pass A listed 3 cases (one only 1 minute) -> ONE case 0:00:00-0:55:00, one video
+        merged = mode_all.asis_merge(copy.deepcopy(passA), 3300)
+        c = merged["cases"][0]
+        assert len(merged["cases"]) == 1 and c["in"] == "0:00:00" and c["out"] == "0:55:00" and c["status"] == "used"
+        assert c["also_in_video"] == ["Mary Plead", "Reset Only"] and not merged["gaps"], c
+        cfg = CFG.load(style="trial_tales")
+        cfg.update({"brain": "mock", "mode": "all", "title_system": "v10", "_mode_source": "cli", "max_repair_rounds": 0,
+                    "_source_file": "mock.mp4", "_asis": True, "min_case_minutes": 0.0})
+        (tmp / "a.json").write_text(json.dumps(passA), encoding="utf-8")
+        whole = dict(caseA, **{"in": "0:00:00", "out": "0:55:00"})
+        vid = video_obj(whole, 1, "a", "13")
+        quotes = ["thirteen occasions", "from 2019", "six warrants from 2011", "guilty on both files"]
+        kinds = ["fact", "coming_up", "so_far"]
+        vid["overlays"] = [{"tc": fmt_tc(60 + i * 260), "kind": kinds[i % 3], "text": f"Overlay line number {i + 1} for this hearing",
+                            "dur": 7, "ref_tc": fmt_tc(120 + i * 260) if kinds[i % 3] == "coming_up" else None,
+                            "evidence": quotes[i % 4]} for i in range(12)]     # a 55 min video needs ~12 overlays (O-03)
+        vid["hook"] = dict(vid["hook"], **{"in": "0:38:00", "out": "0:38:12"})     # from the back 60% of the video
+        vid["chapters"] = vid["chapters"] + [{"tc": "0:30:00", "label": "Six warrants read out"}]
+        (tmp / "b.json").write_text(json.dumps({"video": vid}), encoding="utf-8")
+        cfg["mock_passA_replies"], cfg["mock_passB_replies"] = [str(tmp / "a.json")], [str(tmp / "b.json")]
+        work = tmp / "w"
+        work.mkdir()
+        plan, errs = mode_all.build_plan(segs, lines, "SCAN", 3300, cfg, lambda *m: None, work)
+        assert not errs, errs[:4]
+        assert len(plan["cases"]) == 1 and len(plan["videos"]) == 1 and plan["videos"][0]["case_ids"] == [1], plan["videos"]
+        assert plan["cases"][0]["in"] == "0:00:00" and plan["cases"][0]["out"] == "0:55:00"
+        assert not VAL.validate(plan, 3300, segs, cfg)[0], VAL.validate(plan, 3300, segs, cfg)[0][:3]
+        from ucf import brain as B
+        assert "AS-IS RE-EDIT" in B.build_prompt({"source_file": "x", "stream_length": "0:55:00", "channel_name": "c"}, "", lines, [], dict(cfg, _cases_only=True))
+        assert "AS-IS RE-EDIT" not in B.build_prompt({"source_file": "x", "stream_length": "0:55:00", "channel_name": "c"}, "", lines, [], dict(cfg, _cases_only=True, _asis=False))
+    finally:
+        if sid:
+            shutil.rmtree(ROOT / "work" / sid, ignore_errors=True)
+            srcmap = ROOT / "state" / "sources.json"
+            try:
+                m = json.loads(srcmap.read_text(encoding="utf-8"))
+                if m.pop(f"{sid}.mp4", None) is not None:
+                    srcmap.write_text(json.dumps(m, indent=2, ensure_ascii=False), encoding="utf-8")
+            except Exception:
+                pass
+        shutil.rmtree(tmp, ignore_errors=True)
+    return "folder -> video + transcript, no download; 5 min keeps a 6 min case (8 skips it); as-is = 1 case, whole video, 1 video"
 
 
 def t25_nvenc_levels():
@@ -1679,6 +1798,7 @@ def main():
     check(41, "download never below 720p", t41_min_720p)
     check(42, "H Labs Studio queue + web API", t42_studio)
     check(43, "whisper crash fallback (C++ runtime)", t43_whisper_crash_fallback)
+    check(44, "own video / 5 min cases / as-is re-edit", t44_local_mincase_asis)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))

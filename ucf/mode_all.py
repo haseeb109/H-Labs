@@ -39,7 +39,7 @@ def finalize_cases(plan, cfg):
             kept = b - a
             if kept < mc:
                 c["status"] = "skipped"
-                c["reject_reason"] = "interrupted, longest segment under 8:00"
+                c["reject_reason"] = f"interrupted, longest segment under {cfg.get('min_case_minutes', 8):g}:00"
         if c.get("status") != "rejected":
             if kept >= mc:
                 # the script owns the threshold (spec 5.1): an over-cautious brain skip is corrected here
@@ -49,8 +49,44 @@ def finalize_cases(plan, cfg):
                 used.append(c)
             elif c.get("status") == "used":
                 c["status"] = "skipped"
-                c["reject_reason"] = f"under {cfg.get('min_case_minutes', 8):.0f}:00"
+                c["reject_reason"] = f"under {cfg.get('min_case_minutes', 8):g}:00"
     return used
+
+
+def asis_merge(plan, stream_len):
+    """As-is re-edit: whatever cases the brain listed, the plan holds ONE case = the whole video (0:00:00 - end), status used,
+    nothing removed or set aside. The case facts (name, charge, result, phases, virality) come from the brain's main case."""
+    if not isinstance(plan, dict):
+        return plan
+    cs = [c for c in plan.get("cases") or [] if isinstance(c, dict)]
+    if not cs:
+        return plan
+
+    def span(c):
+        try:
+            return parse_tc(c["out"]) - parse_tc(c["in"])
+        except Exception:
+            return 0
+    main = max(cs, key=lambda c: (c.get("status") == "used", span(c)))
+    m = dict(main)
+    for k in ("removes", "remove", "recall_ok", "reject_reason", "needs_review", "overlays"):
+        m.pop(k, None)
+    m.update({"id": 1, "status": "used", "resume": True, "interrupted": False, "segments": None,
+              "in": "0:00:00", "out": fmt_tc(int(stream_len))})
+    others = [c.get("name") for c in cs if c is not main and c.get("name") and c.get("name") != main.get("name")]
+    if others:
+        m["also_in_video"] = others
+    ph = []
+    for p in m.get("phases") or []:
+        try:
+            if 0 <= parse_tc(p.get("tc")) <= stream_len:
+                ph.append(p)
+        except Exception:
+            continue
+    m["phases"] = sorted(ph, key=lambda p: parse_tc(p["tc"]))
+    out = dict(plan, cases=[m], gaps=[])
+    out["asis"] = True
+    return out
 
 
 def rank_used(used):
@@ -164,6 +200,8 @@ def _pass_a_once(cfg_a, prompt_a, stream_len, segs, ui, work, tag="", soft=False
         last_out = B.USAGE[-1].get("output", 0) if len(B.USAGE) > n_usage else 0
         try:
             plan = B.extract_json(txt)
+            if cfg_a.get("_asis"):
+                plan = asis_merge(plan, stream_len)      # the script owns the as-is rule: one case, the whole video
         except Exception as e:
             plan, errs = None, [f"Pass A: not valid JSON ({e})"]
             # only the LAST reply goes back (not every earlier round): on a 3-hour docket the growing conversation ran
@@ -378,7 +416,7 @@ def build_plan(segs, lines, scan_text, stream_len, cfg, ui=print, work=None, sca
     judge = cfg.get("judge_name", "Judge Boyd")
     # ---------- evidence (transcript signals now; the Pass A prompt cites them) ----------
     ev = None
-    if (cfg.get("boundary") or {}).get("enabled", True) and video_path and Path(video_path).exists():
+    if (cfg.get("boundary") or {}).get("enabled", True) and video_path and Path(video_path).exists() and not cfg.get("_asis"):
         try:
             ev = EV.build(video_path, segs, scan_rep or {"clusters": []}, cfg, work)
             cfg["_boundary_evidence"] = (
@@ -501,7 +539,7 @@ def write_ranking(plan, outroot, cfg, sid):
     """ranking.md + ranking.csv for every mode (rank = video order in bundle modes)."""
     by_id = {c["id"]: c for c in plan.get("cases", [])}
     vids = plan.get("videos", [])
-    md = [f"# Ranking — {sid} — style: {cfg.get('style')} — mode: {cfg.get('mode')}"]
+    md = [f"# Ranking — {sid} — style: {cfg.get('style')} — mode: {cfg.get('_mode_label') or cfg.get('mode')}"]
     rows = ["rank,folder,name,cause_no,in,out,length,score,why,confidence,title_karma,title_quote,"
             "title_number,title_twist,title_human,primary_style,thumbnail_text,publish_slot,status"]
     for v in vids:

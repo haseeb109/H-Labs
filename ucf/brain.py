@@ -137,6 +137,8 @@ def build_prompt(plan_inputs, scan_text, lines, carried, cfg=None):
     mods = [_shared("schema_v10.md", cfg), _shared("boundary_rules.md", cfg)]
     if cfg.get("mode") == "all":
         mods.append(_shared("mode_all.md", cfg))
+        if cfg.get("_asis"):                              # as-is re-edit: the whole video is ONE case
+            mods.append(_shared("mode_asis.md", cfg))
     if cfg.get("_cases_only") and examples_on(cfg):
         mods.append(_shared("example_pass_a.md", cfg))
     # titles/overlays modules only when the run will actually package videos (Pass B) - Pass A stays lean

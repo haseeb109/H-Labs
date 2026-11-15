@@ -1,14 +1,14 @@
 /* H Labs Studio front end - plain JS, no build step. Talks to tools/studio/server.py (same origin). */
 "use strict";
 const S = { view: "queue", snap: null, styles: [], lib: null, sel: null, logFor: null, logText: [],
-  nr: { text: "", probes: {}, style: "", mode: "all", voice: true, watermark: true, cleanup: true } };
+  nr: { text: "", probes: {}, style: "", mode: "all", minCase: "8", voice: true, watermark: true, cleanup: true } };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ICON = {
   play: '<svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   folder: '<svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7h6l2 2h10v10H3z"/></svg>',
 };
-const MODES = { "30": "30 min videos", "60": "1 hour videos", all: "One video per case", clips: "Clips + editor guide" };
+const MODES = { "30": "30 min videos", "60": "1 hour videos", all: "One video per case", clips: "Clips + editor guide", asis: "As-is re-edit" };
 const STAGES = ["Download", "Transcript", "Plan", "Render", "Finish"];
 
 async function api(path, body) {
@@ -24,7 +24,8 @@ async function copy(text) {
 const hms = (s) => { s = Math.round(s || 0); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
   return h ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}:${String(x).padStart(2, "0")}`; };
 const styleName = (id) => (S.styles.find((s) => s.id === id) || {}).name || id;
-const shortUrl = (u) => u.replace(/^https?:\/\/(www\.)?/, "").slice(0, 60);
+const isLink = (u) => /^https?:\/\//i.test(u);
+const shortUrl = (u) => isLink(u) ? u.replace(/^https?:\/\/(www\.)?/, "").slice(0, 60) : (u.length > 60 ? "…" + u.slice(-59) : u);
 
 /* ------------------------------------------------------------------ shell */
 function route() {
@@ -171,18 +172,26 @@ const PREVIEW = {
   court_beacon: ["#050608", '<i style="left:0;right:0;top:0;height:9px;background:#121722"></i><i style="left:10px;right:10px;top:16px;height:44px;background:#2E3440"></i><i style="right:10px;bottom:8px;width:22px;height:12px;background:#5B8DEF"></i><i style="right:36px;bottom:8px;width:22px;height:12px;background:#5B8DEF"></i>'],
   justice_served: ["#121417", '<i style="left:8px;top:8px;width:92px;height:10px;background:#1C2026;border-left:3px solid #FFB000"></i><i style="left:8px;top:24px;width:64px;height:38px;background:#343A44"></i><i style="right:8px;top:24px;width:34px;height:38px;background:#1C2026"></i><i style="left:8px;bottom:6px;width:54px;height:8px;background:#FFB000"></i>'],
 };
-const urlsOf = (t) => [...new Set((t.match(/https?:\/\/\S+/g) || []).map((u) => u.replace(/[,;]+$/, "")))];
+// one item per line: a YouTube link, or the path of your own video file / folder (D:\Streams\x.mp4, \\server\share, /home/...)
+const urlsOf = (t) => [...new Set(t.split(/\r?\n/).map((l) => l.trim().replace(/^["']|["']$/g, "")).flatMap((l) =>
+  isLink(l) || !/https?:\/\//i.test(l) ? [isLink(l) ? l.split(/\s+/)[0].replace(/[,;]+$/, "") : l] : (l.match(/https?:\/\/\S+/g) || []))
+  .filter((l) => isLink(l) || /^([A-Za-z]:[\\/]|\\\\|\/)/.test(l)))];
 function probeRow(u) {
   const p = S.nr.probes[u];
   if (!p) return `<div class="probe"><span class="t">${esc(shortUrl(u))}</span><span class="chip">Not checked</span></div>`;
   if (p.pending) return `<div class="probe"><span class="t">${esc(shortUrl(u))}</span><span class="chip run">Checking...</span></div>`;
   if (!p.ok) return `<div class="probe skip"><span class="t">${esc(shortUrl(u))}</span><span class="chip bad">${esc(p.error || "Could not read")}</span></div>`;
   const low = p.height && p.height < (p.min_height || 720);
+  if (p.local) return `<div class="probe"><span class="t" title="${esc(p.video)}">${esc(p.title)}</span><span class="muted small">${hms(p.duration)}</span>
+    <span class="chip ${p.transcript ? "ok" : ""}" title="${esc(p.transcript)}">${p.transcript ? "Transcript found" : "No transcript · whisper"}</span>
+    <span class="chip ${low ? "warn" : "ok"}">Your file · ${p.height}p</span></div>`;
   return `<div class="probe ${p.live || low ? "skip" : ""}"><span class="t" title="${esc(p.title)}">${esc(p.title)}</span><span class="muted small">${p.live ? "Still live" : hms(p.duration)}</span>
     ${p.live ? '<span class="chip bad">Still live · skipped</span>' : low ? `<span class="chip bad">Only ${p.height}p · skipped</span>` : `<span class="chip ok">${p.height}p${p.kbps ? " · " + (p.kbps / 1000).toFixed(1) + " Mbps" : ""}</span>`}</div>`;
 }
 function usableUrls() {
-  return urlsOf(S.nr.text).filter((u) => { const p = S.nr.probes[u]; return !p || p.pending || (p.ok && !p.live && !(p.height && p.height < (p.min_height || 720))); });
+  return urlsOf(S.nr.text).filter((u) => { const p = S.nr.probes[u];
+    if (!isLink(u)) return !!(p && p.ok);                 // your own file: it must be found first (Check)
+    return !p || p.pending || (p.ok && !p.live && !(p.height && p.height < (p.min_height || 720))); });
 }
 function renderNew() {
   const nr = S.nr; if (!nr.style && S.styles.length) nr.style = S.styles[0].id;
@@ -196,10 +205,10 @@ function renderNew() {
     <form class="col-main" onsubmit="return false">
       <section class="card">
         <div class="step"><b>STEP 1</b><h2>Stream links</h2></div>
-        <label style="display:flex;flex-direction:column;gap:6px"><span class="muted" style="font-size:13px">Paste one or many YouTube links (one per line). Each stream becomes one job; they run one after the other.</span>
-          <textarea class="links" id="links" placeholder="https://www.youtube.com/live/...">${esc(nr.text)}</textarea></label>
+        <label style="display:flex;flex-direction:column;gap:6px"><span class="muted" style="font-size:13px">One per line: YouTube links, or the path of your own downloaded video / folder (with its transcript if you have one - the download is skipped). Each line becomes one job; they run one after the other.</span>
+          <textarea class="links" id="links" placeholder="https://www.youtube.com/live/...&#10;D:\Streams\Smith hearing">${esc(nr.text)}</textarea></label>
         <div class="actions" style="justify-content:flex-start"><button type="button" class="btn" onclick="checkLinks()" ${urls.length ? "" : "disabled"}>Check ${urls.length || ""} link${urls.length === 1 ? "" : "s"}</button>
-          <span class="muted small">Checks title, length, quality (${m.min_height || 720}p minimum) and whether the stream is still live.</span></div>
+          <span class="muted small">Checks title, length, quality (${m.min_height || 720}p minimum), whether a stream is still live, and finds the video + transcript in your folder.</span></div>
         ${urls.length ? `<div class="probes">${urls.map(probeRow).join("")}</div>` : ""}
       </section>
       <section class="card">
@@ -212,8 +221,13 @@ function renderNew() {
         <div class="step"><b>STEP 3</b><h2>Output</h2></div>
         <div class="seg" role="radiogroup" aria-label="Output">${Object.entries(MODES).map(([k, t]) =>
           `<button type="button" role="radio" aria-checked="${nr.mode === k}" onclick="pickMode('${k}')">${esc(t)}</button>`).join("")}</div>
-        <span class="muted small">${nr.mode === "clips" ? "Hook + whole case, dead air cut, no overlays / voice / watermark, plus EDITOR_GUIDE.txt for your editor (in this channel's name)."
-          : nr.mode === "all" ? "Every verified case of 8:00 or more becomes its own fully edited video, ranked." : "Several cases joined into one fully edited video."}</span>
+        <span class="muted small">${nr.mode === "clips" ? `Hook + whole case, dead air cut, no overlays / voice / watermark, plus EDITOR_GUIDE.txt for your editor (in this channel's name). Every case of ${nr.minCase}:00 or more.`
+          : nr.mode === "all" ? `Every verified case of ${nr.minCase}:00 or more becomes its own fully edited video, ranked.`
+          : nr.mode === "asis" ? "The WHOLE video becomes ONE fully edited video, as it is: no case selection, nothing skipped or cut out - one case or several. For a single video link or your own file."
+          : "Several cases joined into one fully edited video."}</span>
+        ${nr.mode === "all" || nr.mode === "clips" ? `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span style="font-weight:500">Shortest case</span>
+          <div class="seg" role="radiogroup" aria-label="Shortest case">${["8", "5"].map((k) =>
+            `<button type="button" role="radio" aria-checked="${nr.minCase === k}" onclick="S.nr.minCase='${k}';renderNew()">${k} minutes</button>`).join("")}</div></div>` : ""}
         <label class="check"><input type="checkbox" ${nr.voice && nr.mode !== "clips" ? "checked" : ""} ${nr.mode === "clips" ? "disabled" : ""} onchange="S.nr.voice=this.checked"><span>Allow AI voice-over above 5,000 characters</span></label>
         <label class="check"><input type="checkbox" ${nr.watermark ? "checked" : ""} ${nr.mode === "clips" ? "disabled" : ""} onchange="S.nr.watermark=this.checked"><span>Channel watermark</span></label>
         <label class="check"><input type="checkbox" ${nr.cleanup ? "checked" : ""} onchange="S.nr.cleanup=this.checked"><span>Delete the downloaded stream when its videos are done</span></label>
@@ -223,13 +237,14 @@ function renderNew() {
       <h2>Run summary</h2>
       <div class="kv"><span>Streams</span><span style="font-weight:500">${use.length} to add${urls.length - use.length ? ` · ${urls.length - use.length} skipped` : ""}</span></div>
       <div class="kv"><span>Template</span><span style="font-weight:500">${esc(styleName(nr.style))}</span></div>
-      <div class="kv"><span>Output</span><span style="font-weight:500">${esc(MODES[nr.mode])}</span></div>
+      <div class="kv"><span>Output</span><span style="font-weight:500">${esc(MODES[nr.mode])}${nr.mode === "all" || nr.mode === "clips" ? " · " + nr.minCase + ":00+" : ""}</span></div>
       <div style="height:1px;background:var(--line2)"></div>
       <span class="small muted" style="font-weight:600">ESTIMATE ON THIS PC${known ? "" : " (check the links for one)"}</span>
       <div class="kv"><span>Time</span><span class="mono">${secs ? "≈ " + hms(estMin * 60) : "–"}</span></div>
       <div class="kv"><span>Brain</span><span class="mono">${secs ? "≈ $" + cost.toFixed(2) : "–"}</span></div>
       <div class="kv"><span>Disk needed</span><span class="mono">${secs ? "≈ " + Math.max(1, Math.round(secs / 3600 * 1.5)) + " GB of " + (m.free_gb || "?") + " GB" : "–"}</span></div>
       <button type="button" class="btn primary lg" onclick="addJobs()" ${use.length ? "" : "disabled"}>Add ${use.length} stream${use.length === 1 ? "" : "s"} to the queue</button>
+      ${urls.some((u) => !isLink(u) && !(S.nr.probes[u] || {}).ok) ? '<span class="small" style="color:var(--warn-ink)">Press Check for your own files first.</span>' : ""}
       <span class="small muted">They start one after the other as soon as the PC is free. You can close this tab; keep the Studio window open.</span>
     </section></aside>
   </div>`;
@@ -246,7 +261,7 @@ async function checkLinks() {
 async function addJobs() {
   const urls = usableUrls(); if (!urls.length) return;
   const nr = S.nr;
-  const r = await api("/api/jobs", { urls, style: nr.style, mode: nr.mode, options: { voice: nr.voice, watermark: nr.watermark, cleanup: nr.cleanup } });
+  const r = await api("/api/jobs", { urls, style: nr.style, mode: nr.mode, options: { voice: nr.voice, watermark: nr.watermark, cleanup: nr.cleanup, min_case: nr.minCase } });
   toast(`${(r.added || []).length} stream(s) added to the queue`);
   S.nr.text = ""; S.nr.probes = {};
   location.hash = "#queue"; await refresh();

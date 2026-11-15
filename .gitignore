@@ -23,6 +23,7 @@ _backup_*/
 .mode
 .style
 .output
+.mincase
 
 # Secrets must never live here (keys belong in ~/.config/umf/*.env)
 *.env

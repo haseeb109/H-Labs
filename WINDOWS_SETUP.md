@@ -57,6 +57,17 @@ the browser shows the Studio at `http://127.0.0.1:8765` (only this PC can open i
 * Closed the window by accident? Open the Studio again: the queue goes on from the stream that was running.
 * The Studio runs the same pipeline as the menu (same quality, same cleanup); the menu still works as before.
 
+## Your own video, 5 min cases, As-is re-edit
+* **Your own downloaded video** (no download): in Studio > New run put its path on a line instead of a link, e.g.
+  `D:\Streams\Smith hearing` (a folder) or `D:\Streams\Smith hearing\Smith.mp4` (the file) -> **Check**. In a folder the
+  biggest video is used, and its transcript when one is there (`.json` / `.json3` / `.vtt` / `.srt`; one named like the video
+  wins). No transcript -> whisper makes one. Menu: option **2**. Your file is never moved, changed or deleted.
+* **Shortest case 5 or 8 minutes**: for "One video per case" and "Clips" (Studio: *Shortest case*; menu: asked after the
+  mode). 8 is the default. A 5-minute run keeps its own plan, so the 8-minute plan of the same stream is not mixed in.
+* **As-is re-edit** (Studio output *As-is re-edit*, menu mode **4**): for a single video link or your own file. The WHOLE video
+  becomes ONE fully edited video in the chosen template (hook, overlays, cards, voice-over, titles), exactly as it is: no case
+  selection, nothing skipped, rejected or cut out, whether it holds one hearing or three.
+
 ## Clips only (last entry of the template list)
 For channels where your own editor finishes the video. In the channel-template list pick the last entry, **CLIPS ONLY**,
 then the channel the clips are for (its name and title style go into the guide). There is no mode question: every verified

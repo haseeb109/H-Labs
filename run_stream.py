@@ -126,6 +126,10 @@ def main():
     ap.add_argument("--stage", choices=STAGES, help="run up to and including this stage")
     ap.add_argument("--plan", help="plan.json from Claude chat / earlier run")
     ap.add_argument("--video-file", help="already-downloaded stream (skips download)")
+    ap.add_argument("--local", help="your own downloaded video OR a folder with it (+ its transcript, if you have one): skips the "
+                                    "download; no transcript -> whisper makes one")
+    ap.add_argument("--min-case", type=float, help="mode all / clips: shortest case (minutes of hearing) that gets its own video, "
+                                                   "e.g. 5 or 8 (default from config: 8)")
     ap.add_argument("--transcript-file", help="transcript json/vtt (skips caption fetch)")
     ap.add_argument("--stream-id")
     ap.add_argument("--stream-length", help="H:MM:SS (needed only when --video-file has no readable duration)")
@@ -134,13 +138,27 @@ def main():
     ap.add_argument("--brain", choices=["hive", "anthropic", "deepseek", "openai", "manual", "mock"])
     ap.add_argument("--style", help="editing style id from styles/<id>/style.json (e.g. trial_tales)")
     ap.add_argument("--mode", help="run mode: 30 (20-40 min videos) | 60 (50-70 min) | all (one video per case, ranked) | "
-                                   "clips (one clean clip per case + editor guide, no overlays / voice / watermark)")
+                                   "clips (one clean clip per case + editor guide, no overlays / voice / watermark) | "
+                                   "asis (the WHOLE video re-edited as ONE video: no case selection, nothing skipped)")
     ap.add_argument("--tts", help="force one TTS provider (ai33|voicestudio|say|dummy)")
     ap.add_argument("--no-watermark", action="store_true", help="skip the anti-copy watermark for this run")
     ap.add_argument("--keep-source", action="store_true", help="keep the downloaded stream at the end (no cleanup)")
     ap.add_argument("--queued", action="store_true", help="part of a bulk queue: no per-stream notification / folder window "
                                                           "(the queue reports once at the end)")
     a = ap.parse_args()
+    if a.local:                           # your own file / folder: same as --video-file (+ --transcript-file when one is there)
+        from ucf import local_src
+        try:
+            _v, _t = local_src.resolve(a.local)
+        except ValueError as e:
+            sys.exit(f"STOP: {e}")
+        a.video_file = str(_v)
+        a.transcript_file = a.transcript_file or (str(_t) if _t else None)
+        a.stream_id = a.stream_id or local_src.stream_id(_v)
+        print(f"local video: {_v}\n  transcript: {_t or 'none - whisper will make one'}", flush=True)
+    elif a.video_file and not a.stream_id:
+        from ucf import local_src
+        a.stream_id = local_src.stream_id(a.video_file)
     CLOCK.reset()
     CLOCK.stage("info")
     _WORK["planned_stop"] = bool(a.stage) and a.stage != "render"
@@ -164,13 +182,23 @@ def main():
     if a.mode == "clips":                 # clips only: the brain works exactly as mode "all", the output is clips + editor guides
         cfg["output_kind"] = "clips"
         a.mode = "all"
+    if a.mode == "asis":                  # as-is re-edit: the brain + render of mode "all", with the whole video as ONE case
+        cfg["_asis"] = True
+        a.mode = "all"
     mode = config.apply_mode(cfg, a.mode)
+    # after apply_mode: mode "all" sets its own 8:00 default, the run's choice wins over it
+    if cfg.get("_asis"):
+        cfg["min_case_minutes"] = 0.0
+    elif a.min_case:
+        cfg["min_case_minutes"] = float(a.min_case)
+    cfg["_mode_label"] = "asis" if cfg.get("_asis") else mode
     band = (f"{cfg['runtime_min'] // 60}-{cfg['runtime_max'] // 60} min" if mode != "all"
-            else f"one video per case >= {cfg.get('min_case_minutes', 8):.0f} min")
+            else "the whole video as ONE edited video (as-is, no case selection)" if cfg.get("_asis")
+            else f"one video per case >= {cfg.get('min_case_minutes', 8):g} min")
     # keep the active model in sync with the chosen provider unless the config pinned a custom one
     if cfg["brain"] in brain.PROVIDERS and cfg.get("model") == config.DEFAULTS["model"]:
         cfg.update(brain.cfg_for(cfg, cfg["brain"]))
-    ui(f"style: {cfg['style']}  ({config.style_path(cfg)})  |  mode: {mode}  |  band: {band}")
+    ui(f"style: {cfg['style']}  ({config.style_path(cfg)})  |  mode: {cfg['_mode_label']}  |  band: {band}")
     ui(f"load: priority {_prio or 'normal'}, CPU threads {LOAD.cpu_threads(cfg)} of {os.cpu_count()}"
        "  (config process_priority / cpu_threads)")
     root = config.ROOT
@@ -204,6 +232,13 @@ def main():
             sys.exit("This stream is still LIVE. Run again after it ends (VOD) so the file is complete.")
     else:
         meta = load_json(work / "meta.json", {})
+        if a.video_file and Path(a.video_file).exists() and not meta.get("title"):
+            # your own file: title + length from the file (the title also gives the court line when it names one)
+            meta = {"id": sid, "title": Path(a.video_file).stem, "duration": tts.dur(a.video_file),
+                    "local_file": str(Path(a.video_file).resolve())}
+            save_json(work / "meta.json", meta)
+        if meta.get("title"):
+            ui(f"stream: {meta['title']}  ({fmt_dur(meta['duration'])}, id {sid})")
     url = meta.get("url") or a.url or ""
     upload = meta.get("upload_date", "") or time.strftime("%Y%m%d")
     stream_len = meta.get("duration") or (parse_tc(a.stream_length) if a.stream_length else 0)
@@ -310,7 +345,8 @@ def main():
     # one plan per style + mode: titles follow the style's own rules and a bundle plan is not an all-cases plan, so a stream run
     # again in another style / mode must not reuse the first plan (it failed the validator: "CAPS word ... not in this style's
     # banks"). Clips use the all-cases plan of the same style.
-    plan_path = Path(a.plan) if a.plan else work / f"plan_{cfg['style']}_{mode}.json"
+    plan_path = Path(a.plan) if a.plan else work / f"plan_{cfg['style']}_{cfg['_mode_label']}" \
+        f"{'' if cfg['_mode_label'] != 'all' or cfg.get('min_case_minutes', 8) == 8 else '_min%g' % cfg['min_case_minutes']}.json"
     carried = [] if mode == "all" else load_json(state / "carry_forward.json", [])
     inputs = {"source_file": source_file, "stream_length": fmt_tc(stream_len), "channel_name": cfg["channel_name"]}
     lines = transcript.compact_lines(segs)
@@ -537,7 +573,7 @@ def main():
             log = load_json(state / "used_cases.json", [])
             log.append({"stream_id": sid, "cause_no": lead.get("cause_no", ""), "name": lead.get("name", ""),
                         "in": lead.get("in", ""), "out": lead.get("out", ""), "style": cfg["style"],
-                        "mode": cfg.get("mode", ""), "folder": folder.name, "date": time.strftime("%Y-%m-%d")})
+                        "mode": cfg.get("_mode_label", cfg.get("mode", "")), "folder": folder.name, "date": time.strftime("%Y-%m-%d")})
             save_json(state / "used_cases.json", log)
             shutil.rmtree(folder / "_work" / "frames", ignore_errors=True)
             ui(f"  done: {res['final']}  {fmt_dur(res['measured_total'])}  QC {'OK' if qc['ok'] else 'CHECK'}  {qc['loudness_lufs']} LUFS"
@@ -569,7 +605,7 @@ def main():
     status = (f"{len(failed_videos)} video(s) FAILED" if failed_videos
               else "completed" if all(ok for *_, ok in summary) else "completed, some QC CHECK")
     rep += [""] + CLOCK.lines(stream_len, len(summary), status)
-    CLOCK.history(state / "run_history.csv", stream_id=sid, style=cfg["style"], mode=mode, encoder=rn.enc,
+    CLOCK.history(state / "run_history.csv", stream_id=sid, style=cfg["style"], mode=cfg.get("_mode_label", mode), encoder=rn.enc,
                   stream_min=round(stream_len / 60, 1), videos=len(summary), qc_ok=sum(1 for *_, ok in summary if ok),
                   cost_usd=round(ut.get("cost") or 0, 3))
     (outroot / "run_report.txt").write_text("\n".join(rep), encoding="utf-8")

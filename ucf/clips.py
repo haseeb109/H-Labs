@@ -1,4 +1,4 @@
-"""Clips-only output (menu mode 4): for every verified case >= 8:00 -> ONE clean clip for the editor + an editing guide.
+"""Clips-only output: for every verified case >= the shortest-case setting (8:00, or 5:00) -> ONE clean clip for the editor + an editing guide.
 
 clip.mp4   = hook (10-20 s, from inside the case) + the whole case, dead air cut out. Native resolution, frame-accurate cuts,
              encoded ONCE as H.264 (opens in every editor). No overlays, no AI voice, no graphics, no watermark.

@@ -172,8 +172,11 @@ class Studio:
             brain = b if b in ("hive", "manual") else "hive"
         except OSError:
             pass
-        cmd = [sys.executable, str(ROOT / "run_stream.py"), j["url"], "--brain", brain, "--style", j["style"],
-               "--mode", j["mode"], "--queued"]
+        src = [j["url"]] if is_link(j["url"]) else ["--local", j["url"]]     # a link, or your own file / folder
+        cmd = [sys.executable, str(ROOT / "run_stream.py")] + src + ["--brain", brain, "--style", j["style"],
+                                                                     "--mode", j["mode"], "--queued"]
+        if j["mode"] in ("all", "clips") and str(o.get("min_case", "")) in ("5", "8"):
+            cmd += ["--min-case", str(o["min_case"])]
         if o.get("voice", True) and j["mode"] != "clips":
             cmd.append("--confirm-tts")
         if not o.get("watermark", True):
@@ -269,7 +272,8 @@ class Studio:
                 j["status"] = "stopped"
             elif nothing:
                 j["status"] = "nothing"
-                j["error"] = "No case of 8:00+ in this stream - try the 30 min / 1 hour mode."
+                j["error"] = (f"No case of {(j.get('options') or {}).get('min_case') or 8}:00+ in this stream - "
+                              "try 5 min cases, the 30 min / 1 hour mode, or As-is.")
             elif rc == 0 and not j["failed_videos"]:
                 j["status"] = "done"
             elif rc == 0 or (j["failed_videos"] and j["out_dir"]):
@@ -328,6 +332,18 @@ class Studio:
     def probe(self, url):
         if url in self._probe_cache:
             return self._probe_cache[url]
+        if not is_link(url):                                   # your own file / folder on this PC
+            try:
+                from ucf import config, download, local_src
+                v, t = local_src.resolve(url)
+                h, bps = download.probe_video(v)
+                r = {"ok": True, "local": True, "title": v.stem, "duration": _duration(v), "height": h, "kbps": round(bps / 1000),
+                     "live": False, "min_height": int(config.load().get("min_height", 720)), "video": str(v),
+                     "transcript": str(t) if t else ""}
+            except Exception as e:
+                r = {"ok": False, "error": str(e)[:200]}
+            self._probe_cache[url] = r
+            return r
         try:
             from ucf import config, download
             cfg = config.load()
@@ -380,6 +396,10 @@ class Studio:
 
 # ---------------------------------------------------------------------- library
 _dur_cache = {}
+
+
+def is_link(u):
+    return str(u).strip().lower().startswith(("http://", "https://"))
 
 
 def _duration(p):
@@ -507,9 +527,24 @@ def make_handler(studio):
             except ValueError:
                 return {}
 
+        def _trusted(self, post=False):
+            """Only this PC's browser on the Studio page: Host must be localhost (blocks DNS rebinding), and a POST must be JSON
+            from the Studio's own origin (another website cannot send JSON here without a CORS answer, which is never given)."""
+            host = (self.headers.get("Host") or "").split(":")[0].lower()
+            if host not in ("127.0.0.1", "localhost"):
+                return False
+            if not post:
+                return True
+            origin = self.headers.get("Origin")
+            if origin and urlparse(origin).hostname not in ("127.0.0.1", "localhost"):
+                return False
+            return (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() == "application/json"
+
         def do_GET(self):
             u = urlparse(self.path)
             q = parse_qs(u.query)
+            if not self._trusted():
+                return self._send(403, {"error": "forbidden"})
             try:
                 if u.path in ("/", "/index.html"):
                     return self._send(200, (STATIC / "index.html").read_bytes(), TYPES[".html"])
@@ -544,12 +579,14 @@ def make_handler(studio):
 
         def do_POST(self):
             u = urlparse(self.path)
+            if not self._trusted(post=True):
+                return self._send(403, {"error": "forbidden"})
             d = self._json()
             try:
                 if u.path == "/api/probe":
                     return self._send(200, studio.probe((d.get("url") or "").strip()))
                 if u.path == "/api/jobs":
-                    urls = [x.strip() for x in d.get("urls") or [] if x.strip().startswith("http")]
+                    urls = [x.strip().strip('"') for x in d.get("urls") or [] if x.strip()]
                     mode = d.get("mode") if d.get("mode") in ("30", "60", "all", "clips") else "all"
                     ids = {s["id"] for s in styles()}
                     style = d.get("style") if d.get("style") in ids else next(iter(sorted(ids)), "trial_tales")

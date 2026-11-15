@@ -123,7 +123,7 @@ def validate(plan, stream_len, segs=None, cfg=None):
                          f"(kept {fmt_dur(kept)}) - mark it skipped")
             if c.get("status") == "skipped" and kept >= mc:
                 W.append(f"{w}: C-07 skipped but {fmt_dur(kept)} >= the {cfg.get('min_case_minutes', 8):.0f} min threshold")
-            if c.get("status") == "used" and segs is not None:
+            if c.get("status") == "used" and segs is not None and not cfg.get("_asis"):   # as-is: other hearings stay inside
                 # "recall_ok": ["1:12:40"] = the brain says that call-out is THIS case called again (after a break), not a new case
                 ok_at = [t for t in (_tc(x, w + " recall_ok", []) for x in (c.get("recall_ok") or [])) if t is not None]
                 hit = next((x for x in segs if a + 30 < x["start"] < b - 1
