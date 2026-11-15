@@ -1566,6 +1566,43 @@ def t42_studio():
     return "queue runs a job, reads stage/progress/failed-video lines, retries only the failed video; API + path guard OK"
 
 
+def t43_whisper_crash_fallback():
+    """2026-11-15 (new PC): whisper crashed with 0xC0000005 (old Microsoft C++ runtime under onnxruntime). whisper_safe tries
+    again without the onnxruntime voice filter; when every try crashes the error names the runtime and Setup.bat."""
+    from ucf import transcript as T
+    real = subprocess.run
+    calls = []
+
+    def fake(ok_when_no_vad):
+        def run(cmd, *a, **k):
+            if cmd[1] != "-c":
+                return real(cmd, *a, **k)
+            calls.append((cmd[7], cmd[9]))
+            if ok_when_no_vad and cmd[9] == "0":
+                Path(cmd[8]).write_text(json.dumps([{"start": 0, "end": 1, "text": "hi"}]), encoding="utf-8")
+                return subprocess.CompletedProcess(cmd, 0, stderr="")
+            return subprocess.CompletedProcess(cmd, 3221225477, stderr="")
+        return run
+    log = []
+    subprocess.run = fake(True)
+    try:
+        segs = T.whisper_safe("x.mp4", ui=log.append)
+    finally:
+        subprocess.run = real
+    assert segs[0]["text"] == "hi" and calls == [("int8", "1"), ("int8", "0")], calls
+    assert any("0xC0000005" in x for x in log), log
+    calls.clear()
+    subprocess.run = fake(False)
+    try:
+        T.whisper_safe("x.mp4", ui=log.append)
+        raise AssertionError("must raise when every try crashes")
+    except RuntimeError as e:
+        assert "C++ runtime" in str(e) and "Setup.bat" in str(e) and len(calls) == 3, (str(e), calls)
+    finally:
+        subprocess.run = real
+    return "crash with the voice filter -> retried without it; 3 crashes -> error names the C++ runtime + Setup.bat"
+
+
 def t25_nvenc_levels():
     """An old GPU/driver that rejects the best NVENC options gets the next simpler set; one that rejects all falls back to x264."""
     from ucf import render
@@ -1641,6 +1678,7 @@ def main():
     check(40, "judge-neutral voice-over + on-screen text", t40_judge_neutral)
     check(41, "download never below 720p", t41_min_720p)
     check(42, "H Labs Studio queue + web API", t42_studio)
+    check(43, "whisper crash fallback (C++ runtime)", t43_whisper_crash_fallback)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))

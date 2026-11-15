@@ -237,6 +237,46 @@ if ($why) {
 }
 Ok "python $(& $py -c "import platform; print(platform.python_version())")"
 
+# ---- 2b. Microsoft C++ runtime: the whisper engines (onnxruntime, ctranslate2) use the system msvcp140.dll and crash with
+# 0xC0000005 when it is older than 14.40 (a new PC, 2026-11-15). Always the newest from Microsoft (aka.ms), so instead of a
+# pinned hash the download must carry a valid Microsoft signature.
+Step "Microsoft Visual C++ runtime (for whisper)"
+function Get-VCVersion {
+    $f = Join-Path $env:SystemRoot "System32\msvcp140.dll"
+    if (-not (Test-Path $f)) { return $null }
+    $v = (Get-Item $f).VersionInfo
+    return [version]("{0}.{1}.{2}.{3}" -f $v.FileMajorPart, $v.FileMinorPart, $v.FileBuildPart, $v.FilePrivatePart)
+}
+$vcNeed = [version]"14.40.0.0"
+$vc = Get-VCVersion
+if ($vc -and $vc -ge $vcNeed) { Ok "Visual C++ runtime $vc" } else {
+    Write-Host "  this PC has $(if ($vc) { "version $vc" } else { 'none' }) - installing the current one from Microsoft"
+    Write-Host "  Windows asks for permission now - click YES." -ForegroundColor Yellow
+    $exe = Join-Path $env:TEMP "hlabs_vc_redist.x64.exe"
+    try {
+        Invoke-WebRequest -UseBasicParsing -OutFile $exe -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+        $sig = Get-AuthenticodeSignature $exe
+        if ($sig.Status -ne "Valid" -or $sig.SignerCertificate.Subject -notmatch "O=Microsoft Corporation") {
+            throw "the download is not signed by Microsoft ($($sig.Status))"
+        }
+        $p = Start-Process -FilePath $exe -ArgumentList "/install", "/passive", "/norestart" -Verb RunAs -Wait -PassThru
+        if ($p.ExitCode -eq 3010) { Warn "installed - restart the PC once after setup" }
+        elseif ($p.ExitCode -ne 0 -and $p.ExitCode -ne 1638) { Warn "the installer ended with code $($p.ExitCode)" }
+    } catch { Warn "Visual C++ runtime install failed: $($_.Exception.Message)" }
+    Remove-Item $exe -Force -ErrorAction SilentlyContinue
+    $vc = Get-VCVersion
+    if ($vc -and $vc -ge $vcNeed) { Ok "Visual C++ runtime $vc" }
+    else { Warn "still old/missing - install it by hand: https://aka.ms/vs/17/release/vc_redist.x64.exe (then run Setup.bat again)" }
+}
+
+# whisper canary: load both native engines in a child process (the voice filter runs a real onnxruntime model).
+$old = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+$wout = & $py -c "import numpy as np; from faster_whisper.vad import get_speech_timestamps; get_speech_timestamps(np.zeros(32000, dtype=np.float32)); import ctranslate2; ctranslate2.get_supported_compute_types('cpu'); print('WHISPER-OK')" 2>&1 | Out-String
+$wcode = $LASTEXITCODE
+$ErrorActionPreference = $old
+if ($wout -match "WHISPER-OK") { Ok "whisper engines load" }
+else { Warn ("whisper engines crash on this PC (exit code 0x{0:X8}) - videos with YouTube captions still work; restart the PC and run Setup.bat again. {1}" -f $wcode, ($wout.Trim() -split "`n" | Select-Object -Last 1)) }
+
 # ---- 3. graphics browser ----
 Step "Chromium for the graphics"
 & $py -m playwright install chromium

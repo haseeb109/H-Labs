@@ -255,7 +255,7 @@ def main():
     if a.transcript_file:
         segs = transcript.load_any(a.transcript_file)
         transcript.save(segs, tpath)
-    elif tpath.exists():
+    elif tpath.exists() and not (work / "transcript.sparse").exists():   # .sparse: captions-only fallback -> try whisper again
         segs = json.loads(tpath.read_text(encoding="utf-8"))
     else:
         segs = []
@@ -268,7 +268,16 @@ def main():
         if spoken_wpm < 15:   # missing / sparse captions
             ui("captions missing or sparse -> whisper (slow, CPU)...")
             from ucf.load import cpu_threads
-            segs = transcript.whisper_safe(video_path, cfg["whisper_model"], threads=cpu_threads(cfg), ui=ui)
+            try:
+                segs = transcript.whisper_safe(video_path, cfg["whisper_model"], threads=cpu_threads(cfg), ui=ui)
+            except RuntimeError as e:
+                if not segs:
+                    raise
+                ui(f"WARNING: {e}\n  -> going on with the YouTube captions ({len(segs)} lines, {spoken_wpm:.0f} words/min). "
+                   "Case times may be rougher; check the videos.")
+                (work / "transcript.sparse").write_text("captions only - whisper failed", encoding="utf-8")
+            else:
+                (work / "transcript.sparse").unlink(missing_ok=True)
         transcript.save(segs, tpath)
     ui(f"transcript: {len(segs)} segments, ends {fmt_tc(segs[-1]['end']) if segs else '-'}")
     if upto < IX["scan"]:
