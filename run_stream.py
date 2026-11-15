@@ -217,7 +217,7 @@ def main():
         video_path = download.fetch_video(url, sid, work, cfg, meta)
     elif video_path.exists() and upto >= 1:
         ui(download.describe(video_path)[0])       # cached download: show its quality (an old one may be the starved H.264 copy)
-        why = "" if a.video_file else download.worse_than_available(video_path, meta)
+        why = "" if a.video_file else download.worse_than_available(video_path, meta, int(cfg.get("min_height", 720)))
         if why and url:
             # an older run downloaded a worse copy (360p / starved H.264): get the real quality, keep the old file if that fails
             CLOCK.stage("download")
@@ -229,6 +229,9 @@ def main():
                 old.unlink()
             except Exception as e:
                 os.replace(old, video_path)
+                if download.probe_video(video_path)[0] < int(cfg.get("min_height", 720)) - 10:
+                    sys.exit(f"STOP: the saved copy is below {cfg.get('min_height', 720)}p and a better one could not be downloaded:\n"
+                             f"  {str(e).splitlines()[0][:300]}")
                 ui(f"  re-download failed ({str(e).splitlines()[0][:120]}) - continuing with the saved copy")
     if video_path.exists() and not stream_len:
         stream_len = tts.dur(video_path)

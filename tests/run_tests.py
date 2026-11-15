@@ -1120,7 +1120,7 @@ def t30_windows_run_fixes():
         real(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=1280x720:r=30:d=3", "-c:v", "libx264", "-b:v", "1600k",
               str(tmp / "s720.mp4")], check=True)
         meta = {"best_height": 720, "best_kbps": 1677}
-        assert "360p but YouTube has 720p" in D.worse_than_available(tmp / "s360.mp4", meta)
+        assert "360p" in D.worse_than_available(tmp / "s360.mp4", meta)
         assert D.worse_than_available(tmp / "s720.mp4", meta) == ""
         work, n = tmp / "w", [0]
         work.mkdir()
@@ -1438,6 +1438,62 @@ def t40_judge_neutral():
     return f"{n} texts neutral ('the judge'), titles + transcript evidence unchanged, prompts + court lines without the name"
 
 
+def t41_min_720p():
+    """Owner rule 2026-11-15: never below 720p. The format filter asks for 720p+, a 360p-only download is refused, and the
+    stream info keeps trying clients until one lists 720p."""
+    from ucf import download as D
+    cfg = {"max_height": 1080, "min_height": 720}
+    fmt = D.video_format(cfg)
+    assert fmt.count("[height>=720]") == 4, fmt
+    tmp = Path(tempfile.mkdtemp())
+    real = subprocess.run
+    try:
+        real(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=640x360:r=30:d=3", "-c:v", "libx264",
+              str(tmp / "s360.mp4")], check=True)
+        work = tmp / "w"
+        work.mkdir()
+
+        def fake(cmd, *a, **k):                   # every strategy only gets 360p
+            if cmd[0] != "ffprobe" and "--help" not in cmd and "yt-dlp" in " ".join(map(str, cmd[:3])):
+                shutil.copy(tmp / "s360.mp4", work / "source.mp4")
+                with (work / "source.mp4").open("ab") as f:
+                    f.write(b"\0" * 11_000_000)
+                return subprocess.CompletedProcess(cmd, 0, stdout="--remote-components", stderr="")
+            return real(cmd, *a, **k)
+        D._HELP.clear()
+        subprocess.run = fake
+        try:
+            D.fetch_video("https://youtu.be/x", "x", work, cfg, {"best_height": 720, "best_kbps": 1600})
+            raise AssertionError("a 360p-only download must be refused")
+        except RuntimeError as e:
+            assert "720p" in str(e) and not (work / "source.mp4").exists(), (str(e), list(work.iterdir()))
+        finally:
+            subprocess.run = real
+        # info(): the first client lists only 360p, the second 720p -> 720p is what counts
+        lists = [{"id": "x", "formats": [{"vcodec": "avc1", "height": 360, "tbr": 300}]},
+                 {"id": "x", "formats": [{"vcodec": "vp9", "height": 720, "tbr": 1600}, {"vcodec": "avc1", "height": 360, "tbr": 300}]}]
+        n = [0]
+
+        def fake_j(cmd, *a, **k):
+            if "-J" in cmd:
+                d = lists[min(n[0], 1)]
+                n[0] += 1
+                return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(d), stderr="")
+            if "--help" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+            return real(cmd, *a, **k)
+        subprocess.run = fake_j
+        try:
+            m = D.info("https://youtu.be/x", cfg)
+        finally:
+            subprocess.run = real
+        assert m["best_height"] == 720 and n[0] == 2, (m, n)
+    finally:
+        subprocess.run = real
+        shutil.rmtree(tmp, ignore_errors=True)
+    return "format asks 720p+, a 360p-only download is refused, info tries the next client until 720p is listed"
+
+
 def t25_nvenc_levels():
     """An old GPU/driver that rejects the best NVENC options gets the next simpler set; one that rejects all falls back to x264."""
     from ucf import render
@@ -1511,6 +1567,7 @@ def main():
     check(38, "long docket: script fixes overlaps / holes", t38_long_docket_autofix)
     check(39, "network retry + one failed video does not stop the run", t39_network_and_failed_video)
     check(40, "judge-neutral voice-over + on-screen text", t40_judge_neutral)
+    check(41, "download never below 720p", t41_min_720p)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))

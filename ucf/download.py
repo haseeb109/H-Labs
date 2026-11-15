@@ -30,20 +30,32 @@ def _supports(flag):
     return flag in _HELP[0]
 
 
-def info(url, cfg):
-    r = None
-    for _name, extra in _strategies(cfg):             # same fallbacks as the download
-        r = subprocess.run(_cmd(cfg, extra) + ["-J", "--no-playlist", url], capture_output=True, text=True)
-        if r.returncode == 0:
-            break
-    if r.returncode != 0:
-        raise RuntimeError("yt-dlp could not read the URL:\n" + r.stderr[-1500:] + _hint(r.stderr))
-    d = json.loads(r.stdout)
-    # the best video YouTube offers (same rule as video_format: no AV1) - used to spot a cached download that is worse
+def _best_of(d, cfg):
+    """(height, kbps) of the best video format in a yt-dlp -J result (same rule as video_format: no AV1, <= max_height)."""
     vids = [f for f in d.get("formats") or [] if f.get("vcodec") not in (None, "none") and f.get("height")
             and not str(f.get("vcodec", "")).startswith("av01") and int(f["height"]) <= int(cfg.get("max_height", 1080))]
     best_h = max((int(f["height"]) for f in vids), default=0)
     best_vbr = max((float(f.get("vbr") or f.get("tbr") or 0) for f in vids if int(f["height"]) == best_h), default=0)
+    return best_h, best_vbr
+
+
+def info(url, cfg):
+    """Stream metadata. Some YouTube clients only list 360p (SABR), so the format list is read with the next strategy until one
+    shows the minimum height (min_height, 720) - the best list seen is used."""
+    r, d, best_h, best_vbr, last_err = None, None, 0, 0, ""
+    for _name, extra in _strategies(cfg):             # same fallbacks as the download
+        r = subprocess.run(_cmd(cfg, extra) + ["-J", "--no-playlist", url], capture_output=True, text=True)
+        if r.returncode != 0:
+            last_err = r.stderr
+            continue
+        dd = json.loads(r.stdout)
+        h, vbr = _best_of(dd, cfg)
+        if d is None or h > best_h:
+            d, best_h, best_vbr = dd, h, vbr
+        if best_h >= int(cfg.get("min_height", 720)):
+            break
+    if d is None:
+        raise RuntimeError("yt-dlp could not read the URL:\n" + last_err[-1500:] + _hint(last_err))
     return {"id": d["id"], "title": d.get("title", ""), "duration": float(d.get("duration") or 0),
             "best_height": best_h, "best_kbps": round(best_vbr),
             "upload_date": d.get("upload_date", ""), "channel": d.get("channel", ""),
@@ -73,9 +85,10 @@ def video_format(cfg):
     """yt-dlp -f for the stream. NO codec filter on the first choice: YouTube's H.264 (avc1) 720p of a Zoom stream is often
     ~0.5 Mbps while the VP9 720p of the same stream is ~1.7 Mbps (3x the detail) - an avc1-only filter made `-S res,br` pick the
     starved one every time. AV1 is left out (slow to decode on CPU, not in every ffmpeg build); VP9 goes into the mp4 untouched."""
-    h = int(cfg.get("max_height", 1080))
-    return (f"bv*[height<={h}][vcodec!^=av01]+ba[ext=m4a]/bv*[height<={h}][vcodec!^=av01]+ba/"
-            f"bv*[height<={h}]+ba/b[height<={h}]")
+    h, lo = int(cfg.get("max_height", 1080)), int(cfg.get("min_height", 720))
+    rng = f"[height>={lo}][height<={h}]"            # never below min_height: a client that only offers 360p fails -> next strategy
+    return (f"bv*{rng}[vcodec!^=av01]+ba[ext=m4a]/bv*{rng}[vcodec!^=av01]+ba/"
+            f"bv*{rng}+ba/b{rng}")
 
 
 def probe_video(path):
@@ -91,12 +104,14 @@ def probe_video(path):
         return 0, 0
 
 
-def worse_than_available(path, meta):
-    """Reason string when a downloaded file is clearly below what YouTube offers for this stream (else '')."""
+def worse_than_available(path, meta, min_height=720):
+    """Reason string when a downloaded file is clearly below what YouTube offers for this stream, or below min_height (else '')."""
     bh, bk = int(meta.get("best_height") or 0), float(meta.get("best_kbps") or 0)
+    h, vbr = probe_video(path)
+    if h and min_height and h < min_height - 10:
+        return f"{h}p - below the {min_height}p minimum"
     if not bh:
         return ""
-    h, vbr = probe_video(path)
     if h and h < bh - 10:
         return f"{h}p but YouTube has {bh}p"
     if h and vbr and bk and vbr < bk * 1000 * 0.6:
@@ -146,9 +161,10 @@ def fetch_video(url, vid, workdir, cfg, meta=None):
                                         "-o", str(workdir / "source.%(ext)s"), "--newline", url])
         if r.returncode == 0 and out.exists():
             print("  " + describe(out)[0], flush=True)
-            why = worse_than_available(out, meta or {})
-            if why and k < len(tries):
-                print(f"  this download is {why} - keeping it aside and trying the next way for the full quality", flush=True)
+            why = worse_than_available(out, meta or {}, int(cfg.get("min_height", 720)))
+            if why:                                        # also on the LAST try: the end of this function decides (never < min)
+                print(f"  this download is {why} - keeping it aside" + (" and trying the next way for the full quality"
+                                                                          if k < len(tries) else ""), flush=True)
                 if not low.exists() or probe_video(out)[0] > probe_video(low)[0]:
                     os.replace(out, low)
                 else:
@@ -157,12 +173,19 @@ def fetch_video(url, vid, workdir, cfg, meta=None):
             if low.exists():
                 low.unlink()
             return out
-    if low.exists():                               # nothing better came: use the best one we got
-        os.replace(low, out)
-        print("  (the full quality could not be downloaded - using the best copy: " + describe(out)[0] + ")", flush=True)
-        return out
-    raise RuntimeError("video download failed after " + str(len(tries)) + " tries. Update yt-dlp (H Labs.bat -> option 8) and run again; "
-                       "if it keeps failing send the first ERROR line." + _hint(""))
+    lo = int(cfg.get("min_height", 720))
+    if low.exists():                               # nothing better came
+        if probe_video(low)[0] >= lo - 10:         # above the minimum, only a lower bitrate: use the best copy we got
+            os.replace(low, out)
+            print("  (the full quality could not be downloaded - using the best copy: " + describe(out)[0] + ")", flush=True)
+            return out
+        low.unlink()
+    best = int((meta or {}).get("best_height") or 0)
+    if best and best < lo:
+        raise RuntimeError(f"YouTube offers this stream at {best}p at most - below the {lo}p minimum, so it is not used. "
+                           f"(To use it anyway on this PC: config.local.json -> {{\"min_height\": {best}}})")
+    raise RuntimeError(f"no {lo}p+ download of this stream after {len(tries)} tries (YouTube may be offering only 360p right now). "
+                       "Update yt-dlp (H Labs.bat -> option 8) and run again; if it keeps failing send the first ERROR line." + _hint(""))
 
 
 def fetch_captions(url, workdir, cfg):

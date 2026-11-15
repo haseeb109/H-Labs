@@ -95,6 +95,8 @@ each video is rendered, so rendering takes a few minutes longer. Only the owner 
 `trial_tales`, `overruled`, `court_beacon`, `justice_served` (and any new style the owner pushes; it shows up after option 8).
 
 ## Good to know
+* **Quality rule: never below 720p.** The tool downloads the best quality YouTube has (720p+). If a YouTube client only offers
+  360p it tries the next way; if no 720p copy can be had it stops with a message instead of making soft videos.
 * **Download from YouTube needs a normal home/office internet connection** (not a VPS / cloud PC): YouTube blocks data-centre IPs.
 * **Captions** (burned-in word captions) are Mac-only for now (they need Apple's mlx-whisper). On Windows they stay off.
 * **Keep 100 GB free**; delete old `work\<stream id>\` folders when a stream is finished.
