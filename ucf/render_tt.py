@@ -342,12 +342,18 @@ class TTRenderer(Renderer):
         out = final.with_name(final.stem + "_ov.mp4")
         # -loop 1: a PNG input is ONE frame at t=0; the fade-in then never starts and ffmpeg repeats that fully
         # transparent frame, so every card was invisible (found on 03p3ATnv6dY, 2026-10-25).
-        inp = [*hwdec(), "-i", str(final)] + sum([["-loop", "1", "-t", f"{e + 1:.2f}", "-i", str(p)] for p, _s, e in pngs], [])
+        # Each card stream only lasts its own few seconds and is shifted to its start (setpts). Before, every card looped from 0:00
+        # to its end, so on a 50 min video with 20 cards ffmpeg faded ~8 hours of RGBA frames for 2-3 minutes of cards
+        # (2026-11-15, GTX 1660: the overlay step was the slow part). Same picture, same fades (checked frame by frame).
+        inp = [*hwdec(), "-i", str(final)] + sum([["-loop", "1", "-framerate", "30", "-t", f"{e - s + 1:.2f}", "-i", str(p)]
+                                                  for p, s, e in pngs], [])
         fc, prev = [], "0:v"
         for i, (p, s, e) in enumerate(pngs):
             k = i + 1
-            fc.append(f"[{k}:v]format=rgba,fade=in:st={s:.2f}:d=0.5:alpha=1,fade=out:st={max(s, e - 0.5):.2f}:d=0.5:alpha=1[ov{i}]")
-            fc.append(f"[{prev}][ov{i}]overlay=x=54:y={OVERLAY_Y}:enable='between(t,{s:.2f},{e:.2f})'[v{i}]")
+            d = e - s
+            fc.append(f"[{k}:v]format=rgba,fade=in:st=0:d=0.5:alpha=1,fade=out:st={max(0.0, d - 0.5):.2f}:d=0.5:alpha=1,"
+                      f"setpts=PTS+{s:.3f}/TB[ov{i}]")
+            fc.append(f"[{prev}][ov{i}]overlay=x=54:y={OVERLAY_Y}:eof_action=pass:enable='between(t,{s:.2f},{e:.2f})'[v{i}]")
             prev = f"v{i}"
         run(["ffmpeg", "-y", "-loglevel", "error", *inp, "-filter_complex", ";".join(fc),
              "-map", f"[{prev}]", "-map", "0:a?", *venc(self.enc), *AENC, "-movflags", "+faststart", out])

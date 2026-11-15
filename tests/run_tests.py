@@ -219,12 +219,14 @@ def t16_overlay_burn():
     rn = TTRenderer(cfg, {}, ROOT)
     d = Path(tempfile.mkdtemp())
     base = d / "base.mp4"
-    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x101010:s=1920x1080:r=30:d=4",
-                    "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", "4", "-c:v", "libx264", "-pix_fmt",
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x101010:s=1920x1080:r=30:d=10",
+                    "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", "10", "-c:v", "libx264", "-pix_fmt",
                     "yuv420p", "-c:a", "aac", str(base)], check=True)
-    out = rn._burn_overlays(base, [(1.0, 3.5, {"kind": "fact", "text": "Visible test card"})], d, ui=lambda *a: None)
+    # two cards: the second one starts later (each card stream is shifted to its own start, 2026-11-15)
+    out = rn._burn_overlays(base, [(1.0, 3.5, {"kind": "fact", "text": "Visible test card"}),
+                                   (6.0, 8.5, {"kind": "fact", "text": "Second test card"})], d, ui=lambda *a: None)
     probe = []
-    for t in (0.3, 2.0):
+    for t in (0.3, 2.0, 4.5, 7.0, 9.5):
         jpg = d / f"f{t}.jpg"
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", str(t), "-i", str(out), "-frames:v", "1", str(jpg)],
                        check=True)
@@ -232,6 +234,10 @@ def t16_overlay_burn():
         probe.append(float(a.mean()))
     assert probe[0] < 40, f"card visible before its start (mean {probe[0]:.0f})"
     assert probe[1] > 120, f"card NOT visible while scheduled (mean {probe[1]:.0f}) - overlay burn is broken"
+    assert probe[2] < 40 and probe[4] < 40, f"a card stays on after its end ({probe})"
+    assert probe[3] > 120, f"the second card (6.0-8.5) is NOT visible (mean {probe[3]:.0f})"
+    from ucf.render import probe_dur
+    assert abs(probe_dur(out) - 10.0) < 0.2, f"overlay burn changed the video length: {probe_dur(out)}"
     # a long card keeps all its words (<= 2 lines) and stays inside the safe band
     from ucf.render_tt import OVERLAY_Y
     long_png = d / "long.png"
@@ -239,7 +245,7 @@ def t16_overlay_burn():
                          "video at all today", long_png)
     w, h = Image.open(long_png).size
     assert OVERLAY_Y + h <= 1040 and 54 + w <= 1866, f"card {w}x{h} escapes the safe band"
-    return f"card region brightness {probe[0]:.0f} before -> {probe[1]:.0f} during; long card {w}x{h} fits"
+    return f"card brightness {[round(x) for x in probe]} (off/on/off/on/off); long card {w}x{h} fits"
 
 
 def t17_zoom_layouts():
