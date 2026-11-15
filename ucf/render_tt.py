@@ -441,7 +441,7 @@ class TTRenderer(Renderer):
         try:
             from . import overlay_sched as OS
             if (self.cfg.get("overlays") or {}).get("enabled", True):
-                total = tl["total"] + cfg["cut_pad_in"]          # the first part of every case starts cut_pad_in earlier
+                total = tl["total"] + cfg["cut_pad_in"] * len(ids)   # the first part of every case starts cut_pad_in earlier
                 busy = [(t_hook + t_intro + 0.3, t_hook + t_intro + 4.7)]
                 for cid in ids:
                     scheduled += OS.schedule(by_id[cid], lambda tc, cid=cid: TL.src_to_out(tl, cid, tc), total, busy,

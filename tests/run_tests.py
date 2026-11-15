@@ -1779,6 +1779,19 @@ def t45_render_speed():
         diff = abs(frame("wm") - frame("plain"))
         assert (diff > 60).sum() > 300, f"watermark not visible in the segment ({(diff > 60).sum()} px changed)"
 
+        # Trial Tales cards are drawn inside the segment: on during their time, off before/after; a card cut by the segment
+        # end (fout False) is still fully on at that end
+        card = rn._overlay_card_png("fact", "Visible test card", tmp / "card.png")
+        rn.tt_cut("s.mp4", 0.0, 6.0, tmp / "_work" / "cards.mp4", rn.bg_logo,
+                  cards=[(card, 1.0, 2.6, True, True), (card, 4.0, 6.0, True, False)])
+        from ucf.render_tt import OVERLAY_Y
+        def card_lum(t):
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", str(t), "-i", str(tmp / "_work" / "cards.mp4"), "-frames:v", "1",
+                            str(tmp / "c.png")], check=True)
+            return float(np.asarray(Image.open(tmp / "c.png").convert("L"))[OVERLAY_Y + 20:OVERLAY_Y + 60, 120:700].mean())
+        lum = [card_lum(t) for t in (0.5, 1.8, 3.3, 5.9)]
+        assert lum[0] < 60 and lum[1] > 150 and lum[2] < 60 and lum[3] > 150, f"cards inside the segment: {lum}"
+
         # 2) still image decoded once + layout runs cut with trim/concat (fps before the split)
         ch = rn.strip_chain("1:v", "f", [(0, 20, "2up"), (20, 30.5, "solo")])
         assert ch.startswith("[1:v]fps=30,split=2") and "trim=start_frame=0:end_frame=600" in ch and "trim=start_frame=600," in ch and "concat=n=2" in ch, ch
