@@ -262,7 +262,7 @@ def main():
         if spoken_wpm < 15:   # missing / sparse captions
             ui("captions missing or sparse -> whisper (slow, CPU)...")
             from ucf.load import cpu_threads
-            segs = transcript.whisper_transcribe(video_path, cfg["whisper_model"], threads=cpu_threads(cfg))
+            segs = transcript.whisper_safe(video_path, cfg["whisper_model"], threads=cpu_threads(cfg), ui=ui)
         transcript.save(segs, tpath)
     ui(f"transcript: {len(segs)} segments, ends {fmt_tc(segs[-1]['end']) if segs else '-'}")
     if upto < IX["scan"]:

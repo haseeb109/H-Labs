@@ -79,19 +79,51 @@ def normalise(segs):
     return out
 
 
-def whisper_transcribe(media, model="base.en", device="cpu", threads=None):
+def whisper_transcribe(media, model="base.en", device="cpu", threads=None, compute_type="int8"):
     """Fallback ASR with faster-whisper. cpu_threads matters: defaults leave the M1 at ~1.3x realtime,
     8 threads gives ~6x. int8 + beam_size=1 stays well ahead of the 18 s caption quality bar.
     A bundled model dir (models/<name>) wins over a Hub download, so an offline machine just works."""
     import os
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")     # Windows without developer mode: harmless warning
     from faster_whisper import WhisperModel  # lazy import
     local = ROOT / "models" / model
     if local.exists():
         model = str(local)
-    m = WhisperModel(model, device=device, compute_type="int8", cpu_threads=threads or os.cpu_count() or 4)
+    m = WhisperModel(model, device=device, compute_type=compute_type, cpu_threads=threads or os.cpu_count() or 4)
     seg_iter, _ = m.transcribe(str(media), vad_filter=True, beam_size=1, language="en")
     segs = [{"start": s.start, "end": s.end, "text": _clean(s.text)} for s in seg_iter if _clean(s.text)]
     return normalise(segs)
+
+
+def whisper_safe(media, model="base.en", threads=None, ui=print):
+    """whisper_transcribe in a CHILD process. On some Windows PCs the native whisper engine (ctranslate2) crashes the whole
+    process with no message (a new PC, 2026-11-15: the run just ended after the model download). A crash here is reported
+    with its exit code and retried once with safer settings (float32, 2 threads); the run never dies silently."""
+    import os
+    import subprocess
+    import sys
+    import tempfile
+    code = ("import sys, json; sys.path.insert(0, sys.argv[1]); from ucf import transcript as T; "
+            "s = T.whisper_transcribe(sys.argv[2], sys.argv[3], threads=int(sys.argv[4]) or None, compute_type=sys.argv[5]); "
+            "json.dump(s, open(sys.argv[6], 'w', encoding='utf-8'))")
+    env = dict(os.environ, HF_HUB_DISABLE_SYMLINKS_WARNING="1", KMP_DUPLICATE_LIB_OK="TRUE")
+    last = ""
+    for ctype, th in (("int8", threads or 0), ("float32", 2)):
+        with tempfile.TemporaryDirectory(prefix="whisper_") as t:
+            out = os.path.join(t, "segs.json")
+            r = subprocess.run([sys.executable, "-c", code, str(ROOT), str(media), model, str(th), ctype, out],
+                               stderr=subprocess.PIPE, text=True, env=env)
+            if r.returncode == 0 and os.path.exists(out):
+                with open(out, encoding="utf-8") as f:
+                    return json.load(f)
+            tail = "\n".join((r.stderr or "").strip().splitlines()[-6:])
+            last = f"exit code {r.returncode} (0x{r.returncode & 0xFFFFFFFF:08X})" + (f":\n{tail}" if tail else "")
+            why = (tail.splitlines() or [""])[-1][:160]
+            ui(f"  whisper failed ({ctype}): exit code {r.returncode} (0x{r.returncode & 0xFFFFFFFF:08X}) {why}"
+               + (" - trying again with safer settings..." if ctype == "int8" else ""))
+    raise RuntimeError("whisper (transcript) does not run on this PC - " + last +
+                       "\n  Ideas: update Windows + the Microsoft Visual C++ Redistributable (x64), run Setup.bat again, "
+                       "or give a transcript with --transcript-file. Send work\\<id>\\run_log.txt to the owner.")
 
 
 def load_any(path):
