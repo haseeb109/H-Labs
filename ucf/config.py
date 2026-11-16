@@ -44,6 +44,8 @@ DEFAULTS = {
     "cpu_threads": 0,                      # 0 = auto (75% of logical cores) | a number | "all" - x264 encode + whisper
     "notify_when_done": True,              # desktop notification + sound when a run ends (or stops on an error)
     "open_output_after_run": True,         # open the output folder at the end of a run
+    "face_precheck": True,                 # skip the face detector on frames that cannot hold a face (flat tile, no skin
+                                           #   colour): faster thumbnails. false = check every frame, as before 2026-11-16
     "render_temp_dir": "",                 # "" = render pieces next to each video | an SSD folder (e.g. "C:/HLabsTemp", set in
                                            #   config.local.json) when H Labs sits on a hard disk: less disk wait per video
     "cleanup_after_run": "always",         # always (default) | ask | never - delete the downloaded stream + render temp files (never the videos)

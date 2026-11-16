@@ -248,6 +248,8 @@ def stage_setup(R):
     elif R.a.min_case:
         R.cfg["min_case_minutes"] = float(R.a.min_case)
     R.cfg["_mode_label"] = "asis" if R.cfg.get("_asis") else R.mode
+    if R.cfg.get("face_precheck") is False:      # config.local.json can switch the cheap face pre-check off per PC
+        os.environ["HL_FACE_PRECHECK"] = "0"
     band = (f"{R.cfg['runtime_min'] // 60}-{R.cfg['runtime_max'] // 60} min" if R.mode != "all"
             else "the whole video as ONE edited video (as-is, no case selection)" if R.cfg.get("_asis")
             else f"one video per case >= {R.cfg.get('min_case_minutes', 8):g} min")

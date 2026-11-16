@@ -130,6 +130,10 @@ What keeps the render light (2026-11-15):
 * the AI voice of the next videos is made in the background while the GPU renders
 * the finished video is joined and its loudness measured in the same step (QC does not read it again)
 
+**A thumbnail picked a wrong frame?** Since 2026-11-16 the face detector skips frames that cannot hold a face (a tile with
+the camera off, a black band, a blank slide), which makes the thumbnail step ~30% faster and also drops the odd wrong "face"
+on a wall. To check every frame again as before, put `{ "face_precheck": false }` in `config.local.json`.
+
 **H Labs on a hard disk (HDD) and a small SSD in the PC?** Put the render pieces on the SSD: in `config.local.json`
 ```json
 { "render_temp_dir": "C:/HLabsTemp" }
