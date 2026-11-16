@@ -153,6 +153,7 @@ function renderQueue() {
         ${bad ? `<div class="attn"><span class="dot" style="background:var(--bad)"></span><div><b>${bad} stream(s) with a failure</b><div class="small muted">Retry from the Finished list - the download is kept.</div></div></div>` : ""}
         ${!m.checking && m.keys && (!m.keys.hive || !m.keys.ai33) ? `<div class="attn"><span class="dot" style="background:var(--bad)"></span><div><b>API key missing</b><div class="small muted">H Labs.bat → option 4.</div></div></div>` : ""}
         ${free && free < 20 ? `<div class="attn"><span class="dot" style="background:var(--warn)"></span><div><b>Disk almost full</b><div class="small muted">Delete uploaded videos from the output folder.</div></div></div>` : ""}
+        ${m.smoke && m.smoke.fails ? `<div class="attn"><span class="dot" style="background:var(--bad)"></span><div><b>Smoke test: ${m.smoke.fails} problem(s) on this PC</b><div class="small muted">${esc(m.smoke.first_fail)} (${esc(m.smoke.date)}) — H Labs.bat → option 6, or option u to undo the last update.</div></div></div>` : ""}
         <div class="attn"><span class="dot" style="background:var(--ok)"></span><div><b>Finished videos</b><div class="small"><a href="#library">Open the library</a></div></div></div>
       </section>
     </aside>

@@ -20,4 +20,11 @@ if errorlevel 88 if not errorlevel 89 (
   start "H Labs" "%~dp0H Labs.bat"
   exit
 )
+rem exit code 89 = menu option u (undo the last update): back to the last good build, packages re-synced to match it.
+if errorlevel 89 if not errorlevel 90 (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\win\setup.ps1" -Rollback
+  pause
+  start "H Labs" "%~dp0H Labs.bat"
+  exit
+)
 pause

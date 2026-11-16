@@ -55,12 +55,28 @@ def info(url, cfg):
         if best_h >= int(cfg.get("min_height", 720)):
             break
     if d is None:
-        raise RuntimeError("yt-dlp could not read the URL:\n" + last_err[-1500:] + _hint(last_err))
+        raise RuntimeError("yt-dlp could not read the URL:\n" + last_err[-1500:] + _hint(last_err) + ytdlp_note())
     return {"id": d["id"], "title": d.get("title", ""), "duration": float(d.get("duration") or 0),
             "best_height": best_h, "best_kbps": round(best_vbr),
             "upload_date": d.get("upload_date", ""), "channel": d.get("channel", ""),
             "is_live": bool(d.get("is_live")), "was_live": bool(d.get("was_live")),
             "url": d.get("webpage_url", url)}
+
+
+def ytdlp_note():
+    """One line for an error that survived every strategy: which yt-dlp is in use and how it is changed (runtime\\ytdlp_active.txt
+    is written by Setup: 'newest' or 'pinned (why)')."""
+    try:
+        import yt_dlp
+        ver = yt_dlp.version.__version__
+    except Exception:  # noqa: BLE001
+        ver = "?"
+    try:
+        active = (Path(__file__).resolve().parent.parent / "runtime" / "ytdlp_active.txt").read_text(encoding="utf-8").strip().splitlines()[0]
+    except (OSError, IndexError):
+        active = ""
+    return (f"\nyt-dlp in use: {ver}" + (f" ({active})" if active else "")
+            + " - menu 8 updates it; if the newest is broken Setup falls back to the pinned one (tools\\win\\ytdlp_pin.txt).")
 
 
 def _hint(stderr):
@@ -185,7 +201,8 @@ def fetch_video(url, vid, workdir, cfg, meta=None):
         raise RuntimeError(f"YouTube offers this stream at {best}p at most - below the {lo}p minimum, so it is not used. "
                            f"(To use it anyway on this PC: config.local.json -> {{\"min_height\": {best}}})")
     raise RuntimeError(f"no {lo}p+ download of this stream after {len(tries)} tries (YouTube may be offering only 360p right now). "
-                       "Update yt-dlp (H Labs.bat -> option 8) and run again; if it keeps failing send the first ERROR line." + _hint(""))
+                       "Update yt-dlp (H Labs.bat -> option 8) and run again; if it keeps failing send the first ERROR line." + _hint("")
+                       + ytdlp_note())
 
 
 def fetch_captions(url, workdir, cfg):
