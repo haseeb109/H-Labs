@@ -80,7 +80,7 @@ def schedule(case, src_to_out, total, busy, cfg, look="tt"):
                 rt = src_to_out(parse_tc(ref))
                 if rt is not None and not (t1 + 45 <= rt <= total):
                     continue
-            except Exception:
+            except (TypeError, ValueError):        # ref_tc unreadable: the validator flagged it (O-05); the card is dropped
                 continue
         # conflict resolution: shift +-20 s inside free space, else drop
         placed = None

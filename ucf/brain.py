@@ -68,8 +68,8 @@ def save_usage(path):
     lines, t = usage_summary()
     try:
         Path(path).write_text(json.dumps({"totals": t, "calls": USAGE}, indent=2), encoding="utf-8")
-    except Exception:
-        pass
+    except OSError as e:                      # the usage lines are still printed; only the json copy is missing
+        print(f"  usage.json skipped: {e}", flush=True)
     return lines
 
 
@@ -209,7 +209,7 @@ def _stream_anthropic(messages, cfg, on_text=None):
                     continue
                 try:
                     ev = json.loads(line[5:].strip())
-                except Exception:
+                except ValueError:                 # keep-alive / partial SSE line: not an event
                     continue
                 typ = ev.get("type")
                 if typ == "content_block_delta" and ev["delta"].get("type") == "text_delta":
@@ -236,7 +236,7 @@ def _stream_anthropic(messages, cfg, on_text=None):
     except urllib.error.HTTPError as e:
         try:
             ev = json.loads(e.read().decode("utf-8", "ignore"))
-        except Exception:
+        except (ValueError, OSError):              # an HTML error page / a closed socket: keep the HTTP status as the message
             ev = {"error": {"message": str(e)}}
         msg = ((ev.get("error") or {}).get("message") or "").lower()
         if "temperature" in msg and "temperature" in req_body:      # newer models reject sampling params: retry once
@@ -371,7 +371,7 @@ def _stream_openai_compat(messages, cfg, on_text=None, _attempt=0):
                     break
                 try:
                     ev = json.loads(payload)
-                except Exception:
+                except ValueError:                 # keep-alive / partial SSE line: not an event
                     continue
                 if ev.get("usage"):
                     usage = ev["usage"]           # some providers repeat it per chunk: keep the last, record once
@@ -448,7 +448,7 @@ def make_plan(prompt, stream_len, segs, cfg, ui=print, save_dir=None, tag=""):
                               on_text=lambda n: n % 400 == 0 and ui(f"    ...{n} chunks"))
         try:
             plan = extract_json(txt)
-        except Exception as e:
+        except ValueError as e:                    # repair round: the brain gets its own reply back with the reason
             errs = [f"your reply was not valid JSON ({e}). Reply with ONE complete JSON object only."]
             msgs += [{"role": "assistant", "content": txt}, {"role": "user", "content": errs[0]}]
             continue

@@ -239,7 +239,7 @@ def check_overlays(case, segs, cfg, E, W):
             continue
         try:
             tc = parse_tc(o.get("tc"))
-        except Exception:
+        except (TypeError, ValueError):
             E.append(f"{w}: O-02 bad tc {o.get('tc')!r}")
             continue
         if not (a + 40 <= tc <= b - 30):
@@ -249,7 +249,7 @@ def check_overlays(case, segs, cfg, E, W):
                 rt = parse_tc(o["ref_tc"])
                 if kind == "coming_up" and not (tc + 45 <= rt <= b):
                     E.append(f"{w}: O-05 coming_up ref_tc must be >=45 s later, inside the same case")
-            except Exception:
+            except (TypeError, ValueError):
                 E.append(f"{w}: O-05 bad ref_tc {o.get('ref_tc')!r}")
         maxw = 26 if kind == "take" else int(ocfg.get("max_words", 20))
         nww = len((o.get("text") or "").split())
@@ -290,7 +290,7 @@ def check_case_v10(case, cfg, E, W):
             for p in phases:
                 try:
                     t = parse_tc(p.get("tc"))
-                except Exception:
+                except (TypeError, ValueError):
                     E.append(f"case {cid}: C-02 bad phase tc {p.get('tc')!r}")
                     continue
                 if t < last:
@@ -324,7 +324,7 @@ def check_case_v10(case, cfg, E, W):
                 for (s1a, s1b), (s2a, s2b) in zip(parsed, parsed[1:]):
                     if s2a < s1b:
                         E.append(f"case {cid}: C-08 segments overlap")
-            except Exception:
+            except (KeyError, TypeError, ValueError):
                 E.append(f"case {cid}: C-08 bad segment timecodes")
 
 

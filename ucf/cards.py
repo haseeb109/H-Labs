@@ -36,7 +36,7 @@ def font(size, bold=True, override=None):
                 f = ImageFont.truetype(p, size)
                 _cache[key] = f
                 return f
-            except Exception:
+            except OSError:                        # font file missing / unreadable: the next candidate, then PIL's default
                 continue
     f = ImageFont.load_default()
     _cache[key] = f
@@ -206,7 +206,7 @@ def logo_bg_colour(logo_path, default=(8, 8, 10)):
     try:
         im = Image.open(logo_path).convert("RGB")
         return im.getpixel((3, 3))
-    except Exception:
+    except (OSError, IndexError):                  # no logo / tiny logo: the default dark background
         return default
 
 
@@ -314,8 +314,8 @@ def contact_sheet(images, labels, out, cols=4, tw=480):
         try:
             im = Image.open(p).convert("RGB").resize((tw, th))
             sheet.paste(im, (c * tw, r * (th + 34)))
-        except Exception:
-            pass
+        except OSError as e:                       # ffmpeg made no frame there: the tile stays dark and says so
+            d.text((c * tw + 8, r * (th + 34) + 8), f"(no frame: {str(e)[:40]})", font=f, fill=(200, 80, 80))
         d.text((c * tw + 8, r * (th + 34) + th + 5), lab[:48], font=f, fill=(230, 230, 230))
     sheet.save(out, quality=88)
     return out

@@ -11,19 +11,20 @@ def pick_engine(want="auto"):
         try:
             import ocrmac  # noqa: F401
             return "ocrmac"
-        except Exception:
+        except ImportError:
             if want == "ocrmac":
                 return None
     if want in ("auto", "rapidocr"):
         try:
             from rapidocr_onnxruntime import RapidOCR  # noqa: F401
             return "rapidocr"
-        except Exception:
+        except ImportError:
             return None
     return None
 
 
 _CLEAN = re.compile(r"[^a-z0-9]")
+_SAID = []            # the first OCR failure is printed once per run (every tile would repeat it)
 
 
 def read_labels(frame_path, tiles, engine):
@@ -47,7 +48,11 @@ def read_labels(frame_path, tiles, engine):
             t = _CLEAN.sub("", (txt or "").lower())
             if len(t) >= 3:
                 labels.append(t)
-        except Exception:
+        except Exception as e:  # noqa - one unreadable tile strip: no label for it (the other boundary signals still score)
+            if not _SAID:
+                _SAID.append(1)
+                print(f"  tile label OCR ({engine}) failed: {type(e).__name__}: {str(e)[:120]} - tile labels are not used "
+                      "for the boundaries of this run", flush=True)
             continue
         finally:
             strip.unlink(missing_ok=True)

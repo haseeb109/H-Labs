@@ -29,14 +29,23 @@ def _detector():
             opts = vision.FaceDetectorOptions(base_options=mpt.BaseOptions(model_asset_path=str(TASK_MODEL)),
                                               min_detection_confidence=0.5)
             det = ("tasks", vision.FaceDetector.create_from_options(opts))
-    except Exception:
+        else:
+            _DET["why"] = f"mediapipe has no face detector and {TASK_MODEL.name} is not in models/"
+    except Exception as e:  # noqa - mediapipe missing / broken: the thumbnail uses the sharpest-frame rule, see why()
         det = None
+        _DET["why"] = f"{type(e).__name__}: {str(e).splitlines()[0][:120] if str(e) else ''}"
     _DET["d"] = det
     return det
 
 
 def available():
     return _detector() is not None
+
+
+def why():
+    """Why face detection is off ('' when it works) - the renderers print this once per thumbnail."""
+    _detector()
+    return _DET.get("why", "")
 
 
 def _run(det, im):
@@ -84,7 +93,8 @@ def detect(img_path):
             x0, y0, ww, hh = int(fx * W), int(fy * H), int(0.6 * W), int(0.6 * H)
             win = im.crop((x0, y0, x0 + ww, y0 + hh)).resize((ww * 2, hh * 2), Image.LANCZOS)
             boxes += [(x0 + x / 2, y0 + y / 2, w / 2, h / 2, sc) for x, y, w, h, sc in _run(det, win)]
-    except Exception:
+    except Exception as e:  # noqa - one bad frame must not stop the thumbnail; the reason is kept for why()
+        _DET["why"] = f"detection failed on {Path(img_path).name}: {type(e).__name__}: {str(e)[:100]}"
         return []
     keep = []
     for bx in sorted(boxes, key=lambda b: -b[4]):                  # same face seen twice -> keep the surer one

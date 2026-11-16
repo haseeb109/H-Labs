@@ -100,7 +100,7 @@ def probe_video(path):
         st, dur = (d.get("streams") or [{}])[0], float((d.get("format") or {}).get("duration") or 0)
         vbr = float(st.get("bit_rate") or 0) or (Path(path).stat().st_size * 8 / dur - 130_000 if dur else 0)
         return int(st.get("height") or 0), vbr
-    except Exception:
+    except (OSError, ValueError, subprocess.SubprocessError):   # no ffprobe / unreadable file: "unknown" (the callers re-download)
         return 0, 0
 
 
@@ -138,7 +138,7 @@ def describe(path):
                 + ("   <- LOW bitrate: this file looks soft. Delete it (work\\<id>\\source.mp4) and run again to re-download"
                    " the best version" if low else ""))
         return line, low
-    except Exception as e:
+    except (OSError, ValueError, subprocess.SubprocessError) as e:
         return f"source: could not read ({e})", False
 
 

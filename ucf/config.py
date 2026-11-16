@@ -126,7 +126,7 @@ def _find_style_dir(sid):
         try:
             if json.loads(d.read_text(encoding="utf-8")).get("id") == sid:
                 return d.parent
-        except Exception:
+        except (OSError, ValueError, AttributeError):       # an unreadable / broken pack must not hide the others
             continue
     return None
 
@@ -135,20 +135,31 @@ def load(path=None, style=None):
     """Merge order: engine DEFAULTS <- style pack (style.json) <- config.json <- config.local.json <- env. CLI flags win last.
     config.local.json = this PC's own settings (e.g. "x264_preset": "fast", "cpu_threads": 6). It is not in git, so a team PC can
     change settings without ever blocking an update (an edited config.json makes `git pull` refuse)."""
+    from . import schema
     cfg = dict(DEFAULTS)
     p = Path(path) if path else ROOT / "config.json"
-    user = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    try:
+        user = json.loads(p.read_text(encoding="utf-8-sig")) if p.exists() else {}
+    except ValueError as e:
+        raise RuntimeError(f"{p.name} is not valid JSON ({e}) - fix it (a missing comma / quote is the usual cause)")
+    notes = schema.check_config(user, p.name)
     local = ROOT / "config.local.json"
     if not path and local.exists():
         try:
-            user.update(json.loads(local.read_text(encoding="utf-8-sig")))
+            lc = json.loads(local.read_text(encoding="utf-8-sig"))
         except ValueError as e:
             raise RuntimeError(f"config.local.json is not valid JSON ({e}) - fix or delete it")
+        notes += schema.check_config(lc, "config.local.json")
+        user.update(lc)
     sid = style or user.get("style") or cfg["style"]
     d = _find_style_dir(str(sid))
     if d:
         cfg["style"], cfg["style_dir"] = str(sid), d.relative_to(ROOT).as_posix()
-        s = json.loads((d / "style.json").read_text(encoding="utf-8"))
+        try:
+            s = json.loads((d / "style.json").read_text(encoding="utf-8"))
+        except ValueError as e:
+            raise RuntimeError(f"{d.name}/style.json is not valid JSON ({e}) - fix it")
+        notes += schema.check_style(s, f"styles/{d.name}/style.json")
         cfg["_renderer"] = s.get("renderer", "tt")
         cfg["_look"] = s.get("look", "tt")                  # "ov" = Overruled renderer (same locked structure family)
         cfg["_prompt_extra"] = s.get("prompt_extra")
@@ -169,6 +180,12 @@ def load(path=None, style=None):
                 cfg["_mode_source"] = "config"
     if "_mode_source" not in cfg:
         cfg["_mode_source"] = "default"
+    # a typo in a key used to take the default silently (2026-11: "min_hieght" did nothing); a wrong type stops the run here,
+    # before anything is downloaded, instead of as a TypeError deep inside ffmpeg / the brain call
+    for n in notes:
+        print(f"CONFIG {'ERROR' if n.startswith('ERROR:') else 'WARNING'}: {n.removeprefix('ERROR: ')}", flush=True)
+    if schema.errors(notes):
+        raise RuntimeError("config has a wrong value type (see CONFIG ERROR above) - fix the file named there and run again")
     load_env()
     return cfg
 
@@ -195,7 +212,7 @@ def style_list():
     for sj in sorted(root.glob("*/style.json")) if root.exists() else []:
         try:
             out.append(json.loads(sj.read_text(encoding="utf-8")).get("id", sj.parent.name))
-        except Exception:
+        except (OSError, ValueError, AttributeError):       # broken style.json: listed by folder name, load() names the error
             out.append(sj.parent.name)
     return out
 

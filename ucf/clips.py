@@ -34,7 +34,7 @@ def hook_span(video, case, cfg):
     hk = video.get("hook") or {}
     try:
         a, b = parse_tc(hk["in"]), parse_tc(hk["out"])
-    except Exception:
+    except (KeyError, TypeError, ValueError):      # no usable hook in the plan: 15 s at 60% of the case
         a, b = ca + (cb - ca) * 0.6, ca + (cb - ca) * 0.6 + 15
     a = min(max(a, ca), cb - lo)
     b = min(max(b, a + lo), a + hi, cb)
@@ -192,7 +192,7 @@ def guide(plan, video, case, rows, total, cuts, cfg, source_url=""):
     for o in sorted(case.get("overlays") or [], key=lambda o: parse_tc(o.get("tc", "0:00:00"))):
         try:
             t = src_to_clip(rows, parse_tc(o["tc"]))
-        except Exception:
+        except (KeyError, TypeError, ValueError):  # overlay without a readable tc: left out of the guide
             t = None
         if t is None or t > total - 5:
             continue
@@ -242,7 +242,7 @@ def guide(plan, video, case, rows, total, cuts, cfg, source_url=""):
         for ch in video.get("chapters") or []:
             try:
                 t = 0.0 if not chs else src_to_clip(rows, parse_tc(ch["tc"]))
-            except Exception:
+            except (KeyError, TypeError, ValueError):  # chapter without a readable tc: left out
                 t = None
             if t is not None and (not chs or t > chs[-1][0] + 10):
                 chs.append((t, ch.get("label", "")))
@@ -276,7 +276,7 @@ def make(plan, video, case, segs, src, folder, cfg, enc, ui=print, source_url=""
     th = video.get("thumbnail") or {}
     try:
         wa, wb = parse_tc(th["window_in"]), parse_tc(th["window_out"])
-    except Exception:
+    except (KeyError, TypeError, ValueError):      # no thumbnail window in the plan: frames around the hook
         wa = wb = hook[0] + 3
     frames(src, [wa, (wa + wb) / 2, wb, hook[0] + 2], folder)
     qc = {"ok": final.exists() and final.stat().st_size > 0, "length_s": round(total, 1), "dead_air_removed_s": round(removed, 1),

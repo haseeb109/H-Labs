@@ -79,7 +79,7 @@ class OVRenderer(TTRenderer):
         self.lfile = self.gdir / "layout_cache.json"
         try:
             self.lcache = json.loads(self.lfile.read_text())
-        except Exception:
+        except (OSError, ValueError):              # no / broken cache: the layouts are measured again
             self.lcache = {}
 
     # ------------------------------------------------------------------ layout analysis
@@ -87,8 +87,8 @@ class OVRenderer(TTRenderer):
         samples = L.sample(path, a, b, self.lcache)
         try:
             self.lfile.write_text(json.dumps(self.lcache))
-        except Exception:
-            pass
+        except OSError as e:                       # cache only: the next run measures again
+            print(f"  layout cache not saved ({e})", flush=True)
         return L.runs(samples, b - a)
 
     # ------------------------------------------------------------------ generic stage clip
