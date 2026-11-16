@@ -384,6 +384,64 @@ class TTRenderer(Renderer):
             ui(f"  overlays burned: {len(pngs)}")
         return final
 
+    # ------------------------------------------------------------------ steps every look shares (render_video)
+    def _voice(self, video, ids, tts_cache, ui):
+        """AI voice: one clip list per bridge (keyed by the case it follows) + the closing narration; every clip <= 18 s.
+        -> (bridges by case id, recap_clips, final_clips)"""
+        cfg = self.cfg
+        ui("  voiceover (clips <= 18 s)...")
+        bridges = {b["after_case_id"]: b for b in video.get("bridges", [])}
+        recap_clips = {}
+        for i in range(len(ids) - 1):
+            recap_clips[ids[i]] = tts.synth_clips(bridges[ids[i]]["text"], tts_cache, cfg, ui)
+        final_clips = tts.synth_clips(video["vo_final"]["text"], tts_cache, cfg, ui)
+        for cl in list(recap_clips.values()) + [final_clips]:
+            for w in cl:
+                assert probe_dur(w) <= cfg.get("vo_clip_max", 18.0) + 0.05, f"AI clip over limit: {w}"
+        return bridges, recap_clips, final_clips
+
+    @staticmethod
+    def _segments():
+        """-> (segfiles, seg): the ordered segment list of one video and the function that appends to it."""
+        segfiles = []
+
+        def seg(kind, path, **meta):
+            segfiles.append((kind, Path(path), meta))
+        return segfiles, seg
+
+    def _vo_start(self, c, total):
+        """Where a narration of `total` seconds starts over the end of case `c`: inside its last part, 2 s before the cut."""
+        return max(TL.case_parts(c, self.cfg["cut_pad_out"])[-1][0], parse_tc(c["out"]) - total - 2.0)
+
+    @staticmethod
+    def _timeline_rows(segfiles):
+        """Measured start / duration of every rendered segment (the real timeline, not the planned one)."""
+        t = 0.0
+        rows = []
+        for kind, path, meta in segfiles:
+            d = probe_dur(path)
+            rows.append({"kind": kind, "start": t, "dur": d, **meta})
+            t += d
+        return rows
+
+    def _join(self, work, segfiles, outdir, ui):
+        ui("  joining + loudness...")
+        lst = work / "concat.txt"
+        lst.write_text("".join(f"file '{p.resolve()}'\n" for _, p, _ in segfiles), encoding="utf-8")
+        final = outdir / "video.mp4"
+        join_segments(lst, final, self.cfg)
+        return final
+
+    def _footage_log(self, video, rows, default_src):
+        """One footage-log row per segment (source file + deep link into the livestream)."""
+        for r in rows:
+            s = self.sources.get(r.get("src", default_src)) or {}
+            url = s.get("url", "")
+            self.log.append({"video": video["n"], "segment": r["kind"], "case_id": r.get("case_id", ""),
+                             "source_file": r.get("src", ""), "source_url": (url + ("&" if "?" in url else "?") + f"t={int(r['a'])}s") if url and "a" in r else url,
+                             "src_in": fmt_tc(r["a"]) if "a" in r else "", "src_out": fmt_tc(r["b"]) if "b" in r else "",
+                             "out_start": fmt_tc(r["start"]), "out_dur": f"{r['dur']:.1f}"})
+
     def render_video(self, plan, video, outdir, tts_cache, ui=print):
         by_id = {c["id"]: c for c in plan["cases"]}
         outdir = Path(outdir)
@@ -395,21 +453,8 @@ class TTRenderer(Renderer):
         lead, tail = cfg["vo_lead"], cfg["vo_tail"]
         srcname = lambda c: c.get("source_file") or default_src      # noqa: E731
 
-        # ----- AI voice clips (every clip <= 18 s) -----
-        ui("  voiceover (clips <= 18 s)...")
-        bridges = {b["after_case_id"]: b for b in video.get("bridges", [])}
-        recap_clips = {}
-        for i in range(len(ids) - 1):
-            recap_clips[ids[i]] = tts.synth_clips(bridges[ids[i]]["text"], tts_cache, cfg, ui)
-        final_clips = tts.synth_clips(video["vo_final"]["text"], tts_cache, cfg, ui)
-        for cl in list(recap_clips.values()) + [final_clips]:
-            for w in cl:
-                assert probe_dur(w) <= cfg.get("vo_clip_max", 18.0) + 0.05, f"AI clip over limit: {w}"
-
-        segfiles = []
-
-        def seg(kind, path, **meta):
-            segfiles.append((kind, Path(path), meta))
+        _bridges, recap_clips, final_clips = self._voice(video, ids, tts_cache, ui)
+        segfiles, seg = self._segments()
 
         # ----- 1. hook -----
         lead_case = by_id[ids[0]]
@@ -485,7 +530,7 @@ class TTRenderer(Renderer):
                 clips = recap_clips[cid]
                 ds = [probe_dur(w) + lead + tail for w in clips]
                 recap_durs.append(sum(ds))
-                start = max(TL.case_parts(c, cfg["cut_pad_out"])[-1][0], parse_tc(c["out"]) - sum(ds) - 2.0)
+                start = self._vo_start(c, sum(ds))
                 off = 0.0
                 for q, (w, dq) in enumerate(zip(clips, ds)):
                     p = work / f"{k:02d}_recap{i + 1}_{q}.mp4"
@@ -500,7 +545,7 @@ class TTRenderer(Renderer):
         last = by_id[ids[-1]]
         ds = [probe_dur(w) + lead + tail for w in final_clips]
         fin_total = sum(ds)
-        start = max(TL.case_parts(last, cfg["cut_pad_out"])[-1][0], parse_tc(last["out"]) - fin_total - 2.0)
+        start = self._vo_start(last, fin_total)
         off = 0.0
         for q, (w, dq) in enumerate(zip(final_clips, ds)):
             p = work / f"{k:02d}_final_{q}.mp4"
@@ -513,18 +558,8 @@ class TTRenderer(Renderer):
             k += 1
 
         # ----- real timeline -----
-        t = 0.0
-        rows = []
-        for kind, path, meta in segfiles:
-            d = probe_dur(path)
-            rows.append({"kind": kind, "start": t, "dur": d, **meta})
-            t += d
-
-        ui("  joining + loudness...")
-        lst = work / "concat.txt"
-        lst.write_text("".join(f"file '{p.resolve()}'\n" for _, p, _ in segfiles), encoding="utf-8")
-        final = outdir / "video.mp4"
-        join_segments(lst, final, cfg)
+        rows = self._timeline_rows(segfiles)
+        final = self._join(work, segfiles, outdir, ui)
 
         real = {"hook": rows[0]["dur"], "intro": rows[1]["dur"], "recap": recap_durs, "final": fin_total}
         tl = TL.build(video, by_id, tcfg, real)
@@ -542,13 +577,7 @@ class TTRenderer(Renderer):
             final = CAP.burn(final, blocks, work, self.cfg, venc(self.enc), ui)
         except Exception as ex:  # noqa - captions are a bonus layer, never a reason to lose the video
             ui("  captions skipped:", ex)
-        for r in rows:
-            s = self.sources.get(r.get("src", default_src)) or {}
-            url = s.get("url", "")
-            self.log.append({"video": video["n"], "segment": r["kind"], "case_id": r.get("case_id", ""),
-                             "source_file": r.get("src", ""), "source_url": (url + ("&" if "?" in url else "?") + f"t={int(r['a'])}s") if url and "a" in r else url,
-                             "src_in": fmt_tc(r["a"]) if "a" in r else "", "src_out": fmt_tc(r["b"]) if "b" in r else "",
-                             "out_start": fmt_tc(r["start"]), "out_dur": f"{r['dur']:.1f}"})
+        self._footage_log(video, rows, default_src)
         return {"final": final, "timeline": tl, "rows": rows, "durs": real, "measured_total": probe_dur(final),
                 "work": work, "ai_clips": [round(probe_dur(w), 1) for cl in list(recap_clips.values()) + [final_clips] for w in cl]}
 

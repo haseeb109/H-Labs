@@ -6,12 +6,17 @@ Missing mediapipe -> every call returns [] and the thumbnail falls back to the o
 """
 from pathlib import Path
 
+from PIL import Image
+
 ROOT = Path(__file__).resolve().parent.parent
 TASK_MODEL = ROOT / "models" / "blaze_face_short_range.tflite"
 TASK_MODEL_URL = ("https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/"
                   "float16/latest/blaze_face_short_range.tflite")
 _DET = {}
 MIN_SCORE = 0.6
+PROBE, PROBE_WIN = (320, 180), 4        # pre-check: frame size and window (4 px here = 16 px at 720p)
+MIN_SKIN_DENSITY = 0.5                  # a window that is at least half skin-coloured -> mediapipe decides
+STATS = {"frames": 0, "skipped": 0}     # how often the pre-check saved a mediapipe pass (for timing a run)
 
 
 def _detector():
@@ -66,16 +71,51 @@ def _iou(a, b):
     return inter / (a[2] * a[3] + b[2] * b[3] - inter + 1e-9)
 
 
+def no_face_likely(im):
+    """Cheap pre-check on a PIL RGB frame: True only when the frame CANNOT hold a face the detector would find.
+
+    One mediapipe pass costs ~35 ms and detect() makes five of them, while this is a 320x180 resize and some numpy
+    (~1 ms). Thumbnail candidates are full of frames that can never score: a Zoom tile with the camera off, a black
+    letterbox, a slide, a flat wall. A face is always a patch of skin-coloured pixels, whatever the skin tone, so
+    when no 16x16 px patch (at 720p) passes a broad skin-colour test there is nothing for mediapipe to find.
+    Unsure -> False (run mediapipe): a frame with almost no colour at all (greyscale or washed-out footage) says
+    nothing about skin, and so does a frame too small to probe."""
+    import numpy as np
+    if im.width < PROBE[0] // 2 or im.height < PROBE[1] // 2:
+        return False
+    a = np.asarray(im.resize(PROBE, Image.BILINEAR), dtype="float32")
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    mx, mn = a.max(2), a.min(2)
+    y = 0.299 * r + 0.587 * g + 0.114 * b
+    if float(y.std()) < 3.0:                         # flat frame (camera off, black tile, blank slide): nothing to find
+        return True
+    sat = (mx - mn) / np.maximum(mx, 1.0)
+    if float(np.percentile(sat, 90)) < 0.08:         # no colour in the frame: skin tone tells us nothing
+        return False
+    cb = -0.169 * r - 0.331 * g + 0.5 * b + 128
+    cr = 0.5 * r - 0.419 * g - 0.081 * b + 128
+    m = ((cr >= 133) & (cr <= 177) & (cb >= 77) & (cb <= 127) & (y > 40)        # broad YCbCr skin box (all tones)
+         & (r > g) & (g > b) & (sat > 0.10) & (sat < 0.68) & (mx - mn > 12)).astype("float32")
+    ii = np.zeros((m.shape[0] + 1, m.shape[1] + 1), dtype="float32")            # integral image -> densest window
+    ii[1:, 1:] = m.cumsum(0).cumsum(1)
+    s = ii[PROBE_WIN:, PROBE_WIN:] - ii[:-PROBE_WIN, PROBE_WIN:] - ii[PROBE_WIN:, :-PROBE_WIN] + ii[:-PROBE_WIN, :-PROBE_WIN]
+    return float(s.max()) / (PROBE_WIN * PROBE_WIN) < MIN_SKIN_DENSITY
+
+
 def detect(img_path):
     """-> [{"x","y","w","h","score"}] as fractions of the image (biggest x surest face first). [] when unavailable.
     The Tasks model is short-range: a face that is small in a wide court shot is missed on the whole image, so
-    four overlapping 60% windows are also checked at 2x (found the defendant at 0.96 on 03p3ATnv6dY)."""
+    four overlapping 60% windows are also checked at 2x (found the defendant at 0.96 on 03p3ATnv6dY).
+    Frames the cheap pre-check rules out never reach mediapipe (see no_face_likely)."""
     det = _detector()
     if not det:
         return []
-    from PIL import Image
     with Image.open(img_path) as _f:
         im = _f.convert("RGB")
+    STATS["frames"] += 1
+    if no_face_likely(im):
+        STATS["skipped"] += 1
+        return []
     W, H = im.size
     boxes = []
     try:

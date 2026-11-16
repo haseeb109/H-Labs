@@ -356,6 +356,22 @@ def t20_faces():
     assert FC.text_placement([], "top") == "top"
     x0, y0, w, h = FC.face_crop_box({"x": .9, "y": .1, "w": .1, "h": .2, "score": 1}, 640, 360)
     assert x0 + w <= 640 and y0 + h <= 360 and x0 >= 0 and y0 >= 0 and abs(w / h - 16 / 9) < 0.02, (x0, y0, w, h)
+
+    # cheap pre-check (saves a mediapipe pass on frames that cannot hold a face): skip a flat / colourless frame,
+    # never skip a frame with a skin-coloured patch in it, and fall through when the frame has no colour to judge
+    import numpy as np
+    from PIL import Image
+    blue = np.zeros((720, 1280, 3), "uint8")
+    blue[:, :, 2] = 180                                                  # a colourful frame with no skin anywhere
+    assert FC.no_face_likely(Image.fromarray(blue)) is True
+    assert FC.no_face_likely(Image.fromarray(np.zeros((720, 1280, 3), "uint8"))) is True, "black frame"
+    for skin in ((228, 178, 142), (150, 104, 74), (92, 62, 44), (255, 219, 186)):     # light to dark skin tones
+        f = blue.copy()
+        f[280:400, 560:680] = skin                                       # a 120 px face-sized patch
+        assert FC.no_face_likely(Image.fromarray(f)) is False, f"skin tone {skin} would skip mediapipe"
+    grey = np.dstack([np.tile(np.linspace(0, 255, 1280, dtype="uint8"), (720, 1))] * 3)
+    assert FC.no_face_likely(Image.fromarray(grey)) is False, "no colour at all -> unsure -> mediapipe decides"
+
     if not FC.available():
         return "placement + crop maths ok; detection SKIPPED (mediapipe not installed)"
     clip = FIX / "r6.mp4"          # judge on camera at 150 s (r1 opens on a dark judge tile)
@@ -1893,6 +1909,101 @@ def t25_nvenc_levels():
     return "full options -> simpler options -> x264 fallback all chosen correctly"
 
 
+def t47_renderer_shared_steps():
+    """De-duplication 2026-11-16: the three OV-family looks (Overruled, Justice Served, Court Beacon) share one
+    render_video skeleton. Every shared step lives in the base (voice, timeline pre-pass, staging, join, footage log)
+    and a subclass only changes the look, so a segment rendered through a subclass is byte-identical to the base's."""
+    import importlib.util
+    import numpy as np
+    from PIL import Image
+    from ucf import config
+    from ucf.render_ov import OVRenderer
+    from ucf.render_tt import TTRenderer
+
+    def _style_class(style, mod_name, cls_name):
+        spec = importlib.util.spec_from_file_location(f"t47_{style}", ROOT / "styles" / style / "engine" / mod_name)
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        return getattr(m, cls_name)
+
+    JS = _style_class("justice_served", "render_js.py", "JSRenderer")
+    CB = _style_class("court_beacon", "render_cb.py", "CBRenderer")
+
+    # 1) each shared step is written once, in the file that owns it: nobody else synthesises voice, joins or logs
+    owner = {"synth_clips(": "ucf/render_tt.py", "join_segments(": "ucf/render_tt.py", "self.log.append(": "ucf/render_tt.py",
+             "TL.build(": "ucf/render_ov.py"}       # TT keeps its own TL.build (its overlay pre-pass) + the shared one
+    files = ("ucf/render_tt.py", "ucf/render_ov.py", "styles/justice_served/engine/render_js.py",
+             "styles/court_beacon/engine/render_cb.py")
+    for step, home in owner.items():
+        hits = {f: (ROOT / f).read_text(encoding="utf-8").count(step) for f in files}
+        assert hits[home], f"{home} lost its {step} - every look needs that step"
+        for f, n in hits.items():
+            assert n == 0 or f in (home, "ucf/render_tt.py"), f"{f} still does its own {step} - that step belongs to {home}"
+
+    # 2) every shared step is inherited, not copied, by all three looks
+    shared = {"_voice": TTRenderer, "_segments": TTRenderer, "_timeline_rows": TTRenderer, "_join": TTRenderer,
+              "_footage_log": TTRenderer, "_vo_start": TTRenderer, "_plan_pieces": OVRenderer, "_clip_texts": OVRenderer,
+              "_closing_segments": OVRenderer, "_finish_video": OVRenderer, "stage_clip": OVRenderer,
+              "_compose_run": OVRenderer, "ov_card_clip": OVRenderer, "ov_sting": OVRenderer}
+    for cls in (OVRenderer, JS, CB):
+        for name, owner in shared.items():
+            assert getattr(cls, name) is getattr(owner, name), f"{cls.__name__}.{name} is a copy of {owner.__name__}.{name}"
+        for hook in ("_geometry", "_run_layers"):           # the look's own extension points
+            assert callable(getattr(cls, hook)), f"{cls.__name__} has no {hook}"
+    assert JS._geometry is not OVRenderer._geometry and CB._run_layers is not OVRenderer._run_layers, "the looks share no geometry"
+
+    # 3) one short segment: base path vs subclass path, frame for frame
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        clip = tmp / "clip.mp4"
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=3",
+                        "-f", "lavfi", "-i", "sine=frequency=220:duration=3", "-c:v", "libx264", "-preset", "ultrafast",
+                        "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(clip)], check=True)
+
+        def flat(path, size, colour):
+            Image.fromarray(np.full((size[1], size[0], 4), colour, dtype="uint8")).save(path)
+            return path
+
+        class _Base(OVRenderer):
+            """The shared engine with plain colour graphics: no browser needed to compare the two paths."""
+            GFX_DIR = "_t47_base"
+
+            def _build_canvas(self):
+                self.bg = flat(self.gdir / "bg.png", (1920, 1080), (14, 22, 38, 255))
+                self.brand_png = flat(self.gdir / "brand.png", (1920, 1080), (220, 190, 90, 70))
+                self.prog_png = flat(self.gdir / "prog.png", (1920, 1080), (200, 60, 50, 120))
+
+        class _Look(_Base):
+            """A style pack's shape: it overrides only the look hooks and hands the work back to the base."""
+            GFX_DIR = "_t47_look"
+
+            def _geometry(self, lay, tpl, act, path, t, opts):
+                return super()._geometry(lay, tpl, act, path, t, opts)
+
+            def _run_layers(self, geo, run, d, layers, blur, opts):
+                return super()._run_layers(geo, run, d, layers, blur, opts)
+
+        cfg = dict(config.load(style="overruled"))
+        cfg.update({"work_dir": str(tmp / "work"), "encoder": "libx264", "x264_preset": "ultrafast", "cpu_threads": 2})
+        src = {"clip.mp4": {"path": str(clip), "url": ""}}
+        md5 = []
+        for i, cls in enumerate((_Base, _Look)):
+            rn = cls(cfg, src, tmp)
+            out = tmp / f"seg_{i}.mp4"
+            rn.stage_clip("clip.mp4", 0.2, 1.7, out, layers=[dict(png=rn.brand_png, s=0.3, e=1.2, fin=0.2, fout=0.2)],
+                          prog=(0.0, 0.5))
+            r = subprocess.run(["ffmpeg", "-v", "error", "-i", str(out), "-map", "0:v", "-f", "framemd5", "-"],
+                               capture_output=True, text=True)
+            lines = [ln for ln in r.stdout.splitlines() if ln and not ln.startswith("#")]
+            assert len(lines) > 20, f"{cls.__name__} rendered almost nothing ({len(lines)} frames)"
+            md5.append(r.stdout)
+        assert md5[0] == md5[1], "the subclass path renders different frames from the base path"
+        frames = sum(1 for ln in md5[0].splitlines() if ln and not ln.startswith("#"))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return f"{len(shared)} shared steps, no duplicated TTS/join/timeline, {frames} frames identical base vs subclass"
+
+
 def main():
     print("H Labs self-test matrix")
     check(1, "environment", t1_environment)
@@ -1944,6 +2055,7 @@ def main():
     check(43, "whisper crash fallback (C++ runtime)", t43_whisper_crash_fallback)
     check(44, "own video / 5 min cases / as-is re-edit", t44_local_mincase_asis)
     check(45, "render speed: one pass less, stills once, SSD temp", t45_render_speed)
+    check(47, "renderer de-duplication: shared steps, identical frames", t47_renderer_shared_steps)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))
