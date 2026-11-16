@@ -103,17 +103,45 @@ def fresh_render_cache(folder, cfg, video, cases):
     mark.write_text(stamp, encoding="utf-8")
 
 
-def check_disk(root, need_gb=5.0, warn_gb=20.0):
+def check_disk(root, need_gb=5.0, warn_gb=20.0, what="the H Labs drive"):
     """Stop before a download when the disk is (almost) full; warn when it is getting low."""
     try:
         free = shutil.disk_usage(root).free / 1e9
     except OSError:
         return
     if free < need_gb:
-        sys.exit(f"DISK FULL: only {free:.1f} GB free on the H Labs drive - a stream needs ~5-10 GB while it is processed. "
+        sys.exit(f"DISK FULL: only {free:.1f} GB free on {what} - a stream needs ~5-10 GB while it is processed. "
                  "Delete old output folders (videos already uploaded) and run again.")
     if free < warn_gb:
-        ui(f"WARNING: only {free:.1f} GB free on the H Labs drive - delete old output folders soon")
+        ui(f"WARNING: only {free:.1f} GB free on {what} - delete old output folders soon")
+
+
+def render_need_gb(stream_len):
+    """Rough disk need of a render: the pieces in every _work folder plus the finished videos, measured as 0.25 GB per minute
+    of stream (owner priority #7, 2026-11-16). Never less than 5 GB - even a short stream writes cards, voice and a join."""
+    return max(5.0, stream_len / 60.0 * 0.25)
+
+
+def check_render_space(cfg, outroot, stream_len, kind="render"):
+    """Before the FIRST video (and before the clips): stop now with the estimate instead of failing in the middle of a long
+    render, and warn below twice the estimate. The pieces land in render_temp_dir when one is configured, else next to the
+    finished videos."""
+    need = render_need_gb(stream_len)
+    tmp = str(cfg.get("render_temp_dir") or "").strip()
+    where = Path(tmp).expanduser() if tmp else Path(outroot)
+    if not where.exists():
+        where = Path(outroot)
+    try:
+        free = shutil.disk_usage(where).free / 1e9
+    except OSError:                                   # cannot read that drive: the render says what breaks soon enough
+        return
+    est = f"this {kind} needs about {need:.0f} GB ({stream_len / 60:.0f} min of stream x 0.25 GB)"
+    if free < need:
+        sys.exit(f"STOP BEFORE THE RENDER: {est}, but only {free:.1f} GB are free on {where}. Nothing was rendered yet - "
+                 "delete old output folders (videos already uploaded) or set render_temp_dir to a drive with room, then run "
+                 "again (finished videos of this run are kept and skipped).")
+    if free < 2 * need:
+        ui(f"WARNING: {est} and {free:.1f} GB are free on {where} - delete old output folders before this run gets long")
 
 
 def ui(*a):
@@ -137,6 +165,60 @@ def load_json(p, default):
 
 def save_json(p, d):
     Path(p).write_text(json.dumps(d, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def run_file_stem(cfg):
+    """<style>_<mode>[_min<N>]: the plan and the progress file of a run share this name, so an 8-min and a 5-min run (or
+    another style / mode) never read each other's state."""
+    extra = "" if cfg["_mode_label"] != "all" or cfg.get("min_case_minutes", 8) == 8 else "_min%g" % cfg["min_case_minutes"]
+    return f"{cfg['style']}_{cfg['_mode_label']}{extra}"
+
+
+def progress_path(work, cfg):
+    """work/<id>/progress_<style>_<mode>.json, next to the plan. Clips get their own file: they share the all-cases plan but
+    produce other folders (clip.mp4 instead of video.mp4)."""
+    return Path(work) / f"progress_{run_file_stem(cfg)}{'_clips' if cfg.get('output_kind') == 'clips' else ''}.json"
+
+
+def plan_fingerprint(plan):
+    """Fingerprint of what the render makes from the plan (videos + cases). A changed plan invalidates the progress file -
+    the same idea as the render-cache fingerprint in fresh_render_cache."""
+    import hashlib
+    return hashlib.sha1(json.dumps({"videos": plan.get("videos", []), "cases": plan.get("cases", [])},
+                                   sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+
+def progress_load(path, plan, cfg, kind="video"):
+    """Resume state of this run. A file of another H Labs version, another plan or the other output kind is dropped: its
+    folders and render pieces no longer match what this run makes (owner priority #6, 2026-11-16)."""
+    from ucf import __version__
+    fp = plan_fingerprint(plan)
+    d = load_json(path, {})
+    if d.get("plan_fingerprint") == fp and d.get("hlabs_version") == __version__ and d.get("kind") == kind:
+        return d
+    if d.get("videos"):
+        why = ("H Labs version changed" if d.get("hlabs_version") != __version__
+               else "the plan changed" if d.get("plan_fingerprint") != fp else "another output kind")
+        ui(f"  progress of an earlier run dropped ({why}) - every {kind} is made again")
+    return {"hlabs_version": __version__, "plan_fingerprint": fp, "kind": kind, "style": cfg["style"],
+            "mode": cfg.get("_mode_label", ""), "videos": {}}
+
+
+def progress_mark(path, prog, n, **fields):
+    """State of one video / clip (done | failed | pending) -> the file on disk, after every single one."""
+    prog["videos"][str(n)] = dict(prog["videos"].get(str(n), {}), **fields, updated=time.strftime("%Y-%m-%d %H:%M:%S"))
+    try:
+        save_json(path, prog)
+    except OSError as e:                              # a full / locked disk must not cost the finished video
+        ui(f"  progress file not written ({e}) - a stopped run would start this {prog.get('kind', 'video')} again")
+
+
+def progress_done(prog, n, folder, final="video.mp4"):
+    """-> the entry when n is finished AND its file is still in the SAME folder, else None (then it is made again)."""
+    e = (prog.get("videos") or {}).get(str(n)) or {}
+    if e.get("state") != "done" or e.get("folder") != Path(folder).name:
+        return None
+    return e if (Path(folder) / final).exists() else None
 
 
 def _usage_exit(work_holder):
@@ -424,8 +506,7 @@ def stage_plan(R):
     # one plan per style + mode: titles follow the style's own rules and a bundle plan is not an all-cases plan, so a stream run
     # again in another style / mode must not reuse the first plan (it failed the validator: "CAPS word ... not in this style's
     # banks"). Clips use the all-cases plan of the same style.
-    R.plan_path = Path(R.a.plan) if R.a.plan else R.work / f"plan_{R.cfg['style']}_{R.cfg['_mode_label']}" \
-        f"{'' if R.cfg['_mode_label'] != 'all' or R.cfg.get('min_case_minutes', 8) == 8 else '_min%g' % R.cfg['min_case_minutes']}.json"
+    R.plan_path = Path(R.a.plan) if R.a.plan else R.work / f"plan_{run_file_stem(R.cfg)}.json"
     R.carried = [] if R.mode == "all" else load_json(R.state / "carry_forward.json", [])
     inputs = {"source_file": R.source_file, "stream_length": fmt_tc(R.stream_len), "channel_name": R.cfg["channel_name"]}
     lines = transcript.compact_lines(R.segs)
@@ -618,9 +699,27 @@ def stage_render(R):
     else:
         rn = (TTRenderer if R.cfg.get("_renderer", "tt") == "tt" else Renderer)(R.cfg, R.sources, R.root)
     from ucf.render import _HW
+    from ucf import render as RND
     ui(f"encoder: {rn.enc}  |  decode: {('GPU (' + _HW['name'] + ')') if _HW['name'] else 'CPU'}")
+    RND.warn_low_vram(ui)
     summary, rows, failed_videos = [], [], []
     todo = [v for v in R.plan["videos"] if not only or v["n"] in only]
+    # resume (owner priority #6, 2026-11-16): a video finished by an earlier, stopped run of this plan is reused. --only always
+    # renders what it names, so it ignores the file.
+    ppath = progress_path(R.work, R.cfg)
+    prog = progress_load(ppath, R.plan, R.cfg)
+    folders = {}
+    for v in todo:
+        lead_ = by_id[v["case_ids"][0]]
+        pfx = f"{v.get('rank', v['n']):02d}" if R.mode == "all" else f"Video_{v['n']:02d}"
+        folders[v["n"]] = outroot / f"{pfx}_{safe_slug(lead_['name'], 24)}"
+    reused = {v["n"]: progress_done(prog, v["n"], folders[v["n"]]) for v in todo} if not only else {}
+    reused = {n: e for n, e in reused.items() if e}
+    if reused and os.environ.get("HL_STUDIO"):
+        print(f"@@resumed {len(reused)}", flush=True)
+    todo = [v for v in todo if v["n"] not in reused]
+    if todo:
+        check_render_space(R.cfg, outroot, R.stream_len * len(todo) / max(1, len(R.plan["videos"])))
     if len(todo) > 1:
         # the AI voice of the NEXT videos is made in the background while the GPU renders this one (network wait no longer
         # sits in the render). Exactly the lines the renderer asks for (cache hits later: no extra credits); one line is never
@@ -638,20 +737,30 @@ def stage_render(R):
                 except Exception as e:  # noqa - the renderer makes that line itself (and reports if that fails too)
                     ui(f"  voice prefetch for video {pv.get('n', '?')} skipped: {cause(e)}")
         threading.Thread(target=_prefetch_vo, args=(todo[1:],), daemon=True, name="vo-prefetch").start()
+    n_all = len(R.plan["videos"])
     for v in R.plan["videos"]:
         if only and v["n"] not in only:
             continue
         lead = by_id[v["case_ids"][0]]
-        prefix = f"{v.get('rank', v['n']):02d}" if R.mode == "all" else f"Video_{v['n']:02d}"
-        folder = outroot / f"{prefix}_{safe_slug(lead['name'], 24)}"
+        folder = folders[v["n"]]
+        if v["n"] in reused:                         # finished by the earlier run: counted as done, not rendered again
+            qc_ = load_json(folder / "qc.json", {})
+            e = reused[v["n"]]
+            secs = float(e.get("seconds") or qc_.get("duration") or 0)
+            ok_ = bool(qc_.get("ok", e.get("qc") == "OK"))
+            ui(f"video {v['n']}/{n_all} already done ({fmt_dur(secs)}, QC {'OK' if ok_ else 'CHECK'}) - skipping; "
+               f"--only {v['n']} forces it again")
+            summary.append((v["n"], folder.name, secs, ok_))
+            rows.append((v["n"], folder.name, secs, ok_, v, qc_))
+            continue
         folder.mkdir(exist_ok=True)
+        progress_mark(ppath, prog, v["n"], state="pending", folder=folder.name)
         try:
             ui(f"VIDEO {v['n']}: {[by_id[i]['name'] for i in v['case_ids']]}")
             CLOCK.stage(f"video {v['n']} render")
             _t_video = time.time()
             rn.log, rn.notes = [], []
             fresh_render_cache(folder, R.cfg, v, [by_id[i] for i in v["case_ids"]])
-            from ucf import render as RND
             from ucf import watermark as WM
             wm_text, wm_err = None, None
             try:                                         # the watermark is drawn inside every segment encode (one pass less)
@@ -721,12 +830,15 @@ def stage_render(R):
                f"  (took {CLOCK.hms(qc['processing_seconds'])})")
             summary.append((v["n"], folder.name, res["measured_total"], qc["ok"]))
             rows.append((v["n"], folder.name, res["measured_total"], qc["ok"], v, qc))
+            progress_mark(ppath, prog, v["n"], state="done", folder=folder.name, qc="OK" if qc["ok"] else "CHECK",
+                          seconds=round(res["measured_total"], 1), processing_seconds=qc["processing_seconds"])
         except KeyboardInterrupt:
             raise
         except Exception as e:                      # one broken video must not cost the others (2026-11-05: an ai33 timeout)
             import traceback
             traceback.print_exc()
             why = cause(e)
+            progress_mark(ppath, prog, v["n"], state="failed", folder=folder.name, error=why[:200])
             ui(f"  VIDEO {v['n']} FAILED: {why} - going on with the next video (rerun later: --only {v['n']})")
             failed_videos.append((v['n'], folder.name, why))
     CLOCK.stage("report")
@@ -740,14 +852,18 @@ def stage_render(R):
           [f"Video {n}: {f}  FAILED - {why}  (rerun only this one: --only {n})" for n, f, why in failed_videos] + [""] + carry_txt
     ulines, ut = brain.usage_summary()
     brain.save_usage(outroot / "usage.json")
-    if ut.get("cost") is not None and summary:
-        ulines.append(f"  per video  ${ut['cost'] / len(summary):.2f}  ({len(summary)} videos)")
+    n_made = len(summary) - len(reused)                # reused videos cost this run neither time nor money
+    if ut.get("cost") is not None and n_made:
+        ulines.append(f"  per video  ${ut['cost'] / max(1, n_made):.2f}  ({n_made} videos made this run)")
     R.rep += [""] + ulines
+    if reused:
+        R.rep.insert(1, f"{len(reused)} video(s) reused from the earlier run (not rendered again): "
+                        + ", ".join(str(n) for n in sorted(reused)))
     status = (f"{len(failed_videos)} video(s) FAILED" if failed_videos
               else "completed" if all(ok for *_, ok in summary) else "completed, some QC CHECK")
-    R.rep += [""] + CLOCK.lines(R.stream_len, len(summary), status)
+    R.rep += [""] + CLOCK.lines(R.stream_len, n_made, status)
     CLOCK.history(R.state / "run_history.csv", stream_id=R.sid, style=R.cfg["style"], mode=R.cfg.get("_mode_label", R.mode), encoder=rn.enc,
-                  stream_min=round(R.stream_len / 60, 1), videos=len(summary), qc_ok=sum(1 for *_, ok in summary if ok),
+                  stream_min=round(R.stream_len / 60, 1), videos=n_made, qc_ok=sum(1 for *_, ok in summary if ok),
                   cost_usd=round(ut.get("cost") or 0, 3))
     (outroot / "run_report.txt").write_text("\n".join(R.rep), encoding="utf-8")
     shutil.copy(R.plan_path, outroot / "plan.json")
@@ -760,6 +876,7 @@ def stage_render(R):
     n_rev = sum(1 for c in R.plan.get("cases", []) if c.get("needs_review"))
     if R.cfg.get("notify_when_done", True):
         FINISH.notify("H Labs - done", f"{R.sid}: {len(summary)} videos ({n_ok} QC OK"
+                      + (f", {len(reused)} reused" if reused else "")
                       + (f", {len(failed_videos)} FAILED" if failed_videos else "")
                       + (f", {n_rev} need review" if n_rev else "") + f") in {CLOCK.hms(CLOCK.total())}",
                       ok=n_ok == len(summary) and not failed_videos)
@@ -797,13 +914,39 @@ def clips_output(R, only):
     from ucf.render import _HW
     ui(f"clips only: {len(plan['videos'])} case(s)  |  encoder: {enc}  |  decode: {('GPU (' + _HW['name'] + ')') if _HW['name'] else 'CPU'}"
        "  |  no overlays / voice / watermark")
+    from ucf import render as RND
+    RND.warn_low_vram(ui)
     by_id = {c["id"]: c for c in plan["cases"]}
     summary, rows, failed = [], [], []
+    ppath = progress_path(work, cfg)
+    prog = progress_load(ppath, plan, cfg, kind="clip")
+    todo = [v for v in plan["videos"] if not only or v["n"] in only]
+    reused = {}
+    for v in todo:
+        f_ = outroot / f"{v.get('rank', v['n']):02d}_{safe_slug(by_id[v['case_ids'][0]]['name'], 24)}"
+        e = None if only else progress_done(prog, v["n"], f_, "clip.mp4")
+        if e:
+            reused[v["n"]] = e
+    if reused and os.environ.get("HL_STUDIO"):
+        print(f"@@resumed {len(reused)}", flush=True)
+    pending = len(todo) - len(reused)
+    if pending:
+        check_render_space(cfg, outroot, _WORK.get("stream_len", 0) * pending / max(1, len(plan["videos"])), kind="clips run")
     for v in plan["videos"]:
         if only and v["n"] not in only:
             continue
         case = by_id[v["case_ids"][0]]
         folder = outroot / f"{v.get('rank', v['n']):02d}_{safe_slug(case['name'], 24)}"
+        if v["n"] in reused:
+            qc_ = load_json(folder / "qc.json", {})
+            secs = float(reused[v["n"]].get("seconds") or 0)
+            ok_ = bool(qc_.get("ok", reused[v["n"]].get("qc") == "OK"))
+            ui(f"clip {v['n']}/{len(plan['videos'])} already done ({fmt_dur(secs)}, QC {'OK' if ok_ else 'CHECK'}) - skipping; "
+               f"--only {v['n']} forces it again")
+            summary.append((v["n"], folder.name, secs, ok_))
+            rows.append((v["n"], folder.name, secs, ok_, v, qc_))
+            continue
+        progress_mark(ppath, prog, v["n"], state="pending", folder=folder.name)
         ui(f"CLIP {v.get('rank', v['n'])}: {case['name']}")
         CLOCK.stage(f"clip {v.get('rank', v['n'])}")
         t0 = time.time()
@@ -816,9 +959,12 @@ def clips_output(R, only):
             traceback.print_exc()
             ui(f"  CLIP {v.get('rank', v['n'])} FAILED: {cause(e)} - going on (rerun later: --only {v['n']})")
             failed.append((v["n"], folder.name, cause(e)))
+            progress_mark(ppath, prog, v["n"], state="failed", folder=folder.name, error=cause(e)[:200])
             continue
         qc = dict(res["qc"], processing_seconds=round(time.time() - t0))
         save_json(folder / "qc.json", qc)
+        progress_mark(ppath, prog, v["n"], state="done", folder=folder.name, qc="OK" if qc["ok"] else "CHECK",
+                      seconds=round(res["total"], 1), processing_seconds=qc["processing_seconds"])
         ui(f"  done: {res['final']}  {fmt_dur(res['total'])}  (took {CLOCK.hms(qc['processing_seconds'])})")
         summary.append((v["n"], folder.name, res["total"], qc["ok"]))
         rows.append((v["n"], folder.name, res["total"], qc["ok"], v, qc))
@@ -826,13 +972,15 @@ def clips_output(R, only):
     from ucf import mode_all
     mode_all.write_ranking(plan, outroot, cfg, sid)
     rep = [f"RUN REPORT {sid} (clips only) - {time.strftime('%Y-%m-%d %H:%M')}", ""] + \
+          ([f"{len(reused)} clip(s) reused from the earlier run (not made again): " + ", ".join(str(n) for n in sorted(reused))]
+           if reused else []) + \
           [f"Clip {n}: {f}  {fmt_dur(d)}  {'OK' if ok else 'CHECK'}" for n, f, d, ok in summary] + \
           [f"Clip {n}: {f}  FAILED - {w}  (rerun only this one: --only {n})" for n, f, w in failed]
     ulines, ut = brain.usage_summary()
     brain.save_usage(outroot / "usage.json")
-    rep += [""] + ulines + [""] + CLOCK.lines(_WORK.get("stream_len", 0), len(summary), "completed")
+    rep += [""] + ulines + [""] + CLOCK.lines(_WORK.get("stream_len", 0), len(summary) - len(reused), "completed")
     CLOCK.history(state / "run_history.csv", stream_id=sid, style=cfg["style"], mode="clips", encoder=enc,
-                  stream_min=round(_WORK.get("stream_len", 0) / 60, 1), videos=len(summary),
+                  stream_min=round(_WORK.get("stream_len", 0) / 60, 1), videos=len(summary) - len(reused),
                   qc_ok=sum(1 for *_, ok in summary if ok), cost_usd=round(ut.get("cost") or 0, 3))
     (outroot / "run_report.txt").write_text("\n".join(rep), encoding="utf-8")
     shutil.copy(plan_path, outroot / "plan.json")

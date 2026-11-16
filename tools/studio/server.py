@@ -172,20 +172,9 @@ class Studio:
             brain = b if b in ("hive", "manual") else "hive"
         except OSError:
             pass
-        src = [j["url"]] if is_link(j["url"]) else ["--local", j["url"]]     # a link, or your own file / folder
-        cmd = [sys.executable, str(ROOT / "run_stream.py")] + src + ["--brain", brain, "--style", j["style"],
-                                                                     "--mode", j["mode"], "--queued"]
-        if j["mode"] in ("all", "clips") and str(o.get("min_case", "")) in ("5", "8"):
-            cmd += ["--min-case", str(o["min_case"])]
-        if o.get("voice", True) and j["mode"] != "clips":
-            cmd.append("--confirm-tts")
-        if not o.get("watermark", True):
-            cmd.append("--no-watermark")
-        if not o.get("cleanup", True):
-            cmd.append("--keep-source")
-        if j.get("only"):
-            cmd += ["--only", ",".join(map(str, j["only"]))]
-        return cmd
+        from ucf.runspec import build_run_command
+        return build_run_command(sys.executable, j["url"], j["style"], j["mode"], dict(o, brain=brain, queued=True, only=j.get("only")),
+                                 script=ROOT / "run_stream.py")
 
     def _line(self, j, line):
         """Read one output line of run_stream into the job's live state."""
@@ -205,6 +194,12 @@ class Studio:
         if s.startswith("@@videos "):
             try:
                 j["videos_total"] = int(s.split()[1])
+            except (IndexError, ValueError):
+                pass
+            return
+        if s.startswith("@@resumed "):
+            try:
+                j["videos_resumed"] = int(s.split()[1])        # finished by the stopped run: counted as done, not rendered again
             except (IndexError, ValueError):
                 pass
             return
@@ -244,7 +239,7 @@ class Studio:
         kw = {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)} if WIN else {"start_new_session": True}
         with self.lock:
             j.update(status="running", started=_now(), ended="", stage="Starting", stage_idx=0, pct=None, eta="",
-                     log=[], error="", failed_videos=[], out_dir="", videos_total=0, video_now=0)
+                     log=[], error="", failed_videos=[], out_dir="", videos_total=0, video_now=0, videos_resumed=0)
             self.current = j
         self.save()
         try:
@@ -408,7 +403,8 @@ _dur_cache = {}
 
 
 def is_link(u):
-    return str(u).strip().lower().startswith(("http://", "https://"))
+    from ucf.runspec import is_link as _is_link
+    return _is_link(u)
 
 
 def _duration(p):

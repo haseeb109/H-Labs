@@ -221,6 +221,35 @@ def _pick_hwdec(cfg, enc):
             _HW.update(args=["-hwaccel", name], name=name)
 
 
+def gpu_memory():
+    """-> (total_mb, free_mb) of the first NVIDIA GPU, or None when unknown (no nvidia-smi: AMD / Intel / Mac / no driver).
+    Unknown is not a problem - it only means no VRAM warning."""
+    try:
+        r = subprocess.run(["nvidia-smi", "--query-gpu=memory.total,memory.free", "--format=csv,noheader,nounits"],
+                           capture_output=True, text=True, timeout=5)
+        if r.returncode != 0:
+            return None
+        tot, free = (int(float(x)) for x in r.stdout.strip().splitlines()[0].split(","))
+        return tot, free
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        return None
+
+
+LOW_VRAM_MB = 1500
+
+
+def warn_low_vram(ui=print):
+    """One warning before a render when the GPU has under ~1.5 GB free: NVENC + GPU decode need memory, and another program
+    (browser, game, a second H Labs window) may be holding it. NVENC sessions: one per ffmpeg process, and the pipeline runs one
+    ffmpeg at a time (clips: span groups share ONE decoder per group, pieces are encoded one after the other; the only
+    parallel work is the network-bound brain / voice, no GPU) - so a 4 GB card is safe (checked 2026-11-16)."""
+    m = gpu_memory()
+    if m and m[1] < LOW_VRAM_MB:
+        ui(f"WARNING: only {m[1]} MB of GPU memory are free (of {m[0]} MB) - close other programs that use the GPU "
+           "(browser video, games, another H Labs window); if the encode fails, set \"encoder\": \"libx264\" in config.local.json")
+    return m
+
+
 def pick_encoder(cfg):
     _X264["preset"] = str(cfg.get("x264_preset") or "medium")       # CPU-only PCs: "fast" / "veryfast" render much quicker
     _X264["crf"] = str(cfg.get("x264_crf") or 16)

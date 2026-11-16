@@ -147,7 +147,10 @@ def c_encoder():
                 raise RuntimeError(f"NVIDIA GPU found but NVENC is rejected: {why[:120]} -> update the NVIDIA driver (nvidia.com, "
                                    "Studio driver), restart the PC. Until then the CPU encodes (slow).")
         return f"libx264 (CPU encodes - no working GPU encoder on this PC), {dec}"
-    return f"{enc} (2 s test encode ok), {dec}"
+    mem = render.gpu_memory()
+    vram = f", GPU memory {mem[1] / 1024:.1f} of {mem[0] / 1024:.1f} GB free" if mem else ""
+    low = "   [WARN] under 1.5 GB of GPU memory free - close other programs that use the GPU" if mem and mem[1] < render.LOW_VRAM_MB else ""
+    return f"{enc} (2 s test encode ok), {dec}{vram}{low}"
 
 
 def _speech_wav(path, seconds=3.0):

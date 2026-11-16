@@ -2220,6 +2220,240 @@ def t47_renderer_shared_steps():
     return f"{len(shared)} shared steps, no duplicated TTS/join/timeline, {frames} frames identical base vs subclass"
 
 
+def t49_resume_and_checks():
+    """Owner priorities #6 + #7 + #13 (2026-11-16): a run that stopped continues where it was (progress file per style + mode),
+    the disk is checked BEFORE the render, the GPU memory is read and warned about, and the launcher and Studio build the
+    run_stream.py command with ONE function."""
+    import importlib.util
+    import types
+    import ucf
+    from ucf import config, render as RND
+    from ucf.runspec import build_run_command
+    spec = importlib.util.spec_from_file_location("rs49", ROOT / "run_stream.py")
+    rs = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rs)
+    tmp = Path(tempfile.mkdtemp())
+    said = []
+    rs.ui = lambda *m: said.append(" ".join(str(x) for x in m))
+    real_usage, real_version = shutil.disk_usage, ucf.__version__
+    free = {"gb": 500.0}      # fake disk: never the real free space of the machine this runs on (test 45 had that bug)
+    shutil.disk_usage = lambda p: types.SimpleNamespace(total=1e12, used=0, free=free["gb"] * 1e9)
+    made = []
+
+    class Fake:                                              # stands in for the renderer: writes a video.mp4, counts the calls
+        enc = "libx264"
+        fail = set()
+
+        def __init__(self, *a):
+            self.log, self.notes = [], []
+
+        def render_video(self, plan, v, folder, tts_dir, ui):
+            made.append(v["n"])
+            if v["n"] in Fake.fail:
+                raise RuntimeError("power cut")
+            (Path(folder) / "video.mp4").write_bytes(b"\0" * 100)
+            return {"final": Path(folder) / "video.mp4", "timeline": [], "durs": [], "rows": [], "measured_total": 750.0}
+
+        def thumbnail(self, *a):
+            pass
+
+        def write_footage_log(self, *a):
+            pass
+
+        def contact_sheet(self, *a):
+            pass
+
+        def qc(self, final, total):
+            return {"ok": True, "loudness_lufs": -14.0, "duration": total}
+    saved = (rs.TTRenderer, rs.Renderer, rs.sheets.edit_sheet, rs.sheets.metadata, rs.tts.chars_needed)
+    rs.TTRenderer = rs.Renderer = Fake
+    rs.sheets.edit_sheet = lambda *a: "sheet"
+    rs.sheets.metadata = lambda *a: ("meta", [])
+    rs.tts.chars_needed = lambda *a, **k: 0
+    outroot = tmp / "out" / "2026-11-16_sid49"
+    pf = tmp / "work" / "sid49" / "progress_trial_tales_30.json"
+
+    def plan_of(tag=""):
+        return {"cases": [{"id": i, "name": f"Case {i}{tag}", "in": "0:00:00", "out": "0:10:00", "status": "used"} for i in (1, 2, 3)],
+                "videos": [{"n": i, "case_ids": [i], "title": f"T{i}{tag}"} for i in (1, 2, 3)]}
+
+    def run(only=None, plan=None, stream_min=60):
+        a = rs.parse_args(["x"] + (["--only", only] if only else []))
+        R = rs.Run(a)
+        R.cfg = config.load(style="trial_tales")
+        R.cfg.update(notify_when_done=False, open_output_after_run=False, cleanup_after_run="never", watermark=False,
+                     render_temp_dir="", output_dir="out", state_dir="state", work_dir="work")
+        R.mode = config.apply_mode(R.cfg, "30")
+        R.cfg["_mode_label"] = "30"
+        R.root, R.sid, R.upload, R.stream_len = tmp, "sid49", "20261116", stream_min * 60
+        R.state, R.work = tmp / "state", tmp / "work" / "sid49"
+        R.state.mkdir(exist_ok=True)
+        R.work.mkdir(parents=True, exist_ok=True)
+        R.plan = plan or plan_of()
+        R.plan_path = R.work / "plan_trial_tales_30.json"
+        R.plan_path.write_text(json.dumps(R.plan), encoding="utf-8")
+        (R.work / "plan_report.txt").write_text("r", encoding="utf-8")
+        R.sources, R.meta = {}, {}
+        made.clear()
+        said.clear()
+        rs.stage_render(R)
+        return R
+
+    try:
+        # 1) a crash on video 3: the next run reuses 1 and 2, renders 3, and the report counts all three as done
+        Fake.fail = {3}
+        run()
+        assert made == [1, 2, 3], made
+        d = json.loads(pf.read_text(encoding="utf-8"))
+        assert [d["videos"][k]["state"] for k in "123"] == ["done", "done", "failed"], d
+        assert d["hlabs_version"] == ucf.__version__ and d["plan_fingerprint"] and d["videos"]["1"]["qc"] == "OK", d
+        assert d["videos"]["1"]["folder"].startswith("Video_01") and d["videos"]["1"]["seconds"] == 750.0, d
+        Fake.fail = set()
+        run()
+        assert made == [3], f"only the failed video renders again: {made}"
+        assert any("video 1/3 already done (12:30, QC OK) - skipping; --only 1 forces it again" in m for m in said), said
+        rep = (outroot / "run_report.txt").read_text(encoding="utf-8")
+        assert all(f"Video {n}:" in rep for n in (1, 2, 3)) and "2 video(s) reused" in rep, rep
+        # 2) video 2 done with its file, 1 and 3 pending: 2 is skipped, 1 and 3 render; --only 2 forces it
+        pf.unlink()
+        for n in (1, 3):
+            shutil.rmtree(next(outroot.glob(f"Video_0{n}*")))
+        vid2 = next(outroot.glob("Video_02*"))
+        pl = plan_of()
+        prog = {"hlabs_version": ucf.__version__, "plan_fingerprint": rs.plan_fingerprint(pl), "kind": "video", "videos": {
+            "2": {"state": "done", "folder": vid2.name, "qc": "OK", "seconds": 750.0}}}
+        pf.write_text(json.dumps(prog), encoding="utf-8")
+        run(plan=pl)
+        assert made == [1, 3], made
+        pf.write_text(json.dumps(prog), encoding="utf-8")
+        run(only="2", plan=pl)
+        assert made == [2] and not any("already done" in m for m in said), (made, said)
+        # a video whose video.mp4 is gone is made again
+        pf.write_text(json.dumps(prog), encoding="utf-8")
+        (vid2 / "video.mp4").unlink()
+        run(plan=pl)
+        assert 2 in made, made
+        # 3) a changed plan or another H Labs version drops the file
+        folders = {str(n): next(outroot.glob(f"Video_0{n}*")).name for n in (1, 2, 3)}
+        alldone = {"hlabs_version": ucf.__version__, "plan_fingerprint": rs.plan_fingerprint(pl), "kind": "video",
+                   "videos": {n: {"state": "done", "folder": f, "qc": "OK", "seconds": 750.0} for n, f in folders.items()}}
+        pf.write_text(json.dumps(alldone), encoding="utf-8")
+        run(plan=pl)
+        assert made == [], f"everything done: nothing renders ({made})"
+        pf.write_text(json.dumps(alldone), encoding="utf-8")
+        run(plan=plan_of("-edited"))
+        assert made == [1, 2, 3] and any("progress of an earlier run dropped (the plan changed)" in m for m in said), (made, said)
+        pf.write_text(json.dumps(alldone), encoding="utf-8")
+        ucf.__version__ = "2000.1.1"
+        run(plan=pl)
+        assert made == [1, 2, 3] and any("H Labs version changed" in m for m in said), (made, said)
+        ucf.__version__ = real_version
+        # the 5-min and the 8-min run (and clips) never share a progress file
+        c8, c5 = {"style": "s", "_mode_label": "all", "min_case_minutes": 8}, {"style": "s", "_mode_label": "all", "min_case_minutes": 5}
+        assert len({rs.progress_path("w", c8), rs.progress_path("w", c5), rs.progress_path("w", dict(c5, output_kind="clips"))}) == 3
+        assert rs.progress_path("w", c5).name == "progress_s_all_min5.json"
+
+        # 4) disk: stop BEFORE the render with the estimate (60 min x 0.25 GB = 15 GB), warn below twice that, pass with room
+        shutil.rmtree(tmp / "out")
+        pf.unlink()
+        free["gb"] = 9.0
+        try:
+            run()
+            raise AssertionError("a render with 9 GB free for a 15 GB need must stop")
+        except SystemExit as e:
+            assert "15 GB" in str(e) and "9.0 GB" in str(e) and "STOP BEFORE THE RENDER" in str(e), str(e)
+        assert made == [], f"nothing may render before the stop: {made}"
+        free["gb"] = 25.0
+        run()
+        assert made == [1, 2, 3] and any("WARNING" in m and "15 GB" in m for m in said), said
+        assert rs.render_need_gb(3600) == 15.0 and rs.render_need_gb(60) == 5.0
+        # the pieces' drive counts when render_temp_dir is set
+        (tmp / "fast").mkdir()
+        shutil.disk_usage = lambda p: types.SimpleNamespace(free=(2e9 if "fast" in str(p) else 500e9))
+        try:
+            rs.check_render_space({"render_temp_dir": str(tmp / "fast")}, tmp, 3600)
+            raise AssertionError("a full render_temp_dir must stop the run")
+        except SystemExit as e:
+            assert "fast" in str(e), str(e)
+    finally:
+        shutil.disk_usage = real_usage
+        ucf.__version__ = real_version
+        rs.TTRenderer, rs.Renderer, rs.sheets.edit_sheet, rs.sheets.metadata, rs.tts.chars_needed = saved
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # 5) GPU memory: read from nvidia-smi (5 s timeout), unknown without it, warned below ~1.5 GB
+    real_run = subprocess.run
+    try:
+        out = {"v": "8192, 7000\n"}
+
+        def smi(cmd, *a, **k):
+            if cmd[0] != "nvidia-smi":
+                return real_run(cmd, *a, **k)
+            assert k.get("timeout") == 5 and "memory.total,memory.free" in " ".join(cmd)
+            if out["v"] is None:
+                raise FileNotFoundError("nvidia-smi")
+            return subprocess.CompletedProcess(cmd, 0, stdout=out["v"], stderr="")
+        subprocess.run = smi
+        assert RND.gpu_memory() == (8192, 7000)
+        lines = []
+        RND.warn_low_vram(lines.append)
+        assert not lines, lines
+        out["v"] = "4096, 900\n"
+        RND.warn_low_vram(lines.append)
+        assert len(lines) == 1 and "900 MB" in lines[0], lines
+        out["v"] = None
+        assert RND.gpu_memory() is None
+        RND.warn_low_vram(lines.append)
+        assert len(lines) == 1
+        out["v"] = "garbage"
+        assert RND.gpu_memory() is None
+    finally:
+        subprocess.run = real_run
+    assert "GPU memory" in (ROOT / "tools" / "smoke_test.py").read_text(encoding="utf-8")
+
+    # 6) one command builder: the same arguments the launcher / Studio built by hand before
+    py, sc = "py", "run_stream.py"
+    url = "https://youtu.be/abc"
+    cases = [
+        (url, "trial_tales", "all", {"brain": "hive", "queued": True, "min_case": 5, "voice": True, "watermark": False, "cleanup": False,
+                                     "only": [1, 3]},
+         [py, sc, url, "--brain", "hive", "--style", "trial_tales", "--mode", "all", "--queued", "--min-case", "5", "--confirm-tts",
+          "--no-watermark", "--keep-source", "--only", "1,3"]),
+        (url, "s", "clips", {"brain": "manual", "queued": True, "min_case": 8, "voice": True},          # clips: no TTS confirmation
+         [py, sc, url, "--brain", "manual", "--style", "s", "--mode", "clips", "--queued", "--min-case", "8"]),
+        ("C:\\Users\\me\\Videos\\hearing.mp4", "s", "30", {"brain": "hive", "queued": True, "min_case": 5},   # min-case only in all / clips
+         [py, sc, "--local", "C:\\Users\\me\\Videos\\hearing.mp4", "--brain", "hive", "--style", "s", "--mode", "30", "--queued",
+          "--confirm-tts"]),
+        ("/home/me/clip folder", "s", "asis", {"brain": "hive", "voice": False},
+         [py, sc, "--local", "/home/me/clip folder", "--brain", "hive", "--style", "s", "--mode", "asis"]),
+        (url, "s", "60", {"brain": "hive", "voice": True, "min_case": 9},                                 # launcher menu 1 shape
+         [py, sc, url, "--brain", "hive", "--style", "s", "--mode", "60", "--confirm-tts"]),
+        ("D:\\v", "s", "all", {"brain": "hive", "min_case": 5, "voice": True, "transcript_file": "t.vtt"},   # launcher menu 2 shape
+         [py, sc, "--local", "D:\\v", "--brain", "hive", "--style", "s", "--mode", "all", "--min-case", "5", "--transcript-file", "t.vtt",
+          "--confirm-tts"]),
+    ]
+    for u, style, mode, o, want in cases:
+        got = build_run_command(py, u, style, mode, o, script=sc)
+        assert got == want, f"{got}\n!= {want}"
+    # Studio's own method goes through the builder and gives the list it built by hand before
+    sys.path.insert(0, str(ROOT / "tools" / "studio"))
+    import server as S
+    st = S.Studio(autostart=False)
+    j = {"url": url, "style": "trial_tales", "mode": "all", "only": [1, 3],
+         "options": {"min_case": 5, "voice": True, "watermark": False, "cleanup": False}}
+    brain = "hive"
+    try:
+        b = (ROOT / ".brain").read_text(encoding="utf-8").strip()
+        brain = b if b in ("hive", "manual") else "hive"
+    except OSError:
+        pass
+    assert st._command(j) == [sys.executable, str(ROOT / "run_stream.py"), url, "--brain", brain, "--style", "trial_tales", "--mode", "all",
+                              "--queued", "--min-case", "5", "--confirm-tts", "--no-watermark", "--keep-source", "--only", "1,3"], st._command(j)
+    src = (ROOT / "tools" / "launcher.py").read_text(encoding="utf-8")
+    assert '"--confirm-tts"' not in src and '"--min-case"' not in src and src.count("build_run_command(") >= 3, "launcher builds by hand again"
+    return "resume skips done videos (--only forces, plan/version change drops), disk stop before render, VRAM read + warning, one command builder"
+
+
 def main():
     print("H Labs self-test matrix")
     check(1, "environment", t1_environment)
@@ -2274,6 +2508,7 @@ def main():
     check(46, "config / plan schema + errors say why", t46_schema_and_errors)
     check(47, "renderer de-duplication: shared steps, identical frames", t47_renderer_shared_steps)
     check(48, "smoke test (post-update PC check)", t48_smoke_test)
+    check(49, "resume a stopped run, disk + VRAM checks, one command builder", t49_resume_and_checks)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))

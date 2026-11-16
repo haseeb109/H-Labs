@@ -14,6 +14,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def build_run_command(*a, **k):
+    """One builder for launcher + Studio (ucf/runspec.py). Imported on use: --ensure-main / --rollback-git must still start
+    on a half-updated tree where ucf/ is not there yet."""
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from ucf.runspec import build_run_command as _b
+    return _b(*a, **k)
+
+
 def _version():
     try:
         return (ROOT / "VERSION").read_text(encoding="utf-8").strip()
@@ -124,10 +133,11 @@ def pick_mode():
     return mode
 
 
-def min_case_args(mode):
-    """Mode all / clips: the shortest case that gets its own video -> ["--min-case", "5"] (or 8). Other modes: []."""
+def min_case_choice(mode):
+    """Mode all / clips: asks for the shortest case that gets its own video and returns "5" or "8" (the run command adds
+    --min-case). Other modes: None."""
     if mode not in ("all", "clips"):
-        return []
+        return None
     cur = _read(".mincase", "8")
     d = "2" if cur == "5" else "1"
     m = ask(f"\nShortest case for its own {'clip' if mode == 'clips' else 'video'}:\n  1) 8 minutes (default)\n  2) 5 minutes\n"
@@ -135,7 +145,7 @@ def min_case_args(mode):
     mins = "5" if (m or d) == "2" else "8"
     _write(".mincase", mins)
     print(f"cases of {mins}:00 or more")
-    return ["--min-case", mins]
+    return mins
 
 
 def pick_run():
@@ -199,7 +209,7 @@ def bulk():
     sid, mode = pick_run()
     if not sid:
         return
-    mca = min_case_args(mode)
+    mins = min_case_choice(mode)
     tts_ok = mode != "clips" and confirm_tts()
     QUEUE.parent.mkdir(exist_ok=True)
     QUEUE.write_text("\n".join(urls) + "\n", encoding="utf-8")
@@ -208,9 +218,10 @@ def bulk():
     t0, done, failed = _t.time(), [], []
     for i, url in enumerate(urls, 1):
         print("\n" + "#" * 64 + f"\n#  QUEUE {i}/{len(urls)}:  {url}\n" + "#" * 64)
-        args = [url, "--brain", _brain(), "--style", sid, "--mode", mode, "--queued"] + mca + (["--confirm-tts"] if tts_ok else [])
+        cmd = build_run_command(sys.executable, url, sid, mode, {"brain": _brain(), "queued": True, "min_case": mins, "voice": tts_ok},
+                                script="run_stream.py")
         try:
-            r = subprocess.run([sys.executable, "run_stream.py"] + args, cwd=ROOT)
+            r = subprocess.run(cmd, cwd=ROOT)
             (done if r.returncode == 0 else failed).append(url)
         except KeyboardInterrupt:
             print("\nqueue stopped - the remaining links stay in the queue (menu 9 continues them).")
@@ -236,8 +247,7 @@ def bulk():
     ask("\nPress Enter...")
 
 
-def run_stream(args):
-    cmd = [sys.executable, "run_stream.py"] + args
+def run_stream(cmd):
     print("\n>", " ".join(cmd), "\n")
     try:
         subprocess.run(cmd, cwd=ROOT)
@@ -536,10 +546,12 @@ def main():
             sid, mode = pick_run()
             if not sid:
                 continue
-            args = [url, "--brain", _brain(), "--style", sid, "--mode", mode] + min_case_args(mode)
-            if mode != "clips" and confirm_tts():          # clips mode makes no AI voice
-                args.append("--confirm-tts")
-            run_stream(args)
+            if not url.lower().startswith(("http://", "https://")):
+                url = "https://" + url                    # "youtube.com/watch?v=..." typed without the scheme is still a link
+            mins = min_case_choice(mode)
+            voice = mode != "clips" and confirm_tts()      # clips mode makes no AI voice
+            run_stream(build_run_command(sys.executable, url, sid, mode, {"brain": _brain(), "min_case": mins, "voice": voice},
+                                         script="run_stream.py"))
         elif pick == "2":
             print("\nYour own downloaded video: give the video FILE, or a FOLDER that holds it (+ its transcript, if you have one:\n"
                   ".json / .json3 / .vtt / .srt). The download is skipped; no transcript -> whisper makes one.")
@@ -559,12 +571,10 @@ def main():
             sid, mode = pick_run()
             if not sid:
                 continue
-            args = ["--local", src, "--brain", _brain(), "--style", sid, "--mode", mode] + min_case_args(mode)
-            if tr:
-                args += ["--transcript-file", tr]
-            if mode != "clips" and confirm_tts():
-                args.append("--confirm-tts")
-            run_stream(args)
+            mins = min_case_choice(mode)
+            voice = mode != "clips" and confirm_tts()
+            run_stream(build_run_command(sys.executable, src, sid, mode, {"brain": _brain(), "min_case": mins, "voice": voice,
+                                                                          "transcript_file": tr}, script="run_stream.py"))
         elif pick == "3":
             set_brain()
         elif pick == "4":
