@@ -179,8 +179,10 @@ def c_whisper():
             vc = "missing" if v is None else "version " + ".".join(map(str, v))
             raise RuntimeError(str(e).strip() + (f"\n      Microsoft C++ runtime on this PC: {vc} (whisper needs 14.40+). Fix: run Setup.bat "
                                                  "again (it installs the current one, click Yes), then restart the PC." if WIN else ""))
-    note = " (" + lines[-1].strip() + ")" if lines else ""
-    return f"model {cfg['whisper_model']} transcribed a 3 s clip in a child process: {len(segs)} segment(s){note}"
+    odd = [x for x in lines if not x.startswith("transcript:")]       # the device line is reported below, not as a note
+    note = " (" + odd[-1].strip() + ")" if odd else ""
+    dev = "the GPU (CUDA)" if transcript.LAST["device"] == "cuda" else f"the CPU - {transcript.LAST['why']}"
+    return f"model {cfg['whisper_model']} transcribed a 3 s clip in a child process on {dev}: {len(segs)} segment(s){note}"
 
 
 def _key_set(fn, var):

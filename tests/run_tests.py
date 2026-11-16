@@ -2045,6 +2045,154 @@ def t46_schema_and_errors():
         shutil.rmtree(tmp, ignore_errors=True)
     return "typo -> suggestion, type -> stop, plan field named per video/case, skipped extras say why"
 
+def t50_events_and_whisper_device():
+    """Owner priorities #8 + #23: (1) work/<id>/events.jsonl is written line by line and survives a crash, tools/run_report.py
+    summarises it; (2) whisper picks the GPU only with an opt-in + enough free GPU memory, and ANY GPU problem falls back to
+    the unchanged CPU chain (t43). Nothing here needs a GPU: nvidia-smi and the child processes are faked."""
+    import contextlib
+    import io
+    import os
+    from ucf import events as EV, transcript as T
+    sys.path.insert(0, str(ROOT / "tools"))
+    import run_report
+    tmp = Path(tempfile.mkdtemp(prefix="t50_"))
+    try:
+        # ---- 1. events.jsonl: buffered before the folder is known, one flushed line per event, valid after a hard crash
+        EV.reset()
+        EV.emit("stage_start", "info")                                  # before open_log: buffered, written first
+        f = tmp / "work" / "abc" / "events.jsonl"
+        EV.open_log(f)
+        EV.emit("video_done", "render", n=1, folder="Video_01", seconds=61, qc_ok=True, watermark="HL", notes=None)
+        lines = f.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 2 and json.loads(lines[0])["event"] == "stage_start", lines     # on disk NOW, not at the end
+        d = json.loads(lines[1])
+        assert d["stage"] == "render" and d["n"] == 1 and "notes" not in d and len(d["t"]) == 19, d
+        crash = tmp / "crash" / "events.jsonl"
+        code = ("import os, sys; sys.path.insert(0, sys.argv[1]); from ucf import events as E; E.open_log(sys.argv[2]); "
+                "E.run_start(style='x', mode='all'); E.emit('stage_start', 'render'); E.failure('render', 'KeyError: x (a.py:1)'); "
+                "os._exit(3)")                                          # no atexit, no flush on exit: like a native crash
+        r = subprocess.run([sys.executable, "-c", code, str(ROOT), str(crash)], capture_output=True, text=True)
+        assert r.returncode == 3, r.stderr
+        got = [json.loads(x) for x in crash.read_text(encoding="utf-8").splitlines()]
+        assert [g["event"] for g in got] == ["run_start", "stage_start", "failure"], got
+        assert got[0]["style"] == "x" and "version" in got[0] and "machine" in got[0] and isinstance(got[0]["argv"], list), got[0]
+        with crash.open("a", encoding="utf-8") as fh:
+            fh.write('{"t": "2026-11-16T10:11:12", "stage": "ren')       # half a line, as a power cut would leave
+        EV.reset()
+
+        # ---- 2. run_report on a fixture (two runs in one file, the second one never ended + a torn last line)
+        fx = tmp / "work" / "fix" / "events.jsonl"
+        fx.parent.mkdir(parents=True)
+        ev = [
+            ("run_start", "start", dict(version="2026.11.16", commit="abc1234", argv=["u"], style="trial_tales", mode="all", machine="PC-1")),
+            ("work_folder", "info", dict(stream_id="STREAM1")),
+            ("download", "download", dict(height=1080, mbps=4.2, source="downloaded")),
+            ("stage_end", "download", dict(seconds=120)),
+            ("transcript", "transcript", dict(source="whisper", segments=900, device="cuda", x_realtime=3.2)),
+            ("stage_end", "transcript", dict(seconds=300)),
+            ("plan", "plan", dict(cases=5, videos=2, brain="b", tokens_in=1000, tokens_out=200, cost_usd=0.5)),
+            ("video_done", "render", dict(n=1, folder="01_A", seconds=600, qc_ok=True, watermark="HL")),
+            ("failure", "video 2 render", dict(cause="RuntimeError: ai33 timeout (tts.py:9)")),
+            ("video_failed", "render", dict(n=2, folder="02_B", cause="RuntimeError: ai33 timeout (tts.py:9)")),
+            ("stage_end", "video 1 render", dict(seconds=600)),
+            ("run_end", "end", dict(seconds=1100, status="1 video(s) FAILED", videos=1, failed=1)),
+            ("run_start", "start", dict(version="2026.11.16", style="trial_tales", mode="all", machine="PC-1")),
+            ("stage_end", "download", dict(seconds=30)),
+        ]
+        fx.write_text("\n".join(json.dumps({"t": "2026-11-16T10:11:12", "stage": s, "event": e, **k}) for e, s, k in ev)
+                      + '\n{"t": "2026-11-16T10:1', encoding="utf-8")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            assert run_report.main([str(fx)]) == 0
+        txt = out.getvalue()
+        for need in ("STREAM1", "1 video(s) FAILED", "1080p", "cuda 3.2x realtime", "ai33 timeout", "NO run_end", "TOTAL", "unreadable"):
+            assert need in txt, (need, txt)
+        assert txt.count("ai33 timeout") == 1, txt                       # failure + video_failed with one cause: printed once
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            run_report.main([str(tmp / "work")])                          # a folder of runs works too
+        assert "STREAM1" in out.getvalue()
+
+        # ---- 3. device choice with a faked nvidia-smi (no GPU needed)
+        real_run, real_opt = subprocess.run, T.gpu_opted_in
+
+        def smi(stdout="", rc=0, raises=None):
+            def run(cmd, *a, **k):
+                if cmd[0] != "nvidia-smi":
+                    return real_run(cmd, *a, **k)
+                if raises:
+                    raise raises
+                return subprocess.CompletedProcess(cmd, rc, stdout=stdout, stderr="")
+            return run
+        try:
+            T.gpu_opted_in = lambda: True
+            subprocess.run = smi(raises=FileNotFoundError("nvidia-smi"))
+            assert T.gpu_free_mb() is None and T.choose_device()[0] == "cpu", T.choose_device()
+            subprocess.run = smi(rc=9)
+            assert T.choose_device()[0] == "cpu"                          # driver error
+            subprocess.run = smi("512\n")
+            dev, why = T.choose_device()
+            assert dev == "cpu" and "512" in why, (dev, why)              # too little free memory
+            subprocess.run = smi("512\n10240\n")                          # two GPUs: the roomier one counts
+            assert T.gpu_free_mb() == 10240 and T.choose_device()[0] == "cuda"
+            T.gpu_opted_in = lambda: False
+            assert T.choose_device()[0] == "cpu"                          # plenty of memory, but nobody opted in
+        finally:
+            subprocess.run, T.gpu_opted_in = real_run, real_opt
+        os.environ["HL_WHISPER_DEVICE"] = "cpu"
+        try:
+            assert T.gpu_opted_in() is False
+        finally:
+            del os.environ["HL_WHISPER_DEVICE"]
+
+        # ---- 4. whisper_safe: GPU first, CPU chain after it; a GPU failure costs one line, never the transcript
+        real_dev, real_sec, real_time = T.choose_device, T._media_seconds, time.time
+        clock = [1000.0]
+        seen, log = [], []
+
+        def fake(gpu_ok, gpu_seconds=600, cpu_seconds=1200):
+            def run(cmd, *a, **k):
+                if cmd[1] != "-c":
+                    return real_run(cmd, *a, **k)
+                seen.append((cmd[7], cmd[10]))
+                if cmd[10] == "cuda" and not gpu_ok:
+                    return subprocess.CompletedProcess(cmd, 1, stderr="RuntimeError: CUDA libraries missing (cublas64_12.dll)")
+                clock[0] += gpu_seconds if cmd[10] == "cuda" else cpu_seconds
+                Path(cmd[8]).write_text(json.dumps([{"start": 0, "end": 1, "text": "hi"}]), encoding="utf-8")
+                return subprocess.CompletedProcess(cmd, 0, stderr="")
+            return run
+        try:
+            T._media_seconds = lambda m: 7200.0                           # a 2 h stream (simulated clock: the speed lines below)
+            time.time = lambda: clock[0]
+            T.choose_device = lambda: ("cuda", "8000 MB of GPU memory free")
+            for ok, want_dev, want in ((True, "cuda", "whisper on the GPU (12.0x realtime)"), (False, "cpu", "whisper on the CPU (6.0x realtime)")):
+                seen.clear()
+                log.clear()
+                subprocess.run = fake(ok)
+                media = tmp / "x.mp4"
+                media.write_bytes(b"x")
+                segs = T.whisper_safe(media, ui=log.append)
+                assert segs[0]["text"] == "hi" and T.LAST["device"] == want_dev, (T.LAST, log)
+                assert any(want in x for x in log), log
+                if ok:
+                    assert seen == [("float16", "cuda")], seen
+                else:
+                    assert seen == [("float16", "cuda"), ("int8", "cpu")], seen        # same first CPU try as without a GPU
+                    assert sum("did not work" in x and "using the CPU" in x for x in log) == 1, log     # one clear line
+            T.choose_device = lambda: ("cpu", "no NVIDIA GPU found (nvidia-smi missing)")
+            seen.clear()
+            subprocess.run = fake(True)
+            T.whisper_safe(media, ui=log.append)
+            assert seen == [("int8", "cpu")] and T.LAST["device"] == "cpu", seen   # no GPU: exactly the old CPU chain
+        finally:
+            subprocess.run, T.choose_device, T._media_seconds, time.time = real_run, real_dev, real_sec, real_time
+        assert T.WHISPER_TRIES == (("int8", None, True), ("int8", None, False), ("float32", 2, False)), T.WHISPER_TRIES
+    finally:
+        EV.reset()
+        shutil.rmtree(tmp, ignore_errors=True)
+    return "events survive a hard exit + torn line; run_report reads runs; GPU only with opt-in + free memory, any GPU failure -> CPU chain"
+
+
 def t48_smoke_test():
     """tools/smoke_test.py (after every update + menu 6) runs offline here: result JSON shape, exit code = FAILs, and the checks
     that have everything they need on this box (imports, ffmpeg, encoder, render, disk) pass."""
@@ -2274,6 +2422,7 @@ def main():
     check(46, "config / plan schema + errors say why", t46_schema_and_errors)
     check(47, "renderer de-duplication: shared steps, identical frames", t47_renderer_shared_steps)
     check(48, "smoke test (post-update PC check)", t48_smoke_test)
+    check(50, "events.jsonl + run_report + whisper device (GPU/CPU)", t50_events_and_whisper_device)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))

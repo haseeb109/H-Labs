@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ucf.render_tt import TTRenderer
 from ucf import finish as FINISH
 from ucf import runclock as CLOCK
+from ucf import events as EV
 from ucf import brain, cards, config, download, scan, sheets, timeline as TL, transcript, tts, validate as VAL
 from ucf.render import Renderer
 from ucf.timeutil import fmt_dur, fmt_tc, parse_tc, safe_slug
@@ -127,7 +128,9 @@ def cause(e):
     tb = traceback.extract_tb(e.__traceback__)
     at = f" ({Path(tb[-1].filename).name}:{tb[-1].lineno})" if tb else ""
     msg = (str(e).strip().splitlines() or [""])[-1][:160]     # last line: ffmpeg puts the real error there
-    return f"{type(e).__name__}: {msg}{at}" if msg else f"{type(e).__name__}{at}"
+    text = f"{type(e).__name__}: {msg}{at}" if msg else f"{type(e).__name__}{at}"
+    EV.failure(CLOCK.T["cur"], text)          # same line as in run_log.txt, but findable in the structured log
+    return text
 
 
 def load_json(p, default):
@@ -216,7 +219,7 @@ def stage_setup(R):
         from ucf import local_src
         R.a.stream_id = local_src.stream_id(R.a.video_file)
     CLOCK.reset()
-    CLOCK.stage("info")
+    EV.reset()                              # work/<id>/events.jsonl opens in stage_info (events before that are buffered)
     _WORK["planned_stop"] = bool(R.a.stage) and R.a.stage != "render"
 
     R.cfg = config.load(R.a.config, style=R.a.style)
@@ -257,6 +260,9 @@ def stage_setup(R):
     if R.cfg["brain"] in brain.PROVIDERS and R.cfg.get("model") == config.DEFAULTS["model"]:
         R.cfg.update(brain.cfg_for(R.cfg, R.cfg["brain"]))
     ui(f"style: {R.cfg['style']}  ({config.style_path(R.cfg)})  |  mode: {R.cfg['_mode_label']}  |  band: {band}")
+    EV.run_start(style=R.cfg["style"], mode=R.cfg["_mode_label"], brain=R.cfg.get("brain"), queued=bool(R.a.queued),
+                 stage_stop=R.a.stage, source="local file" if R.a.video_file else "url")
+    CLOCK.stage("info")
     ui(f"load: priority {_prio or 'normal'}, CPU threads {LOAD.cpu_threads(R.cfg)} of {os.cpu_count()}"
        "  (config process_priority / cpu_threads)")
     R.root = config.ROOT
@@ -287,6 +293,8 @@ def stage_info(R):
     if not isinstance(sys.stdout, _Tee):
         sys.stdout = _Tee(sys.stdout, R.work / "run_log.txt")
         sys.stderr = _Tee(sys.stderr, R.work / "run_log.txt")      # errors / tracebacks too
+    EV.open_log(R.work / "events.jsonl")
+    EV.emit("work_folder", "info", stream_id=R.sid, folder=str(R.work))
     check_disk(R.work)
     if R.meta:
         save_json(R.work / "meta.json", R.meta)
@@ -316,7 +324,9 @@ def stage_download(R):
     """The source video: download, or the saved / own file (re-download when a better copy exists)."""
     # ---------------- download ----------------
     R.video_path = Path(R.a.video_file) if R.a.video_file else R.work / "source.mp4"
+    _fetched = False
     if R.upto >= 1 and not R.video_path.exists():
+        _fetched = True
         CLOCK.stage("download")
         ui("downloading stream (this is the slow part)...")
         R.video_path = download.fetch_video(R.url, R.sid, R.work, R.cfg, R.meta)
@@ -326,6 +336,7 @@ def stage_download(R):
         if why and R.url:
             # an older run downloaded a worse copy (360p / starved H.264): get the real quality, keep the old file if that fails
             CLOCK.stage("download")
+            _fetched = True
             ui(f"the saved download is {why} - downloading the full quality again (transcript and plan are kept)...")
             old = R.work / "source_old.mp4"
             os.replace(R.video_path, old)
@@ -340,6 +351,10 @@ def stage_download(R):
                 ui(f"  re-download failed ({str(e).splitlines()[0][:120]}) - continuing with the saved copy")
     if R.video_path.exists() and not R.stream_len:
         R.stream_len = tts.dur(R.video_path)
+    if R.video_path.exists():
+        _h, _vbr = download.probe_video(R.video_path)
+        EV.emit("download", "download", height=_h, mbps=round(_vbr / 1e6, 2), source="local file" if R.a.video_file else
+                "downloaded" if _fetched else "cache", seconds=R.stream_len and round(R.stream_len))
     R.source_file = f"{R.sid}.mp4"
     R.sources = load_json(R.state / "sources.json", {})
     _prev = R.sources.get(R.source_file, {})
@@ -358,13 +373,16 @@ def stage_transcript(R):
     _WORK["stream_len"] = R.stream_len
     CLOCK.stage("transcript")
     tpath = R.work / "transcript.json"
+    t_src = "file"
     if R.a.transcript_file:
         R.segs = transcript.load_any(R.a.transcript_file)
         transcript.save(R.segs, tpath)
     elif tpath.exists() and not (R.work / "transcript.sparse").exists():   # .sparse: captions-only fallback -> try whisper again
         R.segs = json.loads(tpath.read_text(encoding="utf-8"))
+        t_src = "saved transcript"
     else:
         R.segs = []
+        t_src = "captions"
         if R.cfg["captions"] == "auto" and R.url:
             ui("fetching YouTube captions...")
             f = download.fetch_captions(R.url, R.work, R.cfg)
@@ -372,7 +390,8 @@ def stage_transcript(R):
                 R.segs = transcript.load_any(f)
         spoken_wpm = (sum(len(s["text"].split()) for s in R.segs) / max(R.stream_len / 60.0, 1)) if R.segs else 0
         if spoken_wpm < 15:   # missing / sparse captions
-            ui("captions missing or sparse -> whisper (slow, CPU)...")
+            ui("captions missing or sparse -> whisper (the GPU when Setup.bat enabled it, else the CPU: 15-25 min for a 2.5 h stream)...")
+            t_src = "whisper"
             from ucf.load import cpu_threads
             try:
                 R.segs = transcript.whisper_safe(R.video_path, R.cfg["whisper_model"], threads=cpu_threads(R.cfg), ui=ui)
@@ -382,10 +401,15 @@ def stage_transcript(R):
                 ui(f"WARNING: {e}\n  -> going on with the YouTube captions ({len(R.segs)} lines, {spoken_wpm:.0f} words/min). "
                    "Case times may be rougher; check the videos.")
                 (R.work / "transcript.sparse").write_text("captions only - whisper failed", encoding="utf-8")
+                t_src = "captions (whisper failed)"
             else:
                 (R.work / "transcript.sparse").unlink(missing_ok=True)
         transcript.save(R.segs, tpath)
     ui(f"transcript: {len(R.segs)} segments, ends {fmt_tc(R.segs[-1]['end']) if R.segs else '-'}")
+    EV.emit("transcript", "transcript", source=t_src, segments=len(R.segs),
+            device=transcript.LAST["device"] if t_src == "whisper" else None,
+            x_realtime=transcript.LAST["x_realtime"] if t_src == "whisper" else None,
+            gpu_note=transcript.LAST["why"] if t_src == "whisper" and transcript.LAST["device"] == "cpu" else None)
     if R.upto < IX["scan"]:
         return ui("stopped after", R.stop) or STOP
 
@@ -534,6 +558,10 @@ def stage_plan(R):
     (R.work / "plan_report.txt").write_text("\n".join(report), encoding="utf-8")
     save_json(R.plan_path, R.plan)
     print("\n".join(report))
+    _ut = brain.usage_summary()[1]
+    EV.emit("plan", "plan", cases=len(R.plan["cases"]), used=sum(1 for c in R.plan["cases"] if c.get("status") == "used"),
+            videos=len(R.plan["videos"]), brain=R.cfg.get("brain"), errors=len(errs), warnings=len(warns),
+            calls=_ut.get("calls"), tokens_in=_ut.get("input"), tokens_out=_ut.get("output"), cost_usd=_ut.get("cost"))
     if errs:
         sys.exit("\nPlan has errors - fix the plan (or rerun the brain) before rendering. See plan_report.txt")
     # contact sheet of case boundaries (cheap) - look at it BEFORE the long render
@@ -619,6 +647,7 @@ def stage_render(R):
         rn = (TTRenderer if R.cfg.get("_renderer", "tt") == "tt" else Renderer)(R.cfg, R.sources, R.root)
     from ucf.render import _HW
     ui(f"encoder: {rn.enc}  |  decode: {('GPU (' + _HW['name'] + ')') if _HW['name'] else 'CPU'}")
+    EV.emit("encoder", "render", encoder=rn.enc, decode=_HW["name"] or "CPU")
     summary, rows, failed_videos = [], [], []
     todo = [v for v in R.plan["videos"] if not only or v["n"] in only]
     if len(todo) > 1:
@@ -647,6 +676,7 @@ def stage_render(R):
         folder.mkdir(exist_ok=True)
         try:
             ui(f"VIDEO {v['n']}: {[by_id[i]['name'] for i in v['case_ids']]}")
+            EV.emit("video_start", "render", n=v["n"], cases=[by_id[i]["name"] for i in v["case_ids"]])
             CLOCK.stage(f"video {v['n']} render")
             _t_video = time.time()
             rn.log, rn.notes = [], []
@@ -721,6 +751,8 @@ def stage_render(R):
                f"  (took {CLOCK.hms(qc['processing_seconds'])})")
             summary.append((v["n"], folder.name, res["measured_total"], qc["ok"]))
             rows.append((v["n"], folder.name, res["measured_total"], qc["ok"], v, qc))
+            EV.emit("video_done", "render", n=v["n"], folder=folder.name, seconds=qc["processing_seconds"],
+                    length=round(res["measured_total"]), qc_ok=qc["ok"], watermark=qc["watermark"], notes=qc.get("note") or None)
         except KeyboardInterrupt:
             raise
         except Exception as e:                      # one broken video must not cost the others (2026-11-05: an ai33 timeout)
@@ -729,6 +761,7 @@ def stage_render(R):
             why = cause(e)
             ui(f"  VIDEO {v['n']} FAILED: {why} - going on with the next video (rerun later: --only {v['n']})")
             failed_videos.append((v['n'], folder.name, why))
+            EV.emit("video_failed", "render", n=v["n"], folder=folder.name, cause=why)
     CLOCK.stage("report")
     carry_txt = ["CARRIED FORWARD (state/carry_forward.json): " + (brain.carried_text(R.carry) if R.carry else "none")]
     if R.mode == "all":
@@ -746,6 +779,8 @@ def stage_render(R):
     status = (f"{len(failed_videos)} video(s) FAILED" if failed_videos
               else "completed" if all(ok for *_, ok in summary) else "completed, some QC CHECK")
     R.rep += [""] + CLOCK.lines(R.stream_len, len(summary), status)
+    _WORK["end"] = {"status": status, "videos": len(summary), "qc_ok": sum(1 for *_, ok in summary if ok),
+                    "failed": len(failed_videos), "cost_usd": ut.get("cost")}
     CLOCK.history(R.state / "run_history.csv", stream_id=R.sid, style=R.cfg["style"], mode=R.cfg.get("_mode_label", R.mode), encoder=rn.enc,
                   stream_min=round(R.stream_len / 60, 1), videos=len(summary), qc_ok=sum(1 for *_, ok in summary if ok),
                   cost_usd=round(ut.get("cost") or 0, 3))
@@ -777,9 +812,27 @@ def stage_render(R):
 def main(argv=None):
     a = parse_args(argv)
     R = Run(a)
-    for stage in (stage_setup, stage_info, stage_download, stage_transcript, stage_scan, stage_plan, stage_render):
-        if stage(R) is STOP:
-            return
+    end = {"status": "stopped"}
+    try:
+        for stage in (stage_setup, stage_info, stage_download, stage_transcript, stage_scan, stage_plan, stage_render):
+            if stage(R) is STOP:
+                end = {"status": "stopped at --stage " + str(a.stage)}
+                return
+        end = _WORK.get("end") or {"status": "completed"}
+    except SystemExit as e:                # sys.exit("STOP: ...") = a named failure; sys.exit(0 / None) = a planned end
+        msg = e.code if isinstance(e.code, str) else None
+        end = {"status": "failed" if msg or e.code not in (0, None) else "stopped", "cause": (msg or "")[:300] or None}
+        raise
+    except KeyboardInterrupt:
+        end = {"status": "interrupted"}
+        raise
+    except BaseException as e:
+        end = {"status": "failed", "cause": cause(e)}
+        raise
+    finally:
+        if R.work:                          # before the work folder is known there is nothing to write to
+            CLOCK.stage(None)               # closes the running stage first, so run_end is the last line
+            EV.emit("run_end", "end", seconds=round(CLOCK.total(), 1), **end)
 
 
 def clips_output(R, only):
@@ -795,6 +848,7 @@ def clips_output(R, only):
     outroot.mkdir(parents=True, exist_ok=True)
     enc = pick_encoder(cfg)
     from ucf.render import _HW
+    EV.emit("encoder", "render", encoder=enc, decode=_HW["name"] or "CPU")
     ui(f"clips only: {len(plan['videos'])} case(s)  |  encoder: {enc}  |  decode: {('GPU (' + _HW['name'] + ')') if _HW['name'] else 'CPU'}"
        "  |  no overlays / voice / watermark")
     by_id = {c["id"]: c for c in plan["cases"]}
@@ -814,14 +868,18 @@ def clips_output(R, only):
         except Exception as e:                       # one broken clip must not cost the others
             import traceback
             traceback.print_exc()
-            ui(f"  CLIP {v.get('rank', v['n'])} FAILED: {cause(e)} - going on (rerun later: --only {v['n']})")
-            failed.append((v["n"], folder.name, cause(e)))
+            why = cause(e)
+            ui(f"  CLIP {v.get('rank', v['n'])} FAILED: {why} - going on (rerun later: --only {v['n']})")
+            failed.append((v["n"], folder.name, why))
+            EV.emit("video_failed", "render", n=v["n"], folder=folder.name, cause=why, kind="clip")
             continue
         qc = dict(res["qc"], processing_seconds=round(time.time() - t0))
         save_json(folder / "qc.json", qc)
         ui(f"  done: {res['final']}  {fmt_dur(res['total'])}  (took {CLOCK.hms(qc['processing_seconds'])})")
         summary.append((v["n"], folder.name, res["total"], qc["ok"]))
         rows.append((v["n"], folder.name, res["total"], qc["ok"], v, qc))
+        EV.emit("video_done", "render", n=v["n"], folder=folder.name, seconds=qc["processing_seconds"], length=round(res["total"]),
+                qc_ok=qc["ok"], watermark=False, notes=qc.get("note") or None, kind="clip")
     CLOCK.stage("report")
     from ucf import mode_all
     mode_all.write_ranking(plan, outroot, cfg, sid)
@@ -831,6 +889,8 @@ def clips_output(R, only):
     ulines, ut = brain.usage_summary()
     brain.save_usage(outroot / "usage.json")
     rep += [""] + ulines + [""] + CLOCK.lines(_WORK.get("stream_len", 0), len(summary), "completed")
+    _WORK["end"] = {"status": "completed" if not failed else f"{len(failed)} clip(s) FAILED", "videos": len(summary),
+                    "qc_ok": sum(1 for *_, ok in summary if ok), "failed": len(failed), "cost_usd": ut.get("cost")}
     CLOCK.history(state / "run_history.csv", stream_id=sid, style=cfg["style"], mode="clips", encoder=enc,
                   stream_min=round(_WORK.get("stream_len", 0) / 60, 1), videos=len(summary),
                   qc_ok=sum(1 for *_, ok in summary if ok), cost_usd=round(ut.get("cost") or 0, 3))
