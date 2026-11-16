@@ -209,6 +209,7 @@ class Studio:
         m = re.search(r"stream: (.*)  \((\d+:\d+(?::\d+)?), id (\S+)\)", s)
         if m:
             j["title"] = m.group(1).strip()
+            j["stream_id"] = m.group(3)
             parts = [int(x) for x in m.group(2).split(":")]
             j["stream_len"] = sum(v * 60 ** (len(parts) - 1 - k) for k, v in enumerate(parts))
         m = re.search(r"\[download\]\s+(\d+(?:\.\d+)?)% of", s)
@@ -279,6 +280,8 @@ class Studio:
                     tail = [x for x in j["log"] if x.strip() and not x.startswith(" ")]
                     j["error"] = (tail[-1] if tail else f"exit code {rc}")[:300]
             j.update(ended=_now(), pct=None, eta="", stage_idx=4 if j["status"] == "done" else j.get("stage_idx"), only=[])
+            ev = ROOT / "work" / str(j.get("stream_id") or "-") / "events.jsonl"     # the run's structured log (ucf/events.py)
+            j["events"] = str(ev.relative_to(ROOT)) if j.get("stream_id") and ev.is_file() else ""
             self.proc, self.current = None, None
         self.save()
 
@@ -392,9 +395,14 @@ class Studio:
         return {"jobs": jobs, "paused": self.paused, "running": bool(self.current), "machine": dict(self.machine, free_gb=round(free / 1e9)),
                 "stats": self.stats()}
 
-    def job_log(self, jid):
+    def job_log(self, jid, events=False):
         with self.lock:
             j = self._job(jid)
+            if events and j and j.get("events"):         # small structured file instead of the console tail
+                try:
+                    return (ROOT / j["events"]).read_text(encoding="utf-8", errors="replace").splitlines()[-400:]
+                except OSError:
+                    return []
             return list(j.get("log", [])) if j else []
 
 
@@ -567,7 +575,7 @@ def make_handler(studio):
                 if u.path == "/api/library":
                     return self._send(200, library())
                 if u.path == "/api/log":
-                    return self._send(200, {"log": studio.job_log((q.get("id") or [""])[0])})
+                    return self._send(200, {"log": studio.job_log((q.get("id") or [""])[0], events=bool(q.get("events")))})
                 if u.path == "/api/text":
                     p = _safe_out((q.get("rel") or [""])[0])
                     return self._send(200, {"text": p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""})

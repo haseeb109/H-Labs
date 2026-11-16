@@ -63,6 +63,7 @@ so option u never sends the PC back to a build that was already broken.
   Many streams: option **9** (bulk queue). Clips for your editor: the last entry of the channel-template list (see below).
   Videos land in `output\<date>_<stream id>\`.
 * The first video on a new PC downloads the speech-recognition model once (a few hundred MB, into `runtime\hf`).
+  Streams without captions are faster with whisper on the GPU (see below).
 
 ## H Labs Studio (browser app) - the easiest way
 Double-click **`H Labs Studio.bat`** (or menu **0** in `H Labs.bat`). A black window opens (keep it open - it does the work) and
@@ -140,6 +141,21 @@ Option 7 shows `video encoder` and `video decode`. With an NVIDIA GPU and a driv
 everything; the tool then uses 75% of the cores at low priority so the PC stays usable. Old driver? Update it from nvidia.com
 (GeForce 10 series and newer: Studio driver), restart, check option 7 again.
 
+## Whisper on the GPU (optional, saves 10-20 minutes per stream without captions)
+A stream without YouTube captions is transcribed by whisper. On the CPU that takes **15-25 minutes for a 2.5 hour stream** with the
+CPU at 100%. On an NVIDIA GPU it runs several times faster and the CPU stays free; the run prints the measured speed, for example
+`transcript: whisper on the GPU (3.2x realtime)` or `whisper on the CPU (0.8x realtime)`.
+* **Cost:** the CUDA libraries (NVIDIA cuBLAS + cuDNN) are an **extra download of about 1.4 GB** (about 3 GB on disk, inside `.venv`),
+  one time. They are not part of the normal install, so it is a choice.
+* **Turn it on:** on a PC with an NVIDIA GPU `Setup.bat` asks once: `Install whisper for the GPU? (y/N)`. The answer is kept in
+  `runtime\whisper_gpu.txt` (`on` / `off`); updates (menu 8) never ask again and never download it unasked. No answer = off.
+* **Turn it off, or change your mind:** put `off` in `runtime\whisper_gpu.txt`, or delete the file and run `Setup.bat` to be asked again.
+  `HL_WHISPER_DEVICE=cpu` (or `cuda`) in the environment overrides it for one run.
+* **Safe by design:** the GPU is used only when it has about 2 GB of free memory (`nvidia-smi`) and the libraries load in the whisper
+  child process. Anything wrong (old driver, GPU busy, missing library) prints **one line** (`whisper on the GPU did not work (...) -
+  using the CPU`) and the unchanged CPU chain makes the transcript. A GPU problem can never fail a run the CPU could do.
+* The smoke test (menu 6) says which device its whisper check used.
+
 What keeps the render light (2026-11-15):
 * every video is encoded **once**: the moving watermark (and the Trial Tales cards) are drawn inside the segment renders, there
   is no second pass over the finished video any more
@@ -162,6 +178,13 @@ the tool quietly keeps the pieces next to the video as before.
 ## End of a run
 * A Windows notification + sound says the run is done (or that it stopped on an error), and the output folder opens.
 * The window shows **PROCESSING TIME** (total + every stage); `state\run_history.csv` keeps one line per run.
+* **One small file per run: `work\<stream id>\events.jsonl`.** It lists, as the run goes (a crash keeps everything up to it): the
+  start (version, commit, machine, style, mode), every stage with its seconds, the download (height, Mbps), the transcript (captions
+  or whisper, GPU/CPU and speed), the plan (cases, videos, tokens, cost), every video (seconds, QC, watermark, notes), every failure
+  with its cause line, and the end status. `work\<id>\run_log.txt` is unchanged; the Studio shows both (**Events** and **Full log**
+  on a finished job). When something goes wrong **send the owner `events.jsonl`** (a few KB) instead of the 5 MB log:
+  `.venv\Scripts\python tools\run_report.py work\<id>\events.jsonl` prints the one-screen summary (what ran, what failed, where the
+  time went); `... tools\run_report.py work\*\events.jsonl` or just `work` summarises many runs and adds a total.
 * `UPLOAD_LIST.txt` in the output folder: the videos in upload order (best first) with title, backup title, length, QC and a
   checklist, plus the cases that need review.
 * **Disk space is freed automatically** at the end of every run (no question). Deleted: only the downloaded stream

@@ -10,6 +10,7 @@
 #   runtime\node        Node.js 22 LTS (yt-dlp challenge solving, hyperframes)
 #   runtime\git         PortableGit 2.51.2 - only when Git is not installed on the PC
 #   runtime\ms-playwright   Chromium for the graphics       runtime\hf   whisper model cache
+#   runtime\whisper_gpu.txt   'on' / 'off': whisper on the NVIDIA GPU (optional ~1.4 GB of CUDA libraries, asked once)
 #   .venv               Python packages from uv.lock (+ the newest yt-dlp, or the pinned one when the newest is broken)
 #   runtime\last_good.txt   the builds to go back to (menu u -> -Rollback)     runtime\ytdlp_active.txt  which yt-dlp is in use
 #
@@ -364,6 +365,51 @@ $wcode = $LASTEXITCODE
 $ErrorActionPreference = $old
 if ($wout -match "WHISPER-OK") { Ok "whisper engines load" }
 else { Warn ("whisper engines crash on this PC (exit code 0x{0:X8}) - videos with YouTube captions still work; restart the PC and run Setup.bat again. {1}" -f $wcode, ($wout.Trim() -split "`n" | Select-Object -Last 1)) }
+
+# ---- 2c. whisper on the GPU (optional): the CUDA libraries are a big extra download, so only with an NVIDIA GPU AND a yes ----
+# The answer lives in runtime\whisper_gpu.txt ("on" / "off"). A fresh setup asks once; -NoPrompt (every update) keeps the answer,
+# and without an answer it stays off. The run itself checks the GPU and the libraries again (ucf\transcript.py) and falls back to
+# the CPU with one line when anything is wrong, so a "yes" can never make a transcript fail.
+Step "whisper on the GPU (optional)"
+$gpuFile = Join-Path $RT "whisper_gpu.txt"
+$smi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
+if (-not $smi) {
+    Ok "no NVIDIA GPU found - whisper runs on the CPU (nothing to install)"
+} else {
+    $gpuName = ((& nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>$null | Select-Object -First 1) | Out-String).Trim()
+    $want = if (Test-Path $gpuFile) { (Get-Content $gpuFile -Raw).Trim().ToLower() } else { "" }
+    if (-not $want -and -not $NoPrompt) {
+        Write-Host "  NVIDIA GPU: $gpuName"
+        Write-Host "  A stream without YouTube captions is transcribed by whisper: on the CPU 15-25 minutes for a 2.5 hour stream, CPU at 100%."
+        Write-Host "  On the GPU it is several times faster and the CPU stays free (the run prints the measured speed)."
+        Write-Host "  COST: about 1.4 GB extra download (NVIDIA cuBLAS + cuDNN, about 3 GB on disk) into .venv - once, no admin rights." -ForegroundColor Yellow
+        $ans = (Read-Host "  Install whisper for the GPU? (y/N)").Trim().ToLower()
+        $want = if ($ans -match "^(y|j)") { "on" } else { "off" }
+        Set-Content -Path $gpuFile -Value $want -Encoding Ascii
+    }
+    if ($want -ne "on") {
+        Ok "whisper on the CPU (GPU whisper is off). To turn it on: delete runtime\whisper_gpu.txt and run Setup.bat again."
+    } else {
+        Write-Host "  installing the CUDA libraries for whisper (about 1.4 GB, first time only) ..."
+        if ($sysPy) { $env:UV_PYTHON_PREFERENCE = "only-system"; & $uv sync --frozen --inexact --extra whisper-gpu --project $Root --python $sysPy }
+        else { $env:UV_PYTHON_PREFERENCE = "only-managed"; & $uv sync --frozen --inexact --extra whisper-gpu --project $Root }
+        $gok = ($LASTEXITCODE -eq 0)
+        $gout = ""
+        if ($gok) {
+            $old = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+            $gout = & $py -c "from ucf import transcript; transcript.cuda_ready(); print('GPU-WHISPER-OK')" 2>&1 | Out-String
+            $ErrorActionPreference = $old
+            $gok = ($gout -match "GPU-WHISPER-OK")
+        }
+        if ($gok) { Ok "whisper will run on the GPU ($gpuName)" }
+        else {
+            Set-Content -Path $gpuFile -Value "off" -Encoding Ascii
+            Warn ("whisper on the GPU does not work on this PC - it stays on the CPU (videos are not affected). " +
+                  "Usually the NVIDIA driver is too old (CUDA 12 needs driver 525 or newer): update it from nvidia.com, delete runtime\whisper_gpu.txt, run Setup.bat again. " +
+                  (($gout.Trim() -split "`n" | Select-Object -Last 1)))
+        }
+    }
+}
 
 # ---- 3. graphics browser ----
 Step "Chromium for the graphics"

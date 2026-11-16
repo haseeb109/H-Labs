@@ -99,7 +99,8 @@ function jobRow(j) {
     if (["failed", "partial", "stopped", "nothing"].includes(j.status))
       act += `<button class="btn sm accent" onclick="jobAct('${j.id}','retry')">${j.status === "partial" ? "Retry failed video" + ((j.failed_videos || []).length > 1 ? "s" : "") : "Retry"}</button>`;
     if (j.out_dir) act += `<button class="btn sm" onclick="openOut('${esc(j.out_dir.split(/[\\/]/).pop())}')">${ICON.folder}Open</button>`;
-    act += `<button class="btn sm" onclick="openLog('${j.id}')">Log</button><button class="btn sm" onclick="jobAct('${j.id}','remove')">Clear</button>`;
+    if (j.events) act += `<button class="btn sm" title="${esc(j.events)}" onclick="openLog('${j.id}', true)">Events</button>`;
+    act += `<button class="btn sm" onclick="openLog('${j.id}')">Full log</button><button class="btn sm" onclick="jobAct('${j.id}','remove')">Clear</button>`;
   }
   return `<tr class="${j.status === "failed" || j.status === "partial" ? "failed" : ""}">
     <td><div class="rowtitle">${esc(j.title || shortUrl(j.url))}</div>${sub}</td>
@@ -136,7 +137,7 @@ function renderQueue() {
       </article>
       ${finished.length ? `<article class="card flush"><div class="cardhead"><h2>Finished</h2><span class="muted" style="font-size:13px">latest first</span></div>
         <div class="tablewrap"><table><thead><tr><th>Stream</th><th>Template</th><th>Output</th><th>Status</th><th>Action</th></tr></thead><tbody>${finished.map(jobRow).join("")}</tbody></table></div></article>` : ""}
-      ${S.logFor ? `<article class="card"><div style="display:flex;align-items:center;gap:8px"><h2>Log</h2><button class="btn sm spacer" onclick="closeLog()">Close</button></div>
+      ${S.logFor ? `<article class="card"><div style="display:flex;align-items:center;gap:8px"><h2>${S.logEv ? "Events" : "Log"}</h2><button class="btn sm spacer" onclick="closeLog()">Close</button></div>
         <div class="logbox" style="max-height:420px;overflow:auto">${S.logText.map(esc).join("\n")}</div></article>` : ""}
     </section>
     <aside class="col-side">
@@ -162,7 +163,7 @@ function renderQueue() {
 async function jobAct(id, act) { await api(`/api/jobs/${id}/${act}`, {}); await refresh(); }
 async function stopRun() { if (!confirm("Stop the running stream now? The queue pauses; press Resume to go on.")) return; await api("/api/stop", {}); await refresh(); }
 async function togglePause() { await api("/api/pause", { paused: !S.snap.paused }); await refresh(); }
-async function openLog(id) { S.logFor = id; S.logText = (await api(`/api/log?id=${id}`)).log || []; render(); }
+async function openLog(id, events) { S.logFor = id; S.logEv = !!events; S.logText = (await api(`/api/log?id=${id}${events ? "&events=1" : ""}`)).log || []; render(); }
 function closeLog() { S.logFor = null; render(); }
 async function openOut(run) { await api("/api/open", { rel: run }); toast("Opening the folder"); }
 
@@ -336,7 +337,7 @@ async function markUploaded(rel) { const v = findVideo(rel); v.upload = { upload
 /* ------------------------------------------------------------------ polling */
 async function refresh() {
   try { S.snap = await api("/api/state"); } catch (e) { return; }
-  if (S.logFor) { try { S.logText = (await api(`/api/log?id=${S.logFor}`)).log || []; } catch (e) { /* keep */ } }
+  if (S.logFor) { try { S.logText = (await api(`/api/log?id=${S.logFor}${S.logEv ? "&events=1" : ""}`)).log || []; } catch (e) { /* keep */ } }
   if (S.view === "queue") render(); else renderSide();
 }
 (async function start() {

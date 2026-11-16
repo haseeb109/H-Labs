@@ -6,6 +6,8 @@ import os
 import time
 from pathlib import Path
 
+from . import events as EV
+
 T = {"start": time.time(), "cur": None, "cur_t": None, "done": [], "printed": False}
 
 
@@ -14,11 +16,14 @@ def reset():
 
 
 def stage(name):
-    """Close the running stage and start `name` (None = just close)."""
+    """Close the running stage and start `name` (None = just close). Both ends also go into work/<id>/events.jsonl."""
     now = time.time()
     if T["cur"]:
         T["done"].append((T["cur"], now - T["cur_t"]))
+        EV.emit("stage_end", T["cur"], seconds=round(now - T["cur_t"], 1))
     T["cur"], T["cur_t"] = name, now
+    if name:
+        EV.emit("stage_start", name)
     if name and os.environ.get("HL_STUDIO"):            # H Labs Studio (GUI) follows the run through these lines
         print(f"@@stage {name}", flush=True)
 
