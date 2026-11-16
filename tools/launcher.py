@@ -285,6 +285,151 @@ def _key_set(fn, var):
     return False
 
 
+LAST_GOOD = ROOT / "runtime" / "last_good.txt"       # newest first: "<commit> <branch> <version> <date>", at most 3 lines
+SMOKE_LAST = ROOT / "state" / "smoke_last.json"
+
+
+def _git(*args, **kw):
+    return subprocess.run(["git", "-C", str(ROOT)] + list(args), capture_output=True, text=True, **kw)
+
+
+def _main_branch():
+    r = _git("rev-parse", "--abbrev-ref", "origin/HEAD")
+    return r.stdout.strip().split("/", 1)[-1] if r.returncode == 0 and r.stdout.strip() else "main"
+
+
+def smoke_passed():
+    """None when no smoke result exists for the running commit, else whether that smoke test had 0 FAILs."""
+    try:
+        j = json.loads(SMOKE_LAST.read_text(encoding="utf-8"))
+        head = _git("rev-parse", "--short", "HEAD").stdout.strip()
+        if j.get("commit") and head and not head.startswith(j["commit"]) and not j["commit"].startswith(head):
+            return None                                     # result of another build (e.g. before a rollback)
+        return int(j.get("fails", 1)) == 0
+    except (OSError, ValueError):
+        return None
+
+
+def record_last_good():
+    """Before an update: remember the running commit as a build to go back to (menu u) - but only when its smoke test passed
+    (or none ran yet), so a broken build never becomes the rollback target. Keeps the last 3. -> message"""
+    commit = _git("rev-parse", "HEAD").stdout.strip()
+    if not commit:
+        return "not a git clone - nothing to record"
+    if smoke_passed() is False:
+        return "the current build failed its smoke test - not recorded as last good"
+    r = _git("symbolic-ref", "-q", "--short", "HEAD")
+    branch = r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else _main_branch()
+    try:
+        old = [ln for ln in LAST_GOOD.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    except OSError:
+        old = []
+    if old and old[0].split()[0] == commit:
+        return f"last good build unchanged ({commit[:8]})"
+    import time as _t
+    lines = [f"{commit} {branch} {_version()} {_t.strftime('%Y-%m-%d %H:%M')}"] + [ln for ln in old if ln.split()[0] != commit]
+    LAST_GOOD.parent.mkdir(parents=True, exist_ok=True)
+    LAST_GOOD.write_text("\n".join(lines[:3]) + "\n", encoding="utf-8")
+    return f"last good build recorded: {commit[:8]} v{_version()}"
+
+
+def last_good():
+    """-> (commit, branch, version, date) of the newest recorded good build, or None."""
+    try:
+        for ln in LAST_GOOD.read_text(encoding="utf-8").splitlines():
+            parts = ln.split()
+            if len(parts) >= 4:
+                return parts[0], parts[1], parts[2], " ".join(parts[3:])
+    except OSError:
+        pass
+    return None
+
+
+def rollback_git():
+    """Go back to the last good commit (detached HEAD; menu 8 returns to the branch). The per-PC state/ files are kept:
+    they are not tracked any more, and a tracked copy from an old commit is reset before the checkout. -> True on success"""
+    lg = last_good()
+    if not lg:
+        print("  no previous build is recorded on this PC yet (it is written by every update from now on).")
+        return False
+    commit, branch, ver, date = lg
+    if _git("rev-parse", "HEAD").stdout.strip() == commit:
+        print(f"  you are already on the last good build ({commit[:8]} v{ver}).")
+        return False
+    print(f"  going back to v{ver} ({commit[:8]}, recorded {date}) ...")
+    import shutil as _sh
+    import tempfile as _tf
+    bak = Path(_tf.mkdtemp(prefix="hlabs_state_"))
+    st = ROOT / "state"
+    for f in st.glob("*") if st.exists() else []:
+        if f.is_file():
+            _sh.copy2(f, bak / f.name)
+    if _git("ls-files", "state").stdout.strip():
+        _git("checkout", "--", "state")
+    r = _git("checkout", "-q", commit)
+    st.mkdir(exist_ok=True)
+    for f in bak.glob("*"):
+        _sh.copy2(f, st / f.name)
+    _sh.rmtree(bak, ignore_errors=True)
+    if r.returncode != 0:
+        print("  git could not switch:", (r.stderr or r.stdout).strip()[-400:])
+        return False
+    print(f"  >>> you are on the previous build v{_version()} ({commit[:8]}). Menu 8 returns to the newest build ({branch}).")
+    return True
+
+
+def _head_branch():
+    """-> the checked-out branch, or "" on a detached HEAD (after a rollback, or an old build checked out by hand)."""
+    r = _git("symbolic-ref", "-q", "--short", "HEAD")
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def ensure_main():
+    """Before an update: a PC sitting on an old branch (justice-served, quality-fix, stable ...) or on a detached build gets
+    `git pull --ff-only` = "Already up to date" and keeps running old code while Setup says success. So: name the branch loudly
+    and switch to the main branch when nothing is edited here. -> True when the pull can bring the newest code."""
+    main, cur = _main_branch(), _head_branch()
+    if cur == main:
+        return True
+    where = f"the branch '{cur}'" if cur else "an older build (detached HEAD - after menu u, or checked out by hand)"
+    print(f"\n  [!]  THIS PC IS NOT ON '{main}': it is on {where}.")
+    print("       An update would say 'Already up to date' and leave this PC on old code.")
+    dirty = _git("status", "--porcelain").stdout.strip()
+    if dirty:
+        print("       Files in the folder are edited, so nothing is switched automatically. Run this once in the H Labs folder:")
+        print("         git checkout -- .    (throws the local edits away)")
+        print(f"         git checkout {main}")
+        print("       Then use menu 8 again. (Edited a setting? Put it in config.local.json instead - see WINDOWS_SETUP.md.)")
+        print("       edited: " + ", ".join(ln.split(maxsplit=1)[-1] for ln in dirty.splitlines()[:5]))
+        return False
+    print(f"       Nothing is edited here, so switching to '{main}' now ...")
+    r = _git("checkout", "-q", main)
+    if r.returncode != 0:
+        print("       git could not switch:", (r.stderr or r.stdout).strip()[-300:])
+        print(f"       Run `git checkout {main}` in the H Labs folder, then menu 8 again.")
+        return False
+    print(f"       >>> now on '{main}' - the update brings the newest code.")
+    return True
+
+
+def update_pull():
+    """Non-Windows menu 8: record the running build, make sure we are on the main branch, pull, and say what changed."""
+    print("  " + record_last_good())
+    before = (_version(), _git("rev-parse", "--short", "HEAD").stdout.strip())
+    ensure_main()
+    subprocess.run(["git", "pull", "--ff-only"], cwd=ROOT)
+    print("  " + update_summary(before))
+
+
+def update_summary(before):
+    """old -> new version + short commit, so "nothing changed" is visible instead of hidden in a git message."""
+    v0, c0 = before
+    v1, c1 = _version(), _git("rev-parse", "--short", "HEAD").stdout.strip()
+    if (v0, c0) == (v1, c1):
+        return f"no new code: still H Labs v{v1} ({c1}) - this PC was already up to date"
+    return f"updated: H Labs v{v0} ({c0})  ->  v{v1} ({c1})"
+
+
 def doctor(pause=True):
     """Setup check: what is installed, which encoder will be used, which keys are present. Returns the number of [FAIL] lines."""
     fails = []
@@ -379,8 +524,9 @@ def main():
               f"\n  brain: {_brain()}   |   last run: {last}"
               f"\n  output: {ROOT / 'output'}\n==============================================")
         print("  1) New video from a YouTube stream URL (full pipeline)\n  2) Your own downloaded video / folder (no download; transcript optional)\n"
-              "  3) Change brain provider\n  4) Edit API keys\n  5) Open output folder\n  6) Run self-test\n  7) Setup check (what is installed?)\n  8) Update H Labs (GitHub code + yt-dlp)\n"
+              "  3) Change brain provider\n  4) Edit API keys\n  5) Open output folder\n  6) Smoke test (2-3 min) / full self-test\n  7) Setup check (what is installed?)\n  8) Update H Labs (GitHub code + yt-dlp)\n"
               "  9) BULK QUEUE - many stream links, one after the other, until all are done\n"
+              "  u) Undo the last update (go back to the previous build)\n"
               "  0) Open H Labs Studio (browser app: queue, progress, upload kit)\n  q) Quit")
         pick = ask("Pick: ", "q").lower()
         if pick == "1":
@@ -427,7 +573,11 @@ def main():
             (ROOT / "output").mkdir(exist_ok=True)
             open_path(ROOT / "output")
         elif pick == "6":
-            subprocess.run([sys.executable, "tests/run_tests.py", "--quick"], cwd=ROOT)
+            w = ask("\n  1) quick smoke (2-3 min: does this PC still make videos?)   2) full self-test   [Enter = 1]: ", "1")
+            if w.strip() == "2":
+                subprocess.run([sys.executable, "tests/run_tests.py", "--quick"], cwd=ROOT)
+            else:
+                subprocess.run([sys.executable, "tools/smoke_test.py"], cwd=ROOT)
             ask("\nPress Enter...")
         elif pick == "7":
             doctor()
@@ -437,8 +587,14 @@ def main():
             subprocess.run([sys.executable, str(ROOT / "tools" / "studio" / "server.py")], cwd=ROOT)
         elif pick == "8" and WIN:
             sys.exit(88)              # H Labs.bat runs tools/win/setup.ps1 -Update once this process (and the files it holds) is closed
+        elif pick == "u" and WIN:
+            sys.exit(89)              # H Labs.bat runs tools/win/setup.ps1 -Rollback (git + packages of that commit) once this window is closed
+        elif pick == "u":
+            if rollback_git():
+                print("  (packages: run the setup again if this build needs other versions)")
+            ask("\nPress Enter...")
         elif pick == "8":
-            subprocess.run(["git", "pull"], cwd=ROOT)
+            update_pull()
             print("\nUpdating yt-dlp (YouTube changes often; an old yt-dlp is the usual reason a download fails)...")
             subprocess.run([sys.executable, "-m", "pip", "install", "-U", "yt-dlp[default]"], cwd=ROOT)
             ask("\nIf git says 'Already up to date' you have the latest code. Press Enter...")
@@ -449,6 +605,20 @@ def main():
 if __name__ == "__main__":
     if "--check" in sys.argv:              # used by Setup: setup check without the pause, exit code = number of problems
         sys.exit(doctor(pause=False))
+    if "--record-last-good" in sys.argv:   # used by Setup -Update before the pull
+        print("  " + record_last_good())
+        sys.exit(0)
+    if "--ensure-main" in sys.argv:        # used by Setup -Update before the pull: never pull into an old branch / detached build
+        sys.exit(0 if ensure_main() else 1)
+    if "--version-commit" in sys.argv:     # used by Setup -Update to show old -> new ("<version> <short commit>")
+        print(f"{_version()} {_git('rev-parse', '--short', 'HEAD').stdout.strip()}")
+        sys.exit(0)
+    if "--rollback-git" in sys.argv:       # used by Setup -Rollback: the git part (state/ kept); Setup then syncs the packages
+        sys.exit(0 if rollback_git() else 1)
+    if "--last-good" in sys.argv:          # prints "<commit> <branch> <version> <date>" or nothing
+        lg = last_good()
+        print(" ".join(lg) if lg else "")
+        sys.exit(0 if lg else 1)
     try:
         main()
     except KeyboardInterrupt:

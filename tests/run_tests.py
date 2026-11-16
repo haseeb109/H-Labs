@@ -1893,6 +1893,87 @@ def t25_nvenc_levels():
     return "full options -> simpler options -> x264 fallback all chosen correctly"
 
 
+def t48_smoke_test():
+    """tools/smoke_test.py (after every update + menu 6) runs offline here: result JSON shape, exit code = FAILs, and the checks
+    that have everything they need on this box (imports, ffmpeg, encoder, render, disk) pass."""
+    tmp = Path(tempfile.mkdtemp())
+    out = tmp / "smoke.json"
+    r = subprocess.run([sys.executable, str(ROOT / "tools" / "smoke_test.py"), "--offline", "--json", str(out)],
+                       capture_output=True, text=True, timeout=600)
+    assert out.exists(), "no result JSON written:\n" + r.stdout[-800:] + r.stderr[-800:]
+    j = json.loads(out.read_text(encoding="utf-8"))
+    for k in ("date", "version", "commit", "offline", "fails", "seconds", "checks"):
+        assert k in j, f"result lacks {k}"
+    assert j["offline"] is True and j["version"] == (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    by = {c["name"]: c for c in j["checks"]}
+    for c in j["checks"]:
+        assert set(c) >= {"name", "ok", "skipped", "msg", "seconds"}, c
+    assert r.returncode == j["fails"] == sum(1 for c in j["checks"] if not c["ok"]), (r.returncode, j["fails"])
+    for name in ("imports", "ffmpeg", "encoder", "render", "disk"):
+        assert by[name]["ok"], f"{name}: {by[name]['msg']}"
+    for name in ("download", "ai33 + Hive reachable"):
+        assert by[name]["skipped"] and "--offline" in by[name]["msg"], by[name]
+    assert "watermark" in by["render"]["msg"], by["render"]
+    for c in j["checks"]:
+        if not c["ok"]:
+            assert any(w in c["msg"] for w in ("->", "fix:", "Fix:")), f"{c['name']} fails without a remedy: {c['msg']}"
+    assert "[FAIL]" in r.stdout or j["fails"] == 0
+    assert "SMOKE:" in r.stdout and "[skip] download: skipped: --offline" in r.stdout, r.stdout[-600:]
+    # the yt-dlp probe used by Setup (newest vs pinned) answers in one line with a clear verdict, never with a traceback
+    r2 = subprocess.run([sys.executable, str(ROOT / "tools" / "smoke_test.py"), "--ytdlp-probe"], capture_output=True, text=True, timeout=120)
+    assert r2.stdout.startswith(("[ok] yt-dlp", "[FAIL] yt-dlp")) and r2.returncode in (0, 1) and "Traceback" not in r2.stderr, r2.stdout + r2.stderr
+    # the launcher's rollback plumbing: a failed smoke result blocks "last good", a result of another build does not
+    sys.path.insert(0, str(ROOT / "tools"))
+    import launcher as L
+    saved = L.SMOKE_LAST
+    try:
+        L.SMOKE_LAST = tmp / "s.json"
+        assert L.smoke_passed() is None
+        head = L._git("rev-parse", "--short", "HEAD").stdout.strip()
+        L.SMOKE_LAST.write_text(json.dumps({"fails": 2, "commit": head}), encoding="utf-8")
+        assert L.smoke_passed() is False
+        L.SMOKE_LAST.write_text(json.dumps({"fails": 2, "commit": "0000000"}), encoding="utf-8")
+        assert L.smoke_passed() is None, "a smoke result of another build must not count"
+        L.SMOKE_LAST.write_text(json.dumps({"fails": 0, "commit": head}), encoding="utf-8")
+        assert L.smoke_passed() is True
+    finally:
+        L.SMOKE_LAST = saved
+    # a PC on an old branch / a rolled-back build must never be left there by an update ("Already up to date" = old code)
+    sim = tmp / "sim"
+    subprocess.run(["git", "clone", "-q", str(ROOT), str(sim)], check=True, capture_output=True)
+    shutil.copy2(ROOT / "tools" / "launcher.py", sim / "tools" / "launcher.py")
+    g = lambda *a: subprocess.run(["git", "-C", str(sim)] + list(a), capture_output=True, text=True)   # noqa: E731
+    g("commit", "-qam", "wip")
+    main = g("rev-parse", "--abbrev-ref", "origin/HEAD").stdout.strip().split("/", 1)[-1]
+    g("branch", "-q", "-f", main, "HEAD")
+    def ensure_main(*before):
+        for a in before:
+            g(*a)
+        r = subprocess.run([sys.executable, str(sim / "tools" / "launcher.py"), "--ensure-main"], capture_output=True, text=True, cwd=sim)
+        return r.returncode, r.stdout, g("symbolic-ref", "-q", "--short", "HEAD").stdout.strip()
+    rc, out, head = ensure_main(("checkout", "-q", main))
+    assert rc == 0 and head == main and "NOT ON" not in out, (rc, out)
+    for start in (("checkout", "-q", "-B", "justice-served"), ("checkout", "-q", "--detach", "HEAD")):
+        rc, out, head = ensure_main(("checkout", "-q", main), start)
+        assert rc == 0 and head == main, f"clean tree must be switched back to {main}: {out}"
+        assert "NOT ON" in out and "switching" in out, out
+    (sim / "config.json").write_text("{}", encoding="utf-8")                     # an edited file: never switch silently
+    rc, out, head = ensure_main(("checkout", "-q", "-B", "stable"))
+    assert rc == 1 and head == "stable" and f"git checkout {main}" in out and "config.json" in out, out
+    sys.path.insert(0, str(ROOT / "tools"))
+    import launcher as L2
+    assert "no new code" in L2.update_summary((L2._version(), L2._git("rev-parse", "--short", "HEAD").stdout.strip()))
+    assert "->" in L2.update_summary(("2000.1.1", "0000000"))
+    ps1 = (ROOT / "tools" / "win" / "setup.ps1").read_text(encoding="utf-8")
+    for need in ("--ensure-main", "--version-commit", "--record-last-good", "--rollback-git", "smoke_test.py", "ytdlp_pin.txt", "$Rollback"):
+        assert need in ps1, f"setup.ps1 does not use {need}"
+    assert (ROOT / "tools" / "win" / "ytdlp_pin.txt").read_text().strip().count(".") == 2, "ytdlp_pin.txt holds a version"
+    bat = (ROOT / "H Labs.bat").read_bytes()
+    assert b"-Rollback" in bat and b"\r\n" in bat and b"errorlevel 89 if not errorlevel 90" in bat
+    shutil.rmtree(tmp, ignore_errors=True)
+    return f"{len(j['checks'])} checks, {j['fails']} expected fails here, {j['seconds']} s"
+
+
 def main():
     print("H Labs self-test matrix")
     check(1, "environment", t1_environment)
@@ -1944,6 +2025,7 @@ def main():
     check(43, "whisper crash fallback (C++ runtime)", t43_whisper_crash_fallback)
     check(44, "own video / 5 min cases / as-is re-edit", t44_local_mincase_asis)
     check(45, "render speed: one pass less, stills once, SSD temp", t45_render_speed)
+    check(48, "smoke test (post-update PC check)", t48_smoke_test)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))

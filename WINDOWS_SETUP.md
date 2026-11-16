@@ -30,6 +30,24 @@ the block and rebuilds the tool on the signed python.org Python 3.12 (installs i
 Windows still blocks the packages after that, Smart App Control has to be switched off (Windows Security -> App & browser
 control -> Smart App Control settings -> Off; it cannot be switched back on without resetting Windows) - or ask IT.
 
+## After every update: the smoke test (2-3 minutes)
+Every update and every `Setup.bat` ends with it, and menu **6** runs it any time (`1) quick smoke` - Enter; `2)` is the long
+self-test). It checks on THIS PC what only a real run used to find: the packages and their Windows DLLs load (Smart App Control),
+ffmpeg + ffprobe, which encoder a run will use (a 2-second NVENC/x264 test encode + GPU decode), whisper on a 3-second clip in a
+child process (the `0xC0000005` crash), both API keys present and ai33 + Hive reachable, a download that really offers 720p+, a
+10-second test render with the watermark, and the free disk space. Every line is `[ok]` or `[FAIL] <what to do>`; the result is
+kept in `state\smoke_last.json` (the Studio shows a failing check under *Needs attention*).
+* All `[ok]` -> **READY**, the PC is good for a run.
+* A `[FAIL]` -> the update is installed but something on this PC is wrong: fix what the line says (usually `Setup.bat` again, the
+  NVIDIA driver, a key, or disk space), or go back with menu **u** (below) and tell the owner.
+
+## Undo an update (menu u)
+A new build that breaks this PC is not a lost day: menu **u) Undo the last update** puts the PC back on the build it ran before -
+the code *and* the Python packages of that build (`uv.lock`), and prints `you are on the previous build`. Your videos, keys and
+`state\` files are untouched. **Menu 8 returns to the newest build** whenever the owner has pushed a fix.
+The last 3 good builds are remembered in `runtime\last_good.txt`. A build is only recorded as "good" when its smoke test passed,
+so option u never sends the PC back to a build that was already broken.
+
 **Broken install / strange error after an update:** just run `Setup.bat` again. To start completely clean, delete the
 `runtime` and `.venv` folders first (your videos in `output\` and the keys are not touched).
 
@@ -37,7 +55,10 @@ control -> Smart App Control settings -> Off; it cannot be switched back on with
 
 * Double-click `H Labs Studio.bat` for the browser app (below), or `H Labs.bat` for the menu.
 * Option **8** updates everything: the newest code from GitHub, any new pinned tool or package, and the newest yt-dlp.
-  Do this before starting work. The window re-opens by itself afterwards.
+  Do this before starting work. It prints the old and the new version (`updated: H Labs v... -> v...`, or `no new code`), ends
+  with the smoke test (below) and the window re-opens by itself afterwards. A PC that sits on an old branch or on a build from
+  option **u** is put back on `main` first (it says so loudly); if files in the folder are edited it stops and prints the two
+  `git` commands to run - a setting belongs in `config.local.json`, never in `config.json`.
 * Option **1**: paste the YouTube stream URL -> pick the style -> pick the mode -> answer the voice question -> wait.
   Many streams: option **9** (bulk queue). Clips for your editor: the last entry of the channel-template list (see below).
   Videos land in `output\<date>_<stream id>\`.
@@ -135,6 +156,10 @@ each video is rendered, so rendering takes a few minutes longer. Only the owner 
 `trial_tales`, `overruled`, `court_beacon`, `justice_served` (and any new style the owner pushes; it shows up after option 8).
 
 ## Good to know
+* **yt-dlp: newest with a safe fallback.** YouTube changes often, so every update installs the **newest** yt-dlp first and then
+  probes it (does it still read a video?). If the probe fails - a bad yt-dlp release would otherwise break every laptop at once -
+  Setup installs the known-good version from `tools/win/ytdlp_pin.txt` instead and says why. `runtime\ytdlp_active.txt` holds
+  which one is in use, and a failed download names it. The owner raises the pinned version when a newer one has proven itself.
 * **Quality rule: never below 720p.** The tool downloads the best quality YouTube has (720p+). If a YouTube client only offers
   360p it tries the next way; if no 720p copy can be had it stops with a message instead of making soft videos.
 * **Download from YouTube needs a normal home/office internet connection** (not a VPS / cloud PC): YouTube blocks data-centre IPs.
@@ -143,5 +168,5 @@ each video is rendered, so rendering takes a few minutes longer. Only the owner 
 * Antivirus can slow ffmpeg a lot: ask IT to exclude the `C:\HLabs` folder if renders are very slow.
 * If something fails, send the owner the last 30 lines of the window and the result of option 7.
 * Do not edit files inside the repo on the PC; if you must, tell the owner (local edits can block the update).
-* For the owner: a new Python package goes into `pyproject.toml`, then run `uv lock` and commit both files; a new ffmpeg / Node / uv
+* For the owner: the yt-dlp fallback version is `tools/win/ytdlp_pin.txt` (one line, e.g. `2026.10.26`); a new Python package goes into `pyproject.toml`, then run `uv lock` and commit both files; a new ffmpeg / Node / uv
   version is a new pin (version, URL, SHA-256) at the top of `tools/win/setup.ps1`. The next option 8 installs it on every PC.

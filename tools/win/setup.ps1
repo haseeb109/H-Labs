@@ -10,10 +10,13 @@
 #   runtime\node        Node.js 22 LTS (yt-dlp challenge solving, hyperframes)
 #   runtime\git         PortableGit 2.51.2 - only when Git is not installed on the PC
 #   runtime\ms-playwright   Chromium for the graphics       runtime\hf   whisper model cache
-#   .venv               Python packages from uv.lock (+ newest yt-dlp)
+#   .venv               Python packages from uv.lock (+ the newest yt-dlp, or the pinned one when the newest is broken)
+#   runtime\last_good.txt   the builds to go back to (menu u -> -Rollback)     runtime\ytdlp_active.txt  which yt-dlp is in use
 #
 # Change a pinned tool: edit $Pins below (version, url, sha256) and commit; the next update installs it everywhere.
-param([switch]$Update, [switch]$NoPrompt)
+# The yt-dlp fallback version is tools\win\ytdlp_pin.txt (a known-good release; the newest is still tried first).
+# Every -Update / -Rollback / fresh setup ends with tools\smoke_test.py: 2-3 minutes that prove THIS PC still makes videos.
+param([switch]$Update, [switch]$Rollback, [switch]$NoPrompt)
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"       # Invoke-WebRequest is ~10x faster without the progress bar
@@ -93,31 +96,81 @@ if (-not [Environment]::Is64BitOperatingSystem) { Fail "this tool needs 64-bit W
 if ($Root -match "OneDrive") { Warn "this folder is inside OneDrive - syncing big video files slows everything down. Better: C:\HLabs" }
 New-Item -ItemType Directory -Force -Path $RT | Out-Null
 
-# ---- 0. update: get the newest code first, then run the NEW setup script (it may pin new versions) ----
-if ($Update) {
-    Step "getting the newest code from GitHub"
+# ---- 0. update / rollback: change the code first, then run the NEW setup script (it may pin new versions) ----
+# state\*.json is written by every run; older versions tracked it in git, so a local change blocked the pull. Keep a copy, reset
+# the tracked copies, change the code, and put this PC's own state back.
+function Save-State {
+    $stBak = Join-Path $RT "_state_backup"
+    if (Test-Path $stBak) { Remove-Item $stBak -Recurse -Force }
+    New-Item -ItemType Directory -Force -Path $stBak | Out-Null
+    Get-ChildItem (Join-Path $Root "state") -File -ErrorAction SilentlyContinue | Copy-Item -Destination $stBak
+    return $stBak
+}
+function Restore-State($stBak) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $Root "state") | Out-Null
+    Get-ChildItem $stBak -File | Copy-Item -Destination (Join-Path $Root "state") -Force
+    Remove-Item $stBak -Recurse -Force
+}
+if ($Update -or $Rollback) {
     $g = Get-Command git -ErrorAction SilentlyContinue
     $gitExe = if ($g) { $g.Source } elseif (Test-Path "$RT\git\cmd\git.exe") { "$RT\git\cmd\git.exe" } else { $null }
+    $py0 = Join-Path $Root ".venv\Scripts\python.exe"
+    $launcher = Join-Path $Root "tools\launcher.py"
+    $old = $ErrorActionPreference; $ErrorActionPreference = "Continue"      # git writes progress to stderr
     if (-not (Test-Path (Join-Path $Root ".git"))) {
         Warn "this folder was not cloned with git (downloaded as ZIP?) - code update skipped. Clone it once with git to get updates."
     } elseif (-not $gitExe) {
         Warn "git not found - code update skipped (run Setup.bat once, it installs a portable git)"
+    } elseif (-not (Test-Path $py0)) {
+        Warn "this PC has no .venv yet - run Setup.bat once (it installs everything); nothing to update or undo"
+    } elseif ($Rollback) {
+        Step "going back to the previous build (menu u)"
+        # the git part (last good commit from runtime\last_good.txt, state\ kept) lives in the launcher, same as on Mac / Linux
+        $stBak = Save-State
+        & $py0 $launcher --rollback-git
+        $rb = $LASTEXITCODE
+        Restore-State $stBak
+        if ($rb -ne 0) { Fail "could not go back (see above). Nothing was changed." }
     } else {
-        # state\*.json is written by every run; older versions tracked it in git, so a local change blocked the pull. Keep a copy,
-        # reset the tracked copies, pull, and put this PC's own state back.
-        $stBak = Join-Path $RT "_state_backup"
-        if (Test-Path $stBak) { Remove-Item $stBak -Recurse -Force }
-        New-Item -ItemType Directory -Force -Path $stBak | Out-Null
-        Get-ChildItem (Join-Path $Root "state") -File -ErrorAction SilentlyContinue | Copy-Item -Destination $stBak
+        Step "getting the newest code from GitHub"
+        $env:Path = "$RT\git\cmd;" + $env:Path
+        $was = ""
+        if (Test-Path $py0) {
+            & $py0 $launcher --record-last-good                               # the build we leave = the one menu u returns to
+            $was = (& $py0 $launcher --version-commit | Out-String).Trim()    # "<version> <short commit>" before the pull
+        }
+        $stBak = Save-State
         $tracked = & $gitExe -C $Root ls-files state
         if ($tracked) { & $gitExe -C $Root checkout -- state }
-        & $gitExe -C $Root pull --ff-only
-        if ($LASTEXITCODE -ne 0) { Warn "git pull failed (local edits in the folder? see the message above). Setup continues with the current code." }
-        Get-ChildItem $stBak -File | Copy-Item -Destination (Join-Path $Root "state") -Force
-        Remove-Item $stBak -Recurse -Force
+        # a PC on an old branch (justice-served, quality-fix, stable ...) or on a rolled-back build gets "Already up to date"
+        # from the pull and keeps running old code: switch it back to the main branch first (or say what to run)
+        $canPull = $true
+        if (Test-Path $py0) {
+            & $py0 $launcher --ensure-main
+            $canPull = ($LASTEXITCODE -eq 0)
+        }
+        if ($canPull) {
+            & $gitExe -C $Root pull --ff-only
+            if ($LASTEXITCODE -ne 0) { Warn "git pull failed (local edits in the folder? see the message above). Setup continues with the current code." }
+        } else {
+            Warn "the code was NOT updated (see the lines above) - setup continues with the code that is in the folder"
+        }
+        Restore-State $stBak
+        if ($was -and (Test-Path $py0)) {
+            $now = (& $py0 $launcher --version-commit | Out-String).Trim()
+            if ($now -eq $was) { Warn "no new code: still H Labs v$was - this PC was already up to date" }
+            else { Ok "updated: H Labs v$was  ->  v$now" }
+        }
     }
+    $ErrorActionPreference = $old
+    # the setup of the code that is now in the folder: packages matching its uv.lock, pinned tools, and the smoke test at the end
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Root "tools\win\setup.ps1") -NoPrompt
-    exit $LASTEXITCODE
+    $rc = $LASTEXITCODE
+    if ($Rollback) {
+        Write-Host ""
+        Write-Host "===== PREVIOUS BUILD =====  You are on the previous build (H Labs v$((Get-Content (Join-Path $Root 'VERSION') -Raw).Trim())). Menu option 8 returns to the newest." -ForegroundColor Yellow
+    }
+    exit $rc
 }
 
 # ---- 1. pinned tools ----
@@ -175,9 +228,44 @@ function Sync-Venv {
     }
     if ($LASTEXITCODE -ne 0) { Fail "installing the Python packages failed (see above)" }
     Set-Content -Path $venvMark -Value "uv" -Encoding Ascii
+    Install-YtDlp
+}
+
+function Install-YtDlp {
+    # Newest first (YouTube changes often), then a 20 s probe: does it read a video? A broken release would hit every laptop at
+    # once, so when the probe fails the known-good version from tools\win\ytdlp_pin.txt is installed instead.
+    # runtime\ytdlp_active.txt says which one is in use (the download error and the smoke test print it).
+    $pinFile = Join-Path $Root "tools\win\ytdlp_pin.txt"
+    $pin = if (Test-Path $pinFile) { (Get-Content $pinFile -Raw).Trim() } else { "" }
+    $active = Join-Path $RT "ytdlp_active.txt"
+    $probe = Join-Path $Root "tools\smoke_test.py"
     Write-Host "  newest yt-dlp (YouTube changes often) ..."
     & $uv pip install --no-config --python $py --upgrade "yt-dlp[default]"   # --no-config: the package date cutoff in pyproject must not hold yt-dlp back
     if ($LASTEXITCODE -ne 0) { Fail "installing yt-dlp failed" }
+    $ver = (& $py -m yt_dlp --version 2>$null | Out-String).Trim()
+    if (-not (Test-Path $probe)) { Ok "yt-dlp $ver (newest; this build has no probe)"; return }   # an older build after menu u
+    $old = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    $out = (& $py $probe --ytdlp-probe 2>&1 | Out-String).Trim()
+    $okProbe = ($LASTEXITCODE -eq 0)
+    $ErrorActionPreference = $old
+    if ($okProbe) {
+        Set-Content -Path $active -Value "$ver newest" -Encoding Ascii
+        Ok "yt-dlp $ver (newest, reads YouTube)"
+        return
+    }
+    $why = ($out -split "`n" | Select-Object -Last 1).Trim()
+    Warn "the newest yt-dlp ($ver) does not read YouTube on this PC: $why"
+    if (-not $pin) { Warn "no pinned yt-dlp version in tools\win\ytdlp_pin.txt - keeping the newest"; return }
+    Write-Host "  installing the known-good yt-dlp $pin instead ..."
+    & $uv pip install --no-config --python $py "yt-dlp[default]==$pin"
+    if ($LASTEXITCODE -ne 0) { Fail "installing yt-dlp $pin failed" }
+    $old = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    & $py $probe --ytdlp-probe 2>&1 | Out-Null
+    $okPin = ($LASTEXITCODE -eq 0)
+    $ErrorActionPreference = $old
+    Set-Content -Path $active -Value "$pin pinned (the newest, $ver, failed its probe: $why)" -Encoding Ascii
+    if ($okPin) { Ok "yt-dlp $pin (pinned fallback)" }
+    else { Warn "yt-dlp $pin does not read YouTube either - no internet, or YouTube blocks this connection (VPN / cloud PC?)" }
 }
 
 function Test-Imports {
@@ -326,9 +414,33 @@ Step "checking the installation"
 & $py (Join-Path $Root "tools\launcher.py") --check
 $fails = $LASTEXITCODE
 if (Test-Path $DL) { Remove-Item $DL -Recurse -Force -ErrorAction SilentlyContinue }   # installed archives are not needed any more
+
+# ---- 7. smoke test: 2-3 minutes that prove this PC still makes videos (DLL blocks, whisper crash, NVENC, 360p, ai33 ...).
+# The result (state\smoke_last.json) decides whether the next update records this build as "last good" for menu u.
+$smokePy = Join-Path $Root "tools\smoke_test.py"
+$smoke = 0
+if (Test-Path $smokePy) {
+    Step "smoke test (2-3 minutes: imports, ffmpeg, encoder, whisper, keys, download, a 10 s render)"
+    $old = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    & $py $smokePy
+    $smoke = $LASTEXITCODE
+    $ErrorActionPreference = $old
+}
+$firstFail = ""
+try {
+    $sj = Get-Content (Join-Path $Root "state\smoke_last.json") -Raw | ConvertFrom-Json
+    $bad = @($sj.checks | Where-Object { -not $_.ok })
+    if ($bad.Count -gt 0) {
+        $line1 = ($bad[0].msg -split "`n")[0]
+        $firstFail = $bad[0].name + ": " + $line1
+    }
+} catch { }
 Write-Host ""
-if ($fails -eq 0) {
+if ($fails -eq 0 -and $smoke -eq 0) {
     Write-Host "===== READY =====  Double-click  H Labs.bat  to start." -ForegroundColor Green
+} elseif ($smoke -ne 0) {
+    Write-Host "===== the update is installed but this PC has a problem: $firstFail =====" -ForegroundColor Yellow
+    Write-Host "      Fix it (the [FAIL] line says how; menu 6 runs the smoke test again) or use menu u to go back to the previous build." -ForegroundColor Yellow
 } else {
     Write-Host "===== $fails problem(s) above =====  Fix the [FAIL] lines (empty key: menu option 4), then run the check again (menu option 7)." -ForegroundColor Yellow
 }

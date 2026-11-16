@@ -320,6 +320,13 @@ class Studio:
                 pass
             m["keys"][fn.split(".")[0]] = ok
         m["ffmpeg"] = shutil.which("ffmpeg") or ""
+        try:                                                  # last smoke test (tools/smoke_test.py: after every update, menu 6)
+            sj = json.loads((ROOT / "state" / "smoke_last.json").read_text(encoding="utf-8"))
+            bad = [c for c in sj.get("checks", []) if not c.get("ok")]
+            m["smoke"] = {"date": sj.get("date", ""), "fails": len(bad),
+                          "first_fail": (bad[0]["name"] + ": " + str(bad[0].get("msg", "")).splitlines()[0][:160]) if bad else ""}
+        except (OSError, ValueError, KeyError, IndexError):
+            m["smoke"] = None
         import platform
         m["machine"] = platform.node() or os.environ.get("COMPUTERNAME", "")
         try:
