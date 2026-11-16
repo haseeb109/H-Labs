@@ -43,8 +43,10 @@ class _Tee:
         try:
             self.f.write(s)
             self.f.flush()
-        except Exception:
-            pass
+        except (OSError, ValueError) as e:         # disk full / file locked or closed: the console goes on, but say it once
+            if not getattr(self, "_warned", False):
+                self._warned = True
+                self.stream.write(f"WARNING: run_log.txt is not being written ({e}) - keep this window open, the log is lost\n")
         return len(s)
 
     def flush(self):
@@ -116,6 +118,16 @@ def check_disk(root, need_gb=5.0, warn_gb=20.0):
 
 def ui(*a):
     print(time.strftime("%H:%M:%S"), *a, flush=True)
+
+
+def cause(e):
+    """One line that names the cause AND where it happened: 'KeyError: 'in' (ucf/boundary.py:136)'. The team sends run_log.txt,
+    so a skipped extra must leave enough in the log to find it without a traceback."""
+    import traceback
+    tb = traceback.extract_tb(e.__traceback__)
+    at = f" ({Path(tb[-1].filename).name}:{tb[-1].lineno})" if tb else ""
+    msg = (str(e).strip().splitlines() or [""])[-1][:160]     # last line: ffmpeg puts the real error there
+    return f"{type(e).__name__}: {msg}{at}" if msg else f"{type(e).__name__}{at}"
 
 
 def load_json(p, default):
@@ -260,9 +272,10 @@ def stage_info(R):
     if R.a.url:
         try:
             R.meta = download.info(R.a.url, R.cfg) if not R.a.video_file else {}
-        except Exception as e:
+        except (RuntimeError, OSError, ValueError) as e:        # yt-dlp refused / not installed / returned no JSON
             if not R.a.stream_id:
                 sys.exit(f"ERROR: {e}")
+            ui(f"  stream info skipped: {cause(e)} - going on with --stream-id {R.a.stream_id} (title / date from the saved meta.json)")
     R.sid = R.a.stream_id or R.meta.get("id") or (Path(R.a.video_file).stem if R.a.video_file else None)
     if not R.sid:
         sys.exit("give a URL (or --video-file + --stream-id)")
@@ -317,7 +330,7 @@ def stage_download(R):
             try:
                 R.video_path = download.fetch_video(R.url, R.sid, R.work, R.cfg, R.meta)
                 old.unlink()
-            except Exception as e:
+            except (RuntimeError, OSError) as e:
                 os.replace(old, R.video_path)
                 if download.probe_video(R.video_path)[0] < int(R.cfg.get("min_height", 720)) - 10:
                     sys.exit(f"STOP: the saved copy is below {R.cfg.get('min_height', 720)}p and a better one could not be downloaded:\n"
@@ -395,8 +408,8 @@ def stage_scan(R):
             R.evidence = EV.build(R.video_path if R.video_path.exists() else None, R.segs, R.rep, R.cfg, R.work)
             ui(f"evidence: {len(R.evidence['call_outs'])} call-outs, {len(R.evidence['wrap_up'])} wrap-ups, "
                f"{len(R.evidence['ruling'])} rulings, ocr={R.evidence['ocr_engine'] or 'off'}")
-        except Exception as e:  # noqa
-            ui("evidence skipped:", e)
+        except Exception as e:  # noqa - best effort for the brain prompt: the plan is made without video signals
+            ui(f"  evidence skipped: {cause(e)} - the brain plans from the transcript alone")
     if R.upto < IX["plan"]:
         return ui("stopped after", R.stop) or STOP
 
@@ -439,7 +452,7 @@ def stage_plan(R):
                 def _len(c):
                     try:
                         return parse_tc(c["out"]) - parse_tc(c["in"])
-                    except Exception:
+                    except (KeyError, TypeError, ValueError):
                         return 0
                 cs = sorted(R.plan.get("cases", []), key=lambda c: -_len(c))
                 ui(f"NOTHING TO MAKE: no case in this stream has {mc:.0f}:00 or more of hearing (rule for one video per case).")
@@ -476,7 +489,16 @@ def stage_plan(R):
                 sys.exit(f"brain '{R.cfg['brain']}' never returned valid JSON - see work/*/brain_reply_*.txt")
             save_json(R.plan_path, R.plan)
     else:
-        R.plan = json.loads(R.plan_path.read_text(encoding="utf-8"))
+        try:
+            R.plan = json.loads(R.plan_path.read_text(encoding="utf-8"))
+        except ValueError as e:
+            sys.exit(f"STOP: {R.plan_path} is not valid JSON ({e}) - fix the file or delete it so the brain plans again")
+        # shape check first (a missing "in" used to surface as a KeyError in the middle of the render), rules after
+        from ucf import schema
+        bad = schema.check_plan(R.plan)
+        if bad:
+            sys.exit(f"STOP: the plan {R.plan_path} has the wrong shape:\n  " + "\n  ".join(b.removeprefix("ERROR: ") for b in bad[:12])
+                     + "\n  -> fix the file (or delete it so the brain plans again); send work/" + f"{R.sid}/run_log.txt if unsure")
         R.plan["source_file"] = R.plan.get("source_file") or R.source_file
         errs, warns = VAL.validate(R.plan, R.stream_len, R.segs, R.cfg)
     R.plan["source_file"] = R.source_file if R.plan.get("source_file") != R.source_file else R.plan["source_file"]
@@ -492,8 +514,10 @@ def stage_plan(R):
                 R.plan = snapshot
                 errs, warns = VAL.validate(R.plan, R.stream_len, R.segs, R.cfg)
                 ui("boundary refinement reverted (introduced validation errors)")
-        except Exception as e:  # noqa
-            ui("boundary refinement skipped:", e)
+        except Exception as e:  # noqa - the brain's OUT times stand (the validator passed them); say what broke
+            R.plan = snapshot
+            errs, warns = VAL.validate(R.plan, R.stream_len, R.segs, R.cfg)
+            ui(f"  boundary refinement skipped: {cause(e)} - the brain's case OUT times are used as they are")
     report = [f"PLAN REPORT  {R.sid}", f"stream {fmt_tc(R.stream_len)}  cases {len(R.plan['cases'])}  videos {len(R.plan['videos'])}"]
     st = R.plan.get("_stats", {})
     if st:
@@ -527,8 +551,8 @@ def stage_plan(R):
                     labels.append(f"#{c['id']} {c['name'][:18]} {tag} {tc}")
             cards.contact_sheet(frames, labels, R.work / "contact_plan.jpg")
             ui("contact sheet of every case IN/OUT:", R.work / "contact_plan.jpg")
-        except Exception as e:  # noqa
-            ui("contact sheet skipped:", e)
+        except Exception as e:  # noqa - a preview only; the plan and the render do not depend on it
+            ui(f"  contact sheet skipped: {cause(e)} - check case IN/OUT in plan_report.txt instead")
     # carry forward state (mode all never touches it)
     R.carry = [c for c in R.plan["cases"] if c["status"] == "carried"] if R.mode != "all" else []
     for c in R.carry:
@@ -609,8 +633,8 @@ def stage_render(R):
                         if ids_[i_] in brs:
                             tts.synth_clips(brs[ids_[i_]]["text"], R.work / "tts", R.cfg, lambda *m: None)
                     tts.synth_clips(pv["vo_final"]["text"], R.work / "tts", R.cfg, lambda *m: None)
-                except Exception:  # noqa
-                    pass
+                except Exception as e:  # noqa - the renderer makes that line itself (and reports if that fails too)
+                    ui(f"  voice prefetch for video {pv.get('n', '?')} skipped: {cause(e)}")
         threading.Thread(target=_prefetch_vo, args=(todo[1:],), daemon=True, name="vo-prefetch").start()
     for v in R.plan["videos"]:
         if only and v["n"] not in only:
@@ -623,7 +647,7 @@ def stage_render(R):
             ui(f"VIDEO {v['n']}: {[by_id[i]['name'] for i in v['case_ids']]}")
             CLOCK.stage(f"video {v['n']} render")
             _t_video = time.time()
-            rn.log = []
+            rn.log, rn.notes = [], []
             fresh_render_cache(folder, R.cfg, v, [by_id[i] for i in v["case_ids"]])
             from ucf import render as RND
             from ucf import watermark as WM
@@ -650,14 +674,26 @@ def stage_render(R):
                 except Exception as e:                   # never lose the render over a watermark problem, but flag it
                     wm_err = str(e).splitlines()[0][:160] if str(e) else repr(e)
                     ui(f"  WATERMARK FAILED: {wm_err}  (video.mp4 is the un-watermarked render)")
-            thumb = rn.thumbnail(R.plan, v, folder)
+            notes = list(getattr(rn, "notes", []))   # extras the renderer skipped (overlays, captions): go into qc.json
+            try:
+                rn.thumbnail(R.plan, v, folder)
+            except Exception as e:  # noqa - the video is done; a thumbnail can be made by hand from thumbnail_candidates/
+                ui(f"  thumbnail skipped: {cause(e)} - pick a frame from {folder.name}/thumbnail_candidates by hand")
+                notes.append("thumbnail skipped: " + cause(e))
             tl = res["timeline"]
             (folder / "edit_sheet.txt").write_text(sheets.edit_sheet(R.plan, v, tl, res["durs"]), encoding="utf-8")
             md, chs = sheets.metadata(R.plan, v, tl, R.cfg, R.url)
             (folder / "metadata.txt").write_text(md, encoding="utf-8")
             rn.write_footage_log(folder / "footage_log.csv")
-            rn.contact_sheet(res["final"], res["rows"], folder / "contact_sheet.jpg")
+            try:
+                rn.contact_sheet(res["final"], res["rows"], folder / "contact_sheet.jpg")
+            except Exception as e:  # noqa - a preview of the finished video only
+                ui(f"  contact sheet skipped: {cause(e)}")
+                notes.append("contact sheet skipped: " + cause(e))
             qc = rn.qc(res["final"], res["measured_total"])
+            if notes:
+                qc["ok"] = False
+                qc["note"] = "; ".join(notes)
             if res.get("ai_clips"):
                 qc["ai_clip_seconds"] = res["ai_clips"]
                 qc["ai_clips_ok"] = max(res["ai_clips"]) <= R.cfg.get("vo_clip_max", 18.0)
@@ -666,10 +702,10 @@ def stage_render(R):
             qc["watermark"] = wm_text or False
             if wm_err:
                 qc["ok"] = False
-                qc["note"] = "watermark failed: " + wm_err
+                qc["note"] = "; ".join(filter(None, [qc.get("note"), "watermark failed: " + wm_err]))
             if chs and chs[-1][0] > res["measured_total"] - 60:
                 qc["ok"] = False
-                qc["note"] = "a chapter sits in the final 60 s"
+                qc["note"] = "; ".join(filter(None, [qc.get("note"), "a chapter sits in the final 60 s"]))
             qc["processing_seconds"] = round(time.time() - _t_video)
             save_json(folder / "qc.json", qc)
             save_json(folder / "video_plan.json", {"video": v, "cases": [by_id[i] for i in v["case_ids"]]})
@@ -688,7 +724,7 @@ def stage_render(R):
         except Exception as e:                      # one broken video must not cost the others (2026-11-05: an ai33 timeout)
             import traceback
             traceback.print_exc()
-            why = (str(e).strip().splitlines() or [repr(e)])[-1][:200]
+            why = cause(e)
             ui(f"  VIDEO {v['n']} FAILED: {why} - going on with the next video (rerun later: --only {v['n']})")
             failed_videos.append((v['n'], folder.name, why))
     CLOCK.stage("report")
@@ -731,8 +767,9 @@ def stage_render(R):
         ui(f"downloaded stream kept for the rerun ({len(failed_videos)} video(s) failed) - cleanup skipped")
     else:
         FINISH.cleanup(R.cfg, R.work, outroot, R.a.video_file, ui)
-    if failed_videos and not summary:
-        sys.exit(1)                                # nothing was made: a bulk queue counts this stream as failed
+    if failed_videos and not summary:              # nothing was made: a bulk queue counts this stream as failed
+        sys.exit(f"STOP: no video was made - every video of this run failed (first cause: {failed_videos[0][2]}).\n"
+                 f"  Send work/{R.sid}/run_log.txt; rerun with --only <n> after the fix.")
 
 
 def main(argv=None):
@@ -759,7 +796,7 @@ def clips_output(R, only):
     ui(f"clips only: {len(plan['videos'])} case(s)  |  encoder: {enc}  |  decode: {('GPU (' + _HW['name'] + ')') if _HW['name'] else 'CPU'}"
        "  |  no overlays / voice / watermark")
     by_id = {c["id"]: c for c in plan["cases"]}
-    summary, rows = [], []
+    summary, rows, failed = [], [], []
     for v in plan["videos"]:
         if only and v["n"] not in only:
             continue
@@ -773,7 +810,10 @@ def clips_output(R, only):
         except KeyboardInterrupt:
             raise
         except Exception as e:                       # one broken clip must not cost the others
-            ui(f"  CLIP {v.get('rank', v['n'])} FAILED: {(str(e).strip().splitlines() or [repr(e)])[-1][:200]} - going on")
+            import traceback
+            traceback.print_exc()
+            ui(f"  CLIP {v.get('rank', v['n'])} FAILED: {cause(e)} - going on (rerun later: --only {v['n']})")
+            failed.append((v["n"], folder.name, cause(e)))
             continue
         qc = dict(res["qc"], processing_seconds=round(time.time() - t0))
         save_json(folder / "qc.json", qc)
@@ -784,7 +824,8 @@ def clips_output(R, only):
     from ucf import mode_all
     mode_all.write_ranking(plan, outroot, cfg, sid)
     rep = [f"RUN REPORT {sid} (clips only) - {time.strftime('%Y-%m-%d %H:%M')}", ""] + \
-          [f"Clip {n}: {f}  {fmt_dur(d)}  {'OK' if ok else 'CHECK'}" for n, f, d, ok in summary]
+          [f"Clip {n}: {f}  {fmt_dur(d)}  {'OK' if ok else 'CHECK'}" for n, f, d, ok in summary] + \
+          [f"Clip {n}: {f}  FAILED - {w}  (rerun only this one: --only {n})" for n, f, w in failed]
     ulines, ut = brain.usage_summary()
     brain.save_usage(outroot / "usage.json")
     rep += [""] + ulines + [""] + CLOCK.lines(_WORK.get("stream_len", 0), len(summary), "completed")
@@ -804,7 +845,12 @@ def clips_output(R, only):
                       ok=n_ok == len(summary))
     if cfg.get("open_output_after_run", True):
         FINISH.open_folder(outroot)
-    FINISH.cleanup(cfg, work, outroot, a.video_file, ui)
+    if failed:
+        ui(f"downloaded stream kept for the rerun ({len(failed)} clip(s) failed) - cleanup skipped")
+        if not summary:
+            sys.exit(f"STOP: no clip was made (first cause: {failed[0][2]}). Send work/{sid}/run_log.txt")
+    else:
+        FINISH.cleanup(cfg, work, outroot, a.video_file, ui)
 
 
 if __name__ == "__main__":

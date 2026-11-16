@@ -229,8 +229,9 @@ def pick_encoder(cfg):
     e = _pick_encoder(cfg)
     try:
         _pick_hwdec(cfg, e)
-    except Exception:
+    except (OSError, subprocess.SubprocessError) as e2:    # the probe could not run: CPU decode, say why (it is slower)
         _HW.update(args=[], name="")
+        print(f"  GPU decode check skipped ({e2}) - decoding on the CPU", flush=True)
     return e
 
 
@@ -278,6 +279,7 @@ class Renderer:
         self.root = Path(root)
         self.enc = pick_encoder(cfg)
         self.log = []                     # footage log rows
+        self.notes = []                   # extras skipped while rendering a video (overlays, captions) -> qc.json "note"
         self.logo = None                  # (png, x, y) corner watermark
         self.tag_png = None
         lf = Path(cfg.get("logo_file", "")).expanduser() if cfg.get("logo_file") else None

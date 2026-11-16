@@ -30,7 +30,7 @@ RULE_LEAK = [r"RULES\s*\(do not print", r"never list the hook", r"5-8 chapters o
 def _tc(v, where, errs):
     try:
         return parse_tc(v)
-    except Exception:
+    except (TypeError, ValueError):
         errs.append(f"{where}: bad timecode {v!r}")
         return None
 

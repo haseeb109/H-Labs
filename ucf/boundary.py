@@ -25,9 +25,9 @@ def _tile_events_window(ev, video_path, a, b):
         try:
             for tc, f, to in zoom.tile_count_events(video_path, a, b):
                 ev["tile_events"].append({"tc": tc, "from": f, "to": to})
-            done.append(key)
-        except Exception:
-            done.append(key)
+        except Exception as e:  # noqa - video signals are optional: this window scores on the transcript alone
+            ev.setdefault("tile_errors", []).append(f"{fmt_tc(a)}-{fmt_tc(b)}: {type(e).__name__}: {str(e)[:120]}")
+        done.append(key)
     return [e for e in ev["tile_events"] if a <= e["tc"] <= b]
 
 
@@ -143,6 +143,8 @@ def refine_plan(plan, ev, video_path, cfg, work, ui=print):
             if abs(parse_tc(new) - parse_tc(old)) > 1:
                 ui(f"  boundary {c['name']}: OUT {old} -> {new} (confidence {conf})")
             changes.append({"case": c["name"], "brain_out": old, "refined_out": new, "confidence": conf})
+    for err in ev.get("tile_errors") or []:
+        ui(f"  boundary: Zoom tile reading skipped for window {err} (transcript signals only there)")
     if work:
         Path(work).mkdir(parents=True, exist_ok=True)
         (Path(work) / "boundary_changes.json").write_text(json.dumps(changes, indent=1), encoding="utf-8")

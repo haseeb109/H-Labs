@@ -150,8 +150,8 @@ def burn(final, blocks, work, cfg, venc_args, ui=print):
         return final
     try:
         import mlx_whisper  # noqa: F401
-    except Exception:
-        ui("  captions skipped: mlx-whisper not installed (.venv/bin/pip install mlx-whisper)")
+    except ImportError as e:
+        ui(f"  captions skipped: mlx-whisper not installed ({e}) (.venv/bin/pip install mlx-whisper)")
         return final
     work = Path(work)
     key = hashlib.md5(((work / "concat.txt").read_text(encoding="utf-8") if (work / "concat.txt").exists()

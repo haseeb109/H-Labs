@@ -36,5 +36,6 @@ def lower_priority(cfg):
             return ""
         os.nice(19 if want == "idle" else 10)
         return want
-    except Exception:
+    except (OSError, AttributeError, ImportError) as e:   # the run goes on at normal priority; run_stream prints "normal"
+        print(f"  process priority not lowered ({e}) - the PC may feel slower during the render", flush=True)
         return ""

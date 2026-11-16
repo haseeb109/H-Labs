@@ -63,5 +63,5 @@ def history(path, **row):
             w = csv.DictWriter(f, fieldnames=keys)
             w.writeheader()
             w.writerows(old + [row])
-    except Exception:
-        pass
+    except (OSError, ValueError, csv.Error) as e:   # the row is also in run_report.txt; only the statistics file misses it
+        print(f"  run_history.csv not updated ({e})", flush=True)

@@ -91,7 +91,7 @@ def close():
             _pw["b"].close()
         if _pw["p"]:
             _pw["p"].stop()
-    except Exception:
+    except Exception:  # noqa - atexit cleanup of the headless browser: nothing is left to report or retry
         pass
     _pw["b"] = _pw["p"] = None
 

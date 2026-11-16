@@ -190,8 +190,10 @@ class TTRenderer(Renderer):
         if self.use_hf:
             try:
                 res = hf.render_overlay(kind, text, dur, Path(work) / f"ov_{kind}_{abs(hash(key)) % 10**7}.webm", work, cfg=self.cfg)
-            except Exception:
+            except Exception as e:  # noqa - HyperFrames (node + Chrome) can fail in many ways; the static PNG looks fine
                 res = None
+                print(f"  animated overlay failed ({type(e).__name__}: {str(e)[:120]}) - static overlays for the rest of this run",
+                      flush=True)
             if res is None:
                 self.use_hf = False                       # do not retry a broken HyperFrames install every time
         if res is None:
@@ -446,8 +448,9 @@ class TTRenderer(Renderer):
                 for cid in ids:
                     scheduled += OS.schedule(by_id[cid], lambda tc, cid=cid: TL.src_to_out(tl, cid, tc), total, busy,
                                              self.cfg, look=self.cfg.get("_look") or "tt")
-        except Exception as ex:  # noqa
-            ui("  overlays skipped:", ex)
+        except Exception as ex:  # noqa - the video is made without the fact / coming-up cards; QC says CHECK
+            ui(f"  overlays skipped: {type(ex).__name__}: {ex} - this video has no fact / coming-up cards")
+            self.notes.append(f"overlays skipped: {type(ex).__name__}: {str(ex)[:120]}")
             scheduled = []
         card_png = []
         for n_, (_s, _e, o) in enumerate(scheduled):
@@ -541,7 +544,8 @@ class TTRenderer(Renderer):
             blocks += [(s - 0.3, e + 0.3) for s, e, _o in scheduled]
             final = CAP.burn(final, blocks, work, self.cfg, venc(self.enc), ui)
         except Exception as ex:  # noqa - captions are a bonus layer, never a reason to lose the video
-            ui("  captions skipped:", ex)
+            ui(f"  captions skipped: {type(ex).__name__}: {ex}")
+            self.notes.append(f"captions skipped: {type(ex).__name__}: {str(ex)[:120]}")
         for r in rows:
             s = self.sources.get(r.get("src", default_src)) or {}
             url = s.get("url", "")

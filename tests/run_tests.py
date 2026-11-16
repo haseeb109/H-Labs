@@ -1893,6 +1893,113 @@ def t25_nvenc_levels():
     return "full options -> simpler options -> x264 fallback all chosen correctly"
 
 
+def t46_schema_and_errors():
+    """Owner priorities #3 + #5 (2026-11-15): a typo in a config key is named with the right spelling, a wrong value type stops
+    config.load(), a saved plan with a missing field names the video / case and the field before the render starts, and the
+    best-effort extras say WHY they were skipped (the team used to see "output folder empty" and had to send logs)."""
+    import contextlib
+    import io
+    import os
+    import run_stream as RS
+    from ucf import config, finish as F, load as LOAD, schema as S
+    # --- config: unknown key with a suggestion, a nested one too, and a type error
+    msgs = S.check_config({"min_hieght": 480, "overlays": {"enabeld": True}, "x264_crf": "16", "cpu_threads": "all",
+                           "mode": 60, "_note": "ignored"}, "config.local.json")
+    assert any("unknown key 'min_hieght' - did you mean 'min_height'?" in m for m in msgs), msgs
+    assert any("'overlays.enabeld' - did you mean 'enabled'?" in m for m in msgs), msgs
+    assert [m for m in S.errors(msgs)] == [m for m in msgs if "'x264_crf' must be number" in m and "got text" in m], msgs
+    assert not [m for m in msgs if "cpu_threads" in m or "'mode'" in m or "_note" in m], msgs    # allowed on purpose
+    assert not S.check_config(json.loads((ROOT / "config.json").read_text(encoding="utf-8")), "config.json")
+    for sj in (ROOT / "styles").glob("*/style.json"):
+        assert not S.check_style(json.loads(sj.read_text(encoding="utf-8")), sj.name), sj
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        bad = tmp / "config.json"
+        bad.write_text('{"x264_crf": "16", "min_hieght": 480}', encoding="utf-8")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            try:
+                config.load(str(bad))
+                raise AssertionError("config.load accepted a string where a number is expected")
+            except RuntimeError as e:
+                assert "wrong value type" in str(e), e
+        assert "CONFIG ERROR: config.json: 'x264_crf' must be number" in out.getvalue(), out.getvalue()
+        assert "CONFIG WARNING: config.json: unknown key 'min_hieght' - did you mean 'min_height'?" in out.getvalue()
+        # --- plan shape: the field and the video / case are named; the good fixture passes
+        plan = json.loads(PLAN_FILE.read_text(encoding="utf-8"))
+        assert S.check_plan(plan) == [], S.check_plan(plan)[:3]
+        del plan["videos"][0]["hook"]["in"]
+        plan["videos"][0]["case_ids"].append(99)
+        del plan["cases"][0]["out"]
+        plan["cases"][1]["in"] = "1:02:xx"
+        got = S.check_plan(plan)
+        n, cid3, cid4 = plan["videos"][0]["n"], plan["cases"][0]["id"], plan["cases"][1]["id"]
+        for want in (f"video {n} hook: missing field 'in'", f"video {n}: case_ids names case 99, which is not in 'cases'",
+                     f"case {cid3}: missing field 'out'", f"case {cid4}: 'in' is not a timecode (H:MM:SS), got '1:02:xx'"):
+            assert any(want in g for g in got), (want, got)
+        # run_stream stops on that plan BEFORE the validator / render, naming the file and the field
+        pp = tmp / "plan_broken.json"
+        pp.write_text(json.dumps(plan), encoding="utf-8")
+        R = RS.Run(RS.parse_args(["--plan", str(pp), "--stream-id", "t46"]))
+        R.cfg = config.load()
+        R.cfg["_mode_label"], R.mode, R.sid = "60", "60", "t46"
+        R.work = R.state = tmp
+        R.source_file, R.stream_len, R.segs, R.scan_text, R.carried = SNAME, STREAM_LEN, [], "", []
+        R.plan_path = pp
+        R.video_path = tmp / "none.mp4"
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                RS.stage_plan(R)
+            raise AssertionError("stage_plan rendered a plan without hook.in")
+        except SystemExit as e:
+            assert "wrong shape" in str(e) and f"video {n} hook: missing field 'in'" in str(e) and "plan_broken.json" in str(e), e
+            assert "run_log.txt" in str(e), e
+        # --- error handling: the one-line cause names the exception, the message and the file:line
+        try:
+            {"cases": []}["videos"]
+        except KeyError as e:
+            line = RS.cause(e)
+        assert line.startswith("KeyError: 'videos' (run_tests.py:"), line
+        # run_log.txt not writable: said ONCE on the console, the run goes on
+        log = tmp / "run_log.txt"
+        tee = RS._Tee(io.StringIO(), log)
+        tee.f.close()
+        tee.write("a\n"), tee.write("b\n")
+        assert tee.stream.getvalue().count("run_log.txt is not being written") == 1, tee.stream.getvalue()
+        # a notification that cannot be shown says so instead of vanishing
+        import subprocess as SP
+        real = SP.Popen
+        SP.Popen = lambda *a, **k: (_ for _ in ()).throw(OSError("no powershell here"))
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                F.notify("t", "m")
+        finally:
+            SP.Popen = real
+        if "notify-send" in out.getvalue() or sys.platform in ("win32", "darwin") or shutil.which("notify-send"):
+            assert "notification skipped: no powershell here" in out.getvalue(), out.getvalue()
+        # priority could not be lowered: printed, the run goes on at normal priority
+        real_nice = getattr(os, "nice", None)
+        if real_nice:
+            os.nice = lambda n: (_ for _ in ()).throw(OSError("not allowed"))
+            out = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(out):
+                    assert LOAD.lower_priority({"process_priority": "below_normal"}) == ""
+            finally:
+                os.nice = real_nice
+            if os.name != "nt":
+                assert "process priority not lowered (not allowed)" in out.getvalue(), out.getvalue()
+        # the failed-video line of run_stream and the "nothing was made" stop name the log to send
+        src = (ROOT / "run_stream.py").read_text(encoding="utf-8")
+        assert "no video was made" in src and "run_log.txt; rerun with --only" in src
+        assert "thumbnail skipped:" in src and "contact sheet skipped:" in src and "voice prefetch for video" in src
+        assert "except Exception:\n            pass" not in src and "except Exception:  # noqa\n" not in src
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return "typo -> suggestion, type -> stop, plan field named per video/case, skipped extras say why"
+
+
 def main():
     print("H Labs self-test matrix")
     check(1, "environment", t1_environment)
@@ -1944,6 +2051,7 @@ def main():
     check(43, "whisper crash fallback (C++ runtime)", t43_whisper_crash_fallback)
     check(44, "own video / 5 min cases / as-is re-edit", t44_local_mincase_asis)
     check(45, "render speed: one pass less, stills once, SSD temp", t45_render_speed)
+    check(46, "config / plan schema + errors say why", t46_schema_and_errors)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))

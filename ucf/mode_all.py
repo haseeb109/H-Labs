@@ -65,7 +65,7 @@ def asis_merge(plan, stream_len):
     def span(c):
         try:
             return parse_tc(c["out"]) - parse_tc(c["in"])
-        except Exception:
+        except (KeyError, TypeError, ValueError):
             return 0
     main = max(cs, key=lambda c: (c.get("status") == "used", span(c)))
     m = dict(main)
@@ -81,7 +81,7 @@ def asis_merge(plan, stream_len):
         try:
             if 0 <= parse_tc(p.get("tc")) <= stream_len:
                 ph.append(p)
-        except Exception:
+        except (TypeError, ValueError):            # a phase without a readable tc is dropped
             continue
     m["phases"] = sorted(ph, key=lambda p: parse_tc(p["tc"]))
     out = dict(plan, cases=[m], gaps=[])
@@ -145,7 +145,7 @@ def case_slice_lines(lines, a, b):
         m = None
         try:
             m = parse_tc(ln.split("]", 1)[0].strip("[] ") or "0:00:00")
-        except Exception:
+        except ValueError:                         # a line without a leading [timecode]
             m = None
         if m is not None and a - 20 <= m <= b + 10:
             out.append(ln)
@@ -202,7 +202,7 @@ def _pass_a_once(cfg_a, prompt_a, stream_len, segs, ui, work, tag="", soft=False
             plan = B.extract_json(txt)
             if cfg_a.get("_asis"):
                 plan = asis_merge(plan, stream_len)      # the script owns the as-is rule: one case, the whole video
-        except Exception as e:
+        except (ValueError, KeyError, TypeError) as e:   # repair round: the reply goes back with the reason
             plan, errs = None, [f"Pass A: not valid JSON ({e})"]
             # only the LAST reply goes back (not every earlier round): on a 3-hour docket the growing conversation ran
             # past the model's context and the repair was cut off (BTI5Ydgo7-E, 2026-11-03)
@@ -239,7 +239,7 @@ def _autofix(plan, errs, stream_len, segs, cfg_a, ui):
     for c in p.get("cases", []):
         try:
             cs.append((parse_tc(c["in"]), parse_tc(c["out"]), c))
-        except Exception:
+        except (KeyError, TypeError, ValueError):  # the validator reports the bad timecode; nothing to fix here
             continue
     cs.sort(key=lambda x: x[0])
     drop = set()
@@ -379,7 +379,7 @@ def _pass_b_once(c, pb, prompt_b, plan, judge, stream_len, segs, cfg, ui, work, 
         _out_b = next((r.get("output", 0) for r in reversed(B.USAGE[n_usage:]) if r.get("label") == label), 0)
         try:
             vobj = B.extract_json(txt).get("video", {})
-        except Exception as e:
+        except (ValueError, AttributeError) as e:  # repair round: the reply goes back with the reason
             vobj, berrs = None, [f"Pass B: not valid JSON ({e})"]
             msgs_b = [msgs_b[0], {"role": "assistant", "content": txt}, {"role": "user", "content": berrs[0]}]
             continue
@@ -423,8 +423,8 @@ def build_plan(segs, lines, scan_text, stream_len, cfg, ui=print, work=None, sca
                 "call-outs: " + "; ".join(f"{c['tc']}" for c in ev["call_outs"][:40]) + "\n" +
                 "wrap-ups: " + "; ".join(f"{w['tc']} '{w['phrase']}'" for w in ev["wrap_up"][:40]) + "\n" +
                 "rulings: " + "; ".join(f"{r['tc']} '{r['phrase']}'" for r in ev["ruling"][:40]))
-        except Exception as e:  # noqa
-            ui("evidence skipped:", e)
+        except Exception as e:  # noqa - best effort for the prompt: Pass A plans from the transcript alone
+            ui(f"  evidence skipped: {type(e).__name__}: {e} - the brain plans from the transcript alone")
     # ---------- Pass A: inventory ----------
     # mock_passA_replies set -> Pass A replays a saved brain reply (resume) while Pass B stays live.
     # Hybrid: brain_pass_a (cheap) runs the inventory; brain_fallback takes over when it fails.
@@ -467,9 +467,9 @@ def build_plan(segs, lines, scan_text, stream_len, cfg, ui=print, work=None, sca
             if VAL.validate(plan, stream_len, segs, cfg_a)[0]:
                 plan = snapshot
                 ui("boundary refinement reverted (introduced validation errors)")
-        except Exception as e:  # noqa
+        except Exception as e:  # noqa - the brain's OUT times stand (the validator passed them)
             plan = snapshot
-            ui("boundary refinement skipped:", e)
+            ui(f"  boundary refinement skipped: {type(e).__name__}: {e} - the brain's case OUT times are used as they are")
 
     # ---------- script step ----------
     used = rank_used(finalize_cases(plan, cfg))

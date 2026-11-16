@@ -115,7 +115,7 @@ def msvc_runtime_version():
         ver.VerQueryValueW(buf, "\\", ctypes.byref(p), ctypes.byref(ln))
         ms, ls = ctypes.cast(p, ctypes.POINTER(wintypes.DWORD * 4)).contents[2:4]
         return (ms >> 16, ms & 0xFFFF, ls >> 16, ls & 0xFFFF)
-    except Exception:
+    except (OSError, AttributeError, ValueError, IndexError):   # no version API / odd DLL: "unknown" (the caller only warns)
         return None
 
 

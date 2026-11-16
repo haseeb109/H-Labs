@@ -54,8 +54,8 @@ def styles():
         try:
             j = json.loads(f.read_text(encoding="utf-8"))
             out.append((j.get("id", f.parent.name), j.get("name", "?")))
-        except Exception:
-            continue
+        except (OSError, ValueError, AttributeError) as e:    # a broken pack is shown, so the typo in its style.json gets fixed
+            out.append((f.parent.name, f"? (style.json unreadable: {str(e)[:60]})"))
     return out
 
 
@@ -231,8 +231,8 @@ def bulk():
         F.notify("H Labs - queue done", f"{len(done)} of {len(urls)} streams done in {mins:.0f} min" + (f", {len(failed)} failed" if failed else ""),
                  ok=not failed)
         F.open_folder(ROOT / "output")
-    except Exception:
-        pass
+    except (ImportError, OSError) as e:            # the queue result is already printed above
+        print(f"  (notification skipped: {e})")
     ask("\nPress Enter...")
 
 

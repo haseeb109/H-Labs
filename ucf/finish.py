@@ -161,8 +161,8 @@ def notify(title, message, ok=True):
                               f'sound name "{"Glass" if ok else "Basso"}"'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         elif shutil.which("notify-send"):
             subprocess.Popen(["notify-send", title, message], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
+    except (OSError, ValueError) as e:             # no powershell / osascript: the run is done anyway, the window says so
+        print(f"  notification skipped: {e}", flush=True)
 
 
 def open_folder(path):
@@ -175,5 +175,5 @@ def open_folder(path):
             subprocess.Popen(["open", str(path)])
         elif shutil.which("xdg-open") and os.environ.get("DISPLAY"):
             subprocess.Popen(["xdg-open", str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
+    except OSError as e:
+        print(f"  could not open the output folder ({e}) - it is {path}", flush=True)

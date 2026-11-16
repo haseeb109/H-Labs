@@ -154,7 +154,7 @@ class Studio:
                     subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)], capture_output=True)
                 else:
                     os.killpg(os.getpgid(p.pid), signal.SIGTERM)
-            except Exception:
+            except OSError:                        # no taskkill / process group gone: plain kill
                 p.kill()
         self.save()
 
@@ -327,7 +327,7 @@ class Studio:
                                   capture_output=True, text=True, timeout=10).stdout.strip()
             m["version"] = ((ROOT / "VERSION").read_text(encoding="utf-8").strip() if (ROOT / "VERSION").exists() else "dev") \
                 + (f" ({date})" if date else "")
-        except Exception:
+        except (OSError, subprocess.SubprocessError):   # no git on this PC: version stays blank in the header
             m["version"] = ""
         self.machine = m
 
@@ -411,7 +411,7 @@ def _duration(p):
             r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(p)],
                                capture_output=True, text=True, timeout=20)
             _dur_cache[key] = float(r.stdout.strip() or 0)
-        except Exception:
+        except (OSError, ValueError, subprocess.SubprocessError):   # no ffprobe / unreadable: shown as 0:00 in the library
             _dur_cache[key] = 0
     return _dur_cache[key]
 
@@ -422,8 +422,8 @@ def styles():
         try:
             d = json.loads(f.read_text(encoding="utf-8"))
             out.append({"id": d.get("id", f.parent.name), "name": d.get("name", f.parent.name)})
-        except Exception:
-            continue
+        except (OSError, ValueError, AttributeError) as e:    # a broken pack is listed so the typo gets fixed
+            out.append({"id": f.parent.name, "name": f"{f.parent.name} (style.json unreadable: {str(e)[:60]})"})
     return out
 
 
@@ -497,8 +497,8 @@ def open_path(p):
             subprocess.Popen(["open", str(p)])
         elif shutil.which("xdg-open"):
             subprocess.Popen(["xdg-open", str(p)])
-    except Exception:
-        pass
+    except OSError as e:
+        print(f"  could not open {p} ({e})", flush=True)
 
 
 # ---------------------------------------------------------------------- HTTP
@@ -633,7 +633,7 @@ def serve(port=8765, open_browser=True):
                     if open_browser:
                         webbrowser.open(f"http://127.0.0.1:{p}")
                     return
-        except Exception:
+        except (OSError, ValueError):             # nothing answers on that port (or not Studio): try to bind it
             pass
         try:
             httpd = ThreadingHTTPServer(("127.0.0.1", p), make_handler(Studio()))
