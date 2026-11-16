@@ -9,6 +9,10 @@
   ...
   N. DOCKET    "Today's Docket" results board + big Subscribe box under the closing narration (<=18 s clips), fade out
 Subscribe prompts are scheduled automatically (see schedule_subs()).
+
+OVRenderer is also the base of the style-pack looks (Justice Served, Court Beacon): render_video() is a chain of
+named steps (_voice, _plan_pieces, stage_clip, _closing_segments, _finish_video, thumbnail) and a subclass overrides
+only the graphics module (GFX), the per-run geometry / layer stack and its own overlay scheduling.
 """
 import json
 from PIL import Image
@@ -16,10 +20,9 @@ from pathlib import Path
 
 from . import ov_gfx as G
 from . import ov_layout as L
-from . import tts
 from . import timeline as TL
-from .render import AENC, AUDIO_NORM, TS, court_audio, hwdec, join_segments, probe_dur, run, run_progress, still, venc
-from .render_tt import TTRenderer, _thumb
+from .render import AENC, AUDIO_NORM, TS, court_audio, hwdec, probe_dur, run, run_progress, still, venc
+from .render_tt import TTRenderer
 from .timeutil import fmt_dur, fmt_tc, parse_tc
 
 CASE_LABEL_AT, CASE_LABEL_LEN = 0.6, 7.0
@@ -58,6 +61,9 @@ def _merge_static(pngs, out):
 
 
 class OVRenderer(TTRenderer):
+    GFX = G                     # the look's graphics module (HTML -> PNG); a style pack swaps it
+    GFX_DIR = "_ov_gfx"         # work_dir subfolder for the generated graphics
+
     def __init__(self, cfg, sources, root):
         # Renderer base only: the Overruled look has no fleur-de-lis canvas / gavel assets to build
         super(TTRenderer, self).__init__(cfg, sources, root)
@@ -65,22 +71,30 @@ class OVRenderer(TTRenderer):
         self.use_hf = False
         self._layout = {}
         self.overlay_cache = {}
-        try:
-            from .config import style_path
-            G.set_fonts(style_path(cfg, "hf/fonts"))
-        except ImportError:
-            pass
-        self.gdir = self.root / cfg["work_dir"] / "_ov_gfx"
-        G.set_logo(self._asset("logo_file"))
+        self.gfx = self.GFX
+        logo = self._asset("logo_file")
+        # ov_gfx always gets the fonts + logo: the generated sting (no channel intro file) is drawn with it
+        for mod in ([G] if self.gfx is G else [G, self.gfx]):
+            try:
+                from .config import style_path
+                mod.set_fonts(style_path(cfg, "hf/fonts"))
+            except ImportError:
+                pass
+            mod.set_logo(logo)
+        self.gdir = self.root / cfg["work_dir"] / self.GFX_DIR
         self.gdir.mkdir(parents=True, exist_ok=True)
-        self.bg = G.background(self.gdir / "bg")
-        self.brand_png = G.brand(self.gdir / "brand")
-        self.prog_png = G.progress_bar(self.gdir / "progress.png")
+        self._build_canvas()
         self.lfile = self.gdir / "layout_cache.json"
         try:
             self.lcache = json.loads(self.lfile.read_text())
         except (OSError, ValueError):              # no / broken cache: the layouts are measured again
             self.lcache = {}
+
+    def _build_canvas(self):
+        """The fixed pictures of the look: background, brand bug, progress line."""
+        self.bg = self.gfx.background(self.gdir / "bg")
+        self.brand_png = self.gfx.brand(self.gdir / "brand")
+        self.prog_png = self.gfx.progress_bar(self.gdir / "progress.png")
 
     # ------------------------------------------------------------------ layout analysis
     def analyse(self, path, a, b):
@@ -92,12 +106,11 @@ class OVRenderer(TTRenderer):
         return L.runs(samples, b - a)
 
     # ------------------------------------------------------------------ generic stage clip
-    def stage_clip(self, sname, a, b, out, *, layers=(), brief=None, brief_first=None, brand=True, ticker=None, blur=False,
-                   wav=None, lead=0.0, fade_out=False, prog=None):
-        """Render [a, b) of source `sname` re-staged on the Overruled canvas.
+    def stage_clip(self, sname, a, b, out, *, layers=(), blur=False, wav=None, lead=0.0, fade_out=False, prog=None, **opts):
+        """Render [a, b) of source `sname` re-staged on the canvas, one encode per Zoom layout run.
         layers  : dicts {png, s, e, fin, fout, slide}   (times relative to a)
-        brief   : callable(geom) -> png  (card for the side column) ; brief_first: seconds the 'first'-mode card shows (None = never)
-        prog    : (f0, f1) progress fractions across this clip"""
+        prog    : (f0, f1) progress fractions across this clip
+        opts    : look-specific extras, read by _geometry() / _run_layers() (Overruled: brief, brief_first, brand, ticker)"""
         path, a, b = self.locate(sname, a, b)
         d = b - a
         if d <= 0.05:
@@ -108,22 +121,8 @@ class OVRenderer(TTRenderer):
             dr = t1 - t0
             if dr < 0.1:
                 continue
-            geo = L.geometry(lay, tpl, act)
-            ls = [dict(l) for l in layers]
-            if not blur:
-                big = geo["big"]
-                fr = G.tile_frames(geo["small"], big, self.gdir / f"fr_{lay}_{act}_{tpl}.png")
-                ls.insert(0, dict(png=fr, s=0, e=d))
-                if brand:
-                    ls.insert(1, dict(png=self.brand_png, s=0, e=d))
-                if ticker:
-                    ls.insert(2, dict(png=ticker, s=0, e=d))
-                if brief:
-                    geom, mode = geo["brief"]
-                    if mode == "always":
-                        ls.append(dict(png=brief(geom), s=0, e=d, fin=0.0))
-                    elif mode == "first" and brief_first:
-                        ls.append(dict(png=brief(geom), s=0.6, e=brief_first, fin=0.5, fout=0.5))
+            geo = self._geometry(lay, tpl, act, path, a + t0, opts)
+            ls = self._run_layers(geo, (lay, tpl, act), d, layers, blur, opts)
             pr = None
             if prog:
                 pr = (prog[0] + (prog[1] - prog[0]) * t0 / d, prog[0] + (prog[1] - prog[0]) * t1 / d)
@@ -137,6 +136,36 @@ class OVRenderer(TTRenderer):
             lst.write_text("".join(f"file '{Path(x).resolve()}'\n" for x in outs), encoding="utf-8")
             run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", lst, "-c", "copy", out])
         return out
+
+    def _geometry(self, lay, tpl, act, path, t, opts):
+        """Where the Zoom tiles land on the canvas for one layout run (path / t: the run's source frame, for looks that probe it)."""
+        return L.geometry(lay, tpl, act)
+
+    def _run_layers(self, geo, run, d, layers, blur, opts):
+        """The PNG stack of one layout run: frames, brand bug, ticker, the brief card, then the caller's layers."""
+        lay, tpl, act = run
+        ls = [dict(l) for l in layers]
+        if not blur:
+            fr = self.gfx.tile_frames(geo["small"], geo["big"], self.gdir / f"fr_{lay}_{act}_{tpl}.png")
+            ls.insert(0, dict(png=fr, s=0, e=d))
+            if opts.get("brand", True):
+                ls.insert(1, dict(png=self.brand_png, s=0, e=d))
+            if opts.get("ticker"):
+                ls.insert(2, dict(png=opts["ticker"], s=0, e=d))
+            self._brief_layer(ls, geo, d, opts)
+        return ls
+
+    @staticmethod
+    def _brief_layer(ls, geo, d, opts):
+        """The side-column card: always on, or (first part of a case) only for the first `brief_first` seconds."""
+        brief = opts.get("brief")
+        if not brief:
+            return
+        geom, mode = geo["brief"]
+        if mode == "always":
+            ls.append(dict(png=brief(geom), s=0, e=d, fin=0.0))
+        elif mode == "first" and opts.get("brief_first"):
+            ls.append(dict(png=brief(geom), s=0.6, e=opts["brief_first"], fin=0.5, fout=0.5))
 
     def _compose_run(self, path, a, dr, geo, layers, t0, out, *, blur, wav, lead, wav_t0, fade_out, d_total, prog):
         cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", self.bg,
@@ -314,42 +343,24 @@ class OVRenderer(TTRenderer):
             ev.append(("banner", best, best + BANNER_LEN))
         return ev
 
-    # ------------------------------------------------------------------ one video
-    def render_video(self, plan, video, outdir, tts_cache, ui=print):
-        by_id = {c["id"]: c for c in plan["cases"]}
-        outdir = Path(outdir)
-        work = outdir / "_work"
-        work.mkdir(parents=True, exist_ok=True)
-        cfg = self.cfg
-        ids = video["case_ids"]
-        default_src = plan["source_file"]
-        lead, tail = cfg["vo_lead"], cfg["vo_tail"]
-        srcname = lambda c: c.get("source_file") or default_src      # noqa: E731
-        gf = lambda name: self.gdir / name                              # noqa: E731
-
-        ui("  voiceover (clips <= 18 s)...")
-        bridges = {b["after_case_id"]: b for b in video.get("bridges", [])}
-        recap_clips, recap_text = {}, {}
-        for i in range(len(ids) - 1):
-            recap_clips[ids[i]] = tts.synth_clips(bridges[ids[i]]["text"], tts_cache, cfg, ui)
-        final_clips = tts.synth_clips(video["vo_final"]["text"], tts_cache, cfg, ui)
-        for cl in list(recap_clips.values()) + [final_clips]:
-            for w in cl:
-                assert probe_dur(w) <= cfg.get("vo_clip_max", 18.0) + 0.05, f"AI clip over limit: {w}"
-
-        # ---- text of each narrated clip (shown on the Overview card)
+    # ------------------------------------------------------------------ shared steps of render_video
+    def _clip_texts(self, text, n):
+        """The narrated text split the same way the voice was (shown on the recap card), or repeated when the counts differ."""
         from . import vo as V
-        def clip_texts(text, n):
-            parts = V.split_clips(text, cfg.get("vo_clip_target", 17.0), cfg.get("wps", 2.6))
-            return parts if len(parts) == n else [text] * n
+        parts = V.split_clips(text, self.cfg.get("vo_clip_target", 17.0), self.cfg.get("wps", 2.6))
+        return parts if len(parts) == n else [text] * n
 
-        # ---- pre-pass: plan every segment so the subscribe schedule knows the global timeline
-        _intro = self._asset("channel_intro_file")
-        sting_d = probe_dur(_intro) if _intro else float(cfg.get("intro_seconds_tt", 5.5))
-        hk = video["hook"]
-        ha, hb = parse_tc(hk["in"]), parse_tc(hk["out"])
-        lead_case = by_id[ids[0]]
-        gt = (hb - ha) + sting_d
+    def _intro_seconds(self, default):
+        """Length of the channel intro: the owner's file when there is one, else the configured sting length."""
+        intro = self._asset("channel_intro_file")
+        return probe_dur(intro) if intro else float(self.cfg.get("intro_seconds_tt", default))
+
+    def _plan_pieces(self, by_id, ids, gt, srcname, recap_clips):
+        """Pre-pass: where every case part and recap lands on the finished timeline. The subscribe schedule and the
+        in-case cards need global seconds before anything is rendered.
+        -> pieces [dict(cid, i, j, a, b, g0, el, tot, src)], case_ranges [(start, end, case)], recap_plan [[clip seconds]], total_end"""
+        cfg = self.cfg
+        lead, tail = cfg["vo_lead"], cfg["vo_tail"]
         pieces, case_ranges, recap_plan = [], [], []
         for i, cid in enumerate(ids):
             c = by_id[cid]
@@ -362,12 +373,66 @@ class OVRenderer(TTRenderer):
                 pieces.append(dict(cid=cid, i=i, j=j, a=a2, b=b, g0=gt, el=el, tot=tot, src=srcname(c)))
                 gt += b - a2
                 el += b - a2
-            case_ranges.append((cs, gt))
+            case_ranges.append((cs, gt, c))
             if i < len(ids) - 1:
                 ds = [probe_dur(w) + lead + tail for w in recap_clips[cid]]
                 recap_plan.append(ds)
                 gt += sum(ds)
-        total_end = gt
+        return pieces, case_ranges, recap_plan, gt
+
+    def _closing_segments(self, board, final_clips, work, k, seg, last, src):
+        """The closing board under every clip of the final narration (the last one fades out). -> (seconds, next k)"""
+        lead, tail = self.cfg["vo_lead"], self.cfg["vo_tail"]
+        ds = [probe_dur(w) + lead + tail for w in final_clips]
+        for q, (w, dq) in enumerate(zip(final_clips, ds)):
+            p = work / f"{k:02d}_final_{q}.mp4"
+            if not p.exists():
+                self.ov_card_clip(board, w, lead, p, fade_out=(q == len(final_clips) - 1))
+            seg("vo_final", p, case_id=last["id"], src=src, a=parse_tc(last["out"]), b=parse_tc(last["out"]))
+            k += 1
+        return sum(ds), k
+
+    def _finish_video(self, plan, video, by_id, outdir, work, segfiles, recap_durs, fin_total, intro_d, recap_clips,
+                      final_clips, subs, ui, extra=None):
+        """Join the segments, rebuild the timeline from the measured durations, write the footage log -> result dict."""
+        cfg = self.cfg
+        rows_ = self._timeline_rows(segfiles)
+        final = self._join(work, segfiles, outdir, ui)
+        real = {"hook": rows_[0]["dur"], "intro": sum(r["dur"] for r in rows_ if r["kind"] == "intro"),
+                "recap": recap_durs, "final": fin_total}
+        tcfg = dict(TL.DEFAULTS)
+        tcfg.update({"cut_pad_out": cfg["cut_pad_out"], "vo_lead": cfg["vo_lead"], "vo_tail": cfg["vo_tail"], "style": "tt",
+                     "wps": cfg.get("wps", 2.6), "final_min_hold": cfg.get("final_min_hold", 12.0), "intro_seconds_tt": intro_d})
+        tl = TL.build(video, by_id, tcfg, real)
+        self._footage_log(video, rows_, plan["source_file"])
+        res = {"final": final, "timeline": tl, "rows": rows_, "durs": real, "measured_total": probe_dur(final),
+               "work": work, "ai_clips": [round(probe_dur(w), 1) for cl in list(recap_clips.values()) + [final_clips] for w in cl],
+               "subscribe": [(kd, round(s, 1), round(e, 1)) for kd, s, e in subs]}
+        res.update(extra or {})
+        return res
+
+    # ------------------------------------------------------------------ one video
+    def render_video(self, plan, video, outdir, tts_cache, ui=print):
+        by_id = {c["id"]: c for c in plan["cases"]}
+        outdir = Path(outdir)
+        work = outdir / "_work"
+        work.mkdir(parents=True, exist_ok=True)
+        cfg = self.cfg
+        ids = video["case_ids"]
+        default_src = plan["source_file"]
+        lead = cfg["vo_lead"]
+        srcname = lambda c: c.get("source_file") or default_src      # noqa: E731
+        gf = lambda name: self.gdir / name                              # noqa: E731
+
+        bridges, recap_clips, final_clips = self._voice(video, ids, tts_cache, ui)
+
+        # ---- pre-pass: plan every segment so the subscribe schedule knows the global timeline
+        sting_d = self._intro_seconds(5.5)
+        hk = video["hook"]
+        ha, hb = parse_tc(hk["in"]), parse_tc(hk["out"])
+        lead_case = by_id[ids[0]]
+        pieces, case_ranges, recap_plan, total_end = self._plan_pieces(by_id, ids, (hb - ha) + sting_d, srcname, recap_clips)
+        case_ranges = [(cs, ce) for cs, ce, _ in case_ranges]
 
         takes = []
         for tk in video.get("takes", []):
@@ -392,10 +457,7 @@ class OVRenderer(TTRenderer):
         subs = self.schedule_subs(case_ranges, total_end, busy)
         self.sub_schedule = subs
 
-        segfiles = []
-
-        def seg(kind, path, **meta):
-            segfiles.append((kind, Path(path), meta))
+        segfiles, seg = self._segments()
 
         # ----- 1. hook -----
         hp = work / "00_hook.mp4"
@@ -456,9 +518,9 @@ class OVRenderer(TTRenderer):
                 clips = recap_clips[cid]
                 ds = recap_plan[i]
                 recap_durs.append(sum(ds))
-                texts = clip_texts(bridges[cid]["text"], len(clips))
+                texts = self._clip_texts(bridges[cid]["text"], len(clips))
                 nxt = by_id[ids[i + 1]]
-                start = max(TL.case_parts(c, cfg["cut_pad_out"])[-1][0], parse_tc(c["out"]) - sum(ds) - 2.0)
+                start = self._vo_start(c, sum(ds))
                 off = 0.0
                 for q, (w, dq) in enumerate(zip(clips, ds)):
                     p = work / f"{k:02d}_recap{i + 1}_{q}.mp4"
@@ -479,76 +541,43 @@ class OVRenderer(TTRenderer):
             rows.append((f"CASE {n_}", f"State v. {c['name']}", _short(res, 38)))
         quiz = video.get("quiz") or {}
         dk = G.docket(rows, quiz.get("question", "Who do you believe?"), quiz.get("options"), gf("docket"))
-        ds = [probe_dur(w) + lead + tail for w in final_clips]
-        fin_total = sum(ds)
-        for q, (w, dq) in enumerate(zip(final_clips, ds)):
-            p = work / f"{k:02d}_final_{q}.mp4"
-            if not p.exists():
-                self.ov_card_clip(dk, w, lead, p, fade_out=(q == len(final_clips) - 1))
-            seg("vo_final", p, case_id=ids[-1], src=srcname(last), a=parse_tc(last["out"]), b=parse_tc(last["out"]))
-            k += 1
+        fin_total, k = self._closing_segments(dk, final_clips, work, k, seg, last, srcname(last))
 
-        # ----- real timeline + join -----
-        t = 0.0
-        rows_ = []
-        for kind, path, meta in segfiles:
-            d = probe_dur(path)
-            rows_.append({"kind": kind, "start": t, "dur": d, **meta})
-            t += d
-        ui("  joining + loudness...")
-        lst = work / "concat.txt"
-        lst.write_text("".join(f"file '{p.resolve()}'\n" for _, p, _ in segfiles), encoding="utf-8")
-        final = outdir / "video.mp4"
-        join_segments(lst, final, cfg)
-        real = {"hook": rows_[0]["dur"], "intro": rows_[1]["dur"], "recap": recap_durs, "final": fin_total}
-        tcfg = dict(TL.DEFAULTS)
-        tcfg.update({"cut_pad_out": cfg["cut_pad_out"], "vo_lead": lead, "vo_tail": tail, "style": "tt",
-                     "wps": cfg.get("wps", 2.6), "final_min_hold": cfg.get("final_min_hold", 12.0),
-                     "intro_seconds_tt": sting_d})
-        tl = TL.build(video, by_id, tcfg, real)
-        for r in rows_:
-            s = self.sources.get(r.get("src", default_src)) or {}
-            url = s.get("url", "")
-            self.log.append({"video": video["n"], "segment": r["kind"], "case_id": r.get("case_id", ""),
-                             "source_file": r.get("src", ""), "source_url": (url + ("&" if "?" in url else "?") + f"t={int(r['a'])}s") if url and "a" in r else url,
-                             "src_in": fmt_tc(r["a"]) if "a" in r else "", "src_out": fmt_tc(r["b"]) if "b" in r else "",
-                             "out_start": fmt_tc(r["start"]), "out_dur": f"{r['dur']:.1f}"})
-        return {"final": final, "timeline": tl, "rows": rows_, "durs": real, "measured_total": probe_dur(final),
-                "work": work, "ai_clips": [round(probe_dur(w), 1) for cl in list(recap_clips.values()) + [final_clips] for w in cl],
-                "subscribe": [(kd, round(s, 1), round(e, 1)) for kd, s, e in subs]}
+        return self._finish_video(plan, video, by_id, outdir, work, segfiles, recap_durs, fin_total, sting_d, recap_clips,
+                                  final_clips, subs, ui)
 
+    # ------------------------------------------------------------------ thumbnail
+    def _thumb_candidates(self, sname, wa, wb, cdir):
+        """Six frames across the thumbnail window, each cropped to the active Zoom tile -> [(sharpness, png)]."""
+        import numpy as np
+        from . import cards
+        cands = []
+        n = 6
+        for i in range(n):
+            t = wa + (wb - wa) * i / max(1, n - 1)
+            path, t0, _ = self.locate(sname, t, t + 0.1)
+            raw = cdir / f"raw_{i + 1}.png"
+            run(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{t0:.2f}", "-i", path, "-frames:v", "1",
+                 "-vf", f"scale={L.W}:{L.H}", raw])
+            rgb = np.asarray(Image.open(raw).convert("RGB"))
+            lay, tpl, act, _ = L.classify(rgb)
+            geo = L.geometry(lay, tpl, act if act not in (None, 0) or lay not in ("2", "3") else L.DEFAULT_ACTIVE.get(lay, 0))
+            x, y, w, h = [int(v) for v in L.cover_crop(geo["tiles"][0][0], (0, 0, 1280, 720), bias=0.1)]
+            p = cdir / f"cand_{i + 1}_{fmt_tc(t).replace(':', '-')}.png"
+            Image.open(raw).crop((x, y, x + w, y + h)).resize((1280, 720), Image.LANCZOS).save(p)
+            cands.append((cards.sharpness(p), p))
+        return cands
 
-def _ov_thumb(self, plan, video, outdir):
-    import numpy as np
-    from PIL import Image
-    from . import cards
-    by_id = {c["id"]: c for c in plan["cases"]}
-    th = video["thumbnail"]
-    wa, wb = parse_tc(th["window_in"]), parse_tc(th["window_out"])
-    cid = TL.find_case_for_tc(video, by_id, (wa + wb) / 2) or video["case_ids"][0]
-    sname = by_id[cid].get("source_file") or plan["source_file"]
-    cdir = Path(outdir) / "thumbnail_candidates"
-    cdir.mkdir(parents=True, exist_ok=True)
-    cands = []
-    n = 6
-    for i in range(n):
-        t = wa + (wb - wa) * i / max(1, n - 1)
-        path, t0, _ = self.locate(sname, t, t + 0.1)
-        raw = cdir / f"raw_{i + 1}.png"
-        run(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{t0:.2f}", "-i", path, "-frames:v", "1",
-             "-vf", f"scale={L.W}:{L.H}", raw])
-        rgb = np.asarray(Image.open(raw).convert("RGB"))
-        lay, tpl, act, _ = L.classify(rgb)
-        geo = L.geometry(lay, tpl, act if act not in (None, 0) or lay not in ("2", "3") else L.DEFAULT_ACTIVE.get(lay, 0))
-        x, y, w, h = [int(v) for v in L.cover_crop(geo["tiles"][0][0], (0, 0, 1280, 720), bias=0.1)]
-        p = cdir / f"cand_{i + 1}_{fmt_tc(t).replace(':', '-')}.png"
-        Image.open(raw).crop((x, y, x + w, y + h)).resize((1280, 720), Image.LANCZOS).save(p)
-        cands.append((cards.sharpness(p), p))
-    best = max(cands)[1]
-    out = Path(outdir) / "thumbnail.jpg"
-    jp = G.thumbnail(best, th["text"], th["gold_word"], Path(outdir) / "_work" / "thumb")
-    Image.open(jp).save(out, quality=93)
-    return out
-
-
-OVRenderer.thumbnail = _ov_thumb
+    def thumbnail(self, plan, video, outdir):
+        by_id = {c["id"]: c for c in plan["cases"]}
+        th = video["thumbnail"]
+        wa, wb = parse_tc(th["window_in"]), parse_tc(th["window_out"])
+        cid = TL.find_case_for_tc(video, by_id, (wa + wb) / 2) or video["case_ids"][0]
+        sname = by_id[cid].get("source_file") or plan["source_file"]
+        cdir = Path(outdir) / "thumbnail_candidates"
+        cdir.mkdir(parents=True, exist_ok=True)
+        best = max(self._thumb_candidates(sname, wa, wb, cdir))[1]
+        out = Path(outdir) / "thumbnail.jpg"
+        png = self.gfx.thumbnail(best, th.get("text", ""), th.get("gold_word", ""), Path(outdir) / "_work" / "thumb")
+        Image.open(png).convert("RGB").save(out, quality=93)
+        return out

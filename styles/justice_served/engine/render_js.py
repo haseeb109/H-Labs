@@ -14,18 +14,11 @@ pill every ~6 min, one full-width banner mid-video, SUBSCRIBE box on every recap
 spoken line in vo_final.
 """
 import importlib.util
-import json
 import sys
 from pathlib import Path
 
-from PIL import Image
-
 from ucf import ov_layout as L
-from ucf import timeline as TL
-from ucf import tts
-from ucf.render import join_segments, probe_dur, run
 from ucf.render_ov import BUTTON_LEN, OVRenderer, _short
-from ucf.render_tt import TTRenderer
 from ucf.timeutil import fmt_dur, fmt_tc, parse_tc
 
 
@@ -73,76 +66,26 @@ def js_geometry(layout, template, active):
 
 
 class JSRenderer(OVRenderer):
-    def __init__(self, cfg, sources, root):
-        super(TTRenderer, self).__init__(cfg, sources, root)       # renderer base only (no canvas / gavel assets)
-        self.bg_logo = self.bg_plain = None
-        self.use_hf = False
-        self._layout = {}
-        self.overlay_cache = {}
-        try:
-            from ucf.config import style_path
-            JG.set_fonts(style_path(cfg, "hf/fonts"))
-        except ImportError:
-            pass
-        JG.set_logo(self._asset("logo_file"))
-        self.gdir = self.root / cfg["work_dir"] / "_js_gfx"
-        self.gdir.mkdir(parents=True, exist_ok=True)
-        self.bg = JG.background(self.gdir / "bg")
-        self.brand_png = JG.brand(self.gdir / "brand")
-        self.prog_png = JG.progress_bar(self.gdir / "progress.png")
-        self.lfile = self.gdir / "layout_cache.json"
-        try:
-            self.lcache = json.loads(self.lfile.read_text())
-        except Exception:
-            self.lcache = {}
+    GFX = JG                    # the Justice Served graphics (js_gfx), same call shapes as ov_gfx
+    GFX_DIR = "_js_gfx"
 
-    # ------------------------------------------------------------------ staging
-    def stage_clip(self, sname, a, b, out, *, layers=(), brief=None, brief_first=None, brand=True, ticker=None, blur=False,
-                   wav=None, lead=0.0, fade_out=False, prog=None, header=None):
-        """Render [a, b) of `sname` on the Justice Served canvas. layers: {png, s, e, fin, fout, slide} relative to a."""
-        path, a, b = self.locate(sname, a, b)
-        d = b - a
-        if d <= 0.05:
-            raise RuntimeError(f"empty cut {a}-{b}")
-        runs = self.analyse(path, a, b)
-        outs = []
-        for k, (t0, t1, lay, tpl, act) in enumerate(runs):
-            dr = t1 - t0
-            if dr < 0.1:
-                continue
-            geo = js_geometry(lay, tpl, act)
-            ls = [dict(l) for l in layers]
-            if not blur:
-                # no tile frames (green box + amber corner ticks): they follow the detected layout, and when the footage is placed
-                # differently (e.g. the hook) the box sat off the picture (owner, 2026-11-02: remove it)
-                if ticker:
-                    ls.insert(0, dict(png=ticker, s=0, e=d))
-                if header:
-                    ls.insert(0, dict(png=header, s=0, e=d))       # same stacking as before: header, ticker, then the cards
-                if brief:
-                    geom, mode = geo["brief"]
-                    if mode == "always":
-                        ls.append(dict(png=brief(geom), s=0, e=d, fin=0.0))
-                    elif mode == "first" and brief_first:
-                        ls.append(dict(png=brief(geom), s=0.6, e=brief_first, fin=0.5, fout=0.5))
-            if brand:                        # the corner logo, on every frame except the hook
-                ls.insert(1, dict(png=self.brand_png, s=0, e=d))
-            pr = None
-            if prog:
-                pr = (prog[0] + (prog[1] - prog[0]) * t0 / d, prog[0] + (prog[1] - prog[0]) * t1 / d)
-            f = out if len(runs) == 1 else Path(str(out).replace(".mp4", f"_r{k}.mp4"))
-            if not f.exists():
-                self._compose_run(path, a + t0, dr, geo, ls, t0, f, blur=blur, wav=wav, lead=lead, wav_t0=t0,
-                                  fade_out=fade_out and k == len(runs) - 1, d_total=d, prog=pr)
-            outs.append(f)
-        if len(runs) > 1:
-            lst = Path(str(out).replace(".mp4", "_list.txt"))
-            lst.write_text("".join(f"file '{Path(x).resolve()}'\n" for x in outs), encoding="utf-8")
-            run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", lst, "-c", "copy", out])
-        return out
+    # ------------------------------------------------------------------ staging: what differs from Overruled
+    def _geometry(self, lay, tpl, act, path, t, opts):
+        return js_geometry(lay, tpl, act)
 
-    def ov_card_clip(self, png, wav, lead, out, fade_out=False):
-        return super().ov_card_clip(png, wav, lead, out, fade_out)
+    def _run_layers(self, geo, run, d, layers, blur, opts):
+        """No tile frames (green box + amber corner ticks): they follow the detected layout, and when the footage is placed
+        differently (e.g. the hook) the box sat off the picture (owner, 2026-11-02: remove it)."""
+        ls = [dict(l) for l in layers]
+        if not blur:
+            if opts.get("ticker"):
+                ls.insert(0, dict(png=opts["ticker"], s=0, e=d))
+            if opts.get("header"):
+                ls.insert(0, dict(png=opts["header"], s=0, e=d))       # same stacking as before: header, ticker, then the cards
+            self._brief_layer(ls, geo, d, opts)
+        if opts.get("brand", True):                        # the corner logo, on every frame except the hook
+            ls.insert(1, dict(png=self.brand_png, s=0, e=d))
+        return ls
 
     # ------------------------------------------------------------------ text
     def _case_info(self, plan, c, n):
@@ -177,51 +120,19 @@ class JSRenderer(OVRenderer):
         outdir = Path(outdir)
         work = outdir / "_work"
         work.mkdir(parents=True, exist_ok=True)
-        cfg = self.cfg
         ids = video["case_ids"]
         default_src = plan["source_file"]
-        lead, tail = cfg["vo_lead"], cfg["vo_tail"]
+        lead = self.cfg["vo_lead"]
         srcname = lambda c: c.get("source_file") or default_src      # noqa: E731
         gf = lambda name: self.gdir / name                              # noqa: E731
 
-        ui("  voiceover (clips <= 18 s)...")
-        bridges = {b["after_case_id"]: b for b in video.get("bridges", [])}
-        recap_clips = {}
-        for i in range(len(ids) - 1):
-            recap_clips[ids[i]] = tts.synth_clips(bridges[ids[i]]["text"], tts_cache, cfg, ui)
-        final_clips = tts.synth_clips(video["vo_final"]["text"], tts_cache, cfg, ui)
-        for cl in list(recap_clips.values()) + [final_clips]:
-            for w in cl:
-                assert probe_dur(w) <= cfg.get("vo_clip_max", 18.0) + 0.05, f"AI clip over limit: {w}"
-        from ucf import vo as V
-
-        def clip_texts(text, n):
-            parts = V.split_clips(text, cfg.get("vo_clip_target", 17.0), cfg.get("wps", 2.6))
-            return parts if len(parts) == n else [text] * n
+        bridges, recap_clips, final_clips = self._voice(video, ids, tts_cache, ui)
 
         # ---- pre-pass: global timeline (no intro: case 1 starts the second the hook ends)
         hk = video["hook"]
         ha, hb = parse_tc(hk["in"]), parse_tc(hk["out"])
         lead_case = by_id[ids[0]]
-        gt = hb - ha
-        pieces, case_ranges, recap_plan = [], [], []
-        for i, cid in enumerate(ids):
-            c = by_id[cid]
-            cs = gt
-            parts = TL.case_parts(c, cfg["cut_pad_out"])
-            tot = sum(b - a for a, b in parts)
-            el = 0.0
-            for j, (a, b) in enumerate(parts):
-                a2 = max(0.0, a - (cfg["cut_pad_in"] if j == 0 else 0))
-                pieces.append(dict(cid=cid, i=i, j=j, a=a2, b=b, g0=gt, el=el, tot=tot, src=srcname(c)))
-                gt += b - a2
-                el += b - a2
-            case_ranges.append((cs, gt, c))
-            if i < len(ids) - 1:
-                ds = [probe_dur(w) + lead + tail for w in recap_clips[cid]]
-                recap_plan.append(ds)
-                gt += sum(ds)
-        total_end = gt
+        pieces, case_ranges, recap_plan, total_end = self._plan_pieces(by_id, ids, hb - ha, srcname, recap_clips)
 
         def piece_of(tc):
             for pc in pieces:
@@ -267,10 +178,7 @@ class JSRenderer(OVRenderer):
         subs = self.schedule_subs([(cs, ce) for cs, ce, _ in case_ranges], total_end, busy)
         self.sub_schedule = subs
 
-        segfiles = []
-
-        def seg(kind, path, **meta):
-            segfiles.append((kind, Path(path), meta))
+        segfiles, seg = self._segments()
 
         # ----- 1. hook (no logo)
         hp = work / "00_hook.mp4"
@@ -328,9 +236,9 @@ class JSRenderer(OVRenderer):
                 clips = recap_clips[cid]
                 ds = recap_plan[i]
                 recap_durs.append(sum(ds))
-                texts = clip_texts(bridges[cid]["text"], len(clips))
+                texts = self._clip_texts(bridges[cid]["text"], len(clips))
                 nxt = by_id[ids[i + 1]]
-                start = max(TL.case_parts(c, cfg["cut_pad_out"])[-1][0], parse_tc(c["out"]) - sum(ds) - 2.0)
+                start = self._vo_start(c, sum(ds))
                 off = 0.0
                 for q, (w, dq) in enumerate(zip(clips, ds)):
                     p = work / f"{k:02d}_recap{i + 1}_{q}.mp4"
@@ -351,72 +259,8 @@ class JSRenderer(OVRenderer):
             rows.append((f"ROUND {n_}", f"State v. {c['name']}", _short(res, 38)))
         quiz = video.get("quiz") or {}
         dk = JG.docket(rows, quiz.get("question", "What would you have ruled?"), quiz.get("options"), gf("docket"))
-        ds = [probe_dur(w) + lead + tail for w in final_clips]
-        fin_total = sum(ds)
-        for q, (w, dq) in enumerate(zip(final_clips, ds)):
-            p = work / f"{k:02d}_final_{q}.mp4"
-            if not p.exists():
-                self.ov_card_clip(dk, w, lead, p, fade_out=(q == len(final_clips) - 1))
-            seg("vo_final", p, case_id=ids[-1], src=srcname(last), a=parse_tc(last["out"]), b=parse_tc(last["out"]))
-            k += 1
+        fin_total, k = self._closing_segments(dk, final_clips, work, k, seg, last, srcname(last))
 
-        # ----- real timeline + join
-        t = 0.0
-        rows_ = []
-        for kind, path, meta in segfiles:
-            d = probe_dur(path)
-            rows_.append({"kind": kind, "start": t, "dur": d, **meta})
-            t += d
-        ui("  joining + loudness...")
-        lst = work / "concat.txt"
-        lst.write_text("".join(f"file '{p.resolve()}'\n" for _, p, _ in segfiles), encoding="utf-8")
-        final = outdir / "video.mp4"
-        join_segments(lst, final, cfg)
-        real = {"hook": rows_[0]["dur"], "intro": 0.0, "recap": recap_durs, "final": fin_total}
-        tcfg = dict(TL.DEFAULTS)
-        tcfg.update({"cut_pad_out": cfg["cut_pad_out"], "vo_lead": lead, "vo_tail": tail, "style": "tt",
-                     "wps": cfg.get("wps", 2.6), "final_min_hold": cfg.get("final_min_hold", 12.0), "intro_seconds_tt": 0.0})
-        tl = TL.build(video, by_id, tcfg, real)
-        for r in rows_:
-            s = self.sources.get(r.get("src", default_src)) or {}
-            url = s.get("url", "")
-            self.log.append({"video": video["n"], "segment": r["kind"], "case_id": r.get("case_id", ""),
-                             "source_file": r.get("src", ""), "source_url": (url + ("&" if "?" in url else "?") + f"t={int(r['a'])}s") if url and "a" in r else url,
-                             "src_in": fmt_tc(r["a"]) if "a" in r else "", "src_out": fmt_tc(r["b"]) if "b" in r else "",
-                             "out_start": fmt_tc(r["start"]), "out_dur": f"{r['dur']:.1f}"})
-        return {"final": final, "timeline": tl, "rows": rows_, "durs": real, "measured_total": probe_dur(final),
-                "work": work, "ai_clips": [round(probe_dur(w), 1) for cl in list(recap_clips.values()) + [final_clips] for w in cl],
-                "subscribe": [(kd, round(s, 1), round(e, 1)) for kd, s, e in subs],
-                "overlays": [(kind, round(s, 1), round(e, 1)) for s, e, kind, _ in items]}
-
-    # ------------------------------------------------------------------ thumbnail
-    def thumbnail(self, plan, video, outdir):
-        import numpy as np
-        from ucf import cards
-        by_id = {c["id"]: c for c in plan["cases"]}
-        th = video["thumbnail"]
-        wa, wb = parse_tc(th["window_in"]), parse_tc(th["window_out"])
-        cid = TL.find_case_for_tc(video, by_id, (wa + wb) / 2) or video["case_ids"][0]
-        sname = by_id[cid].get("source_file") or plan["source_file"]
-        cdir = Path(outdir) / "thumbnail_candidates"
-        cdir.mkdir(parents=True, exist_ok=True)
-        cands = []
-        n = 6
-        for i in range(n):
-            t = wa + (wb - wa) * i / max(1, n - 1)
-            path, t0, _ = self.locate(sname, t, t + 0.1)
-            raw = cdir / f"raw_{i + 1}.png"
-            run(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{t0:.2f}", "-i", path, "-frames:v", "1",
-                 "-vf", f"scale={L.W}:{L.H}", raw])
-            rgb = np.asarray(Image.open(raw).convert("RGB"))
-            lay, tpl, act, _ = L.classify(rgb)
-            geo = L.geometry(lay, tpl, act if act not in (None, 0) or lay not in ("2", "3") else L.DEFAULT_ACTIVE.get(lay, 0))
-            x, y, w, h = [int(v) for v in L.cover_crop(geo["tiles"][0][0], (0, 0, 1280, 720), bias=0.1)]
-            p = cdir / f"cand_{i + 1}_{fmt_tc(t).replace(':', '-')}.png"
-            Image.open(raw).crop((x, y, x + w, y + h)).resize((1280, 720), Image.LANCZOS).save(p)
-            cands.append((cards.sharpness(p), p))
-        best = max(cands)[1]
-        out = Path(outdir) / "thumbnail.jpg"
-        jp = JG.thumbnail(best, th["text"], th["gold_word"], Path(outdir) / "_work" / "thumb")
-        Image.open(jp).save(out, quality=93)
-        return out
+        # ----- real timeline + join (shared; no intro segment -> 0.0 s of intro on the timeline)
+        return self._finish_video(plan, video, by_id, outdir, work, segfiles, recap_durs, fin_total, 0.0, recap_clips,
+                                  final_clips, subs, ui, extra={"overlays": [(kind, round(s, 1), round(e, 1)) for s, e, kind, _ in items]})
