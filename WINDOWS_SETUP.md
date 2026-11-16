@@ -107,6 +107,24 @@ on. The streams run one after the other until the list is done; each finished st
 A link that fails (still live, private, brain could not plan it) is noted in `state\queue_failed.txt` and the queue goes on.
 Closed the window by accident? Menu 9 again offers to continue the remaining links. One notification when the whole queue is done.
 
+## A run that stopped continues where it was (2026-11-16)
+Power cut, closed window, reboot: run the same stream again with the same style and mode. Every finished video is noted in
+`work\<id>\progress_<style>_<mode>.json` (next to the plan; a 5-minute run, an 8-minute run and a clips run each have their own).
+Videos that are marked done and whose `video.mp4` is still there are **skipped** with one line
+(`video 2/5 already done (12:30, QC OK) - skipping; --only 2 forces it again`); only the rest is rendered. The run report lists the
+reused videos as done and says how many were reused; Studio shows "(N reused from the stopped run)". `--only 2` always makes video 2
+again. A changed plan or a new H Labs version (menu 8) makes the file obsolete: everything is rendered again, and the log says why.
+To start from nothing, delete the `progress_*.json` file.
+
+## Disk and GPU memory are checked before the render
+* Disk: before the first video (and before clips) the run estimates the space it needs (about 0.25 GB per minute of stream: render
+  pieces plus finished videos, 5 GB at least) and looks at the drive where the pieces land (`render_temp_dir` if set, else the
+  output drive). Too little free: the run **stops at once** and names the estimate, instead of failing after hours. Under twice the
+  estimate it only warns. Delete uploaded folders in `output\` to make room.
+* GPU memory: with an NVIDIA card the free video memory is read (`nvidia-smi`; option 6 / the smoke test prints it in the encoder
+  line). Under 1.5 GB free the run prints one warning - close browsers / games / a second H Labs window. The pipeline only runs one
+  encode at a time, so a 4 GB card is enough.
+
 ## Settings for one PC only: config.local.json
 Never edit `config.json` on a team PC (an edited file blocks menu 8). Put this PC's own settings in `config.local.json` next to it
 instead (it is not in git, it overrides config.json), for example:

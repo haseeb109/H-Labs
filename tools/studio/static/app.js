@@ -66,7 +66,7 @@ function stepsHtml(j) {
     let cls = i < cur ? "done" : i === cur ? "now" : "todo", sub = i < cur ? "Done" : i === cur ? "" : "Waiting";
     let bar = i < cur ? "" : i === cur && j.pct != null ? `<i style="width:${Math.min(100, j.pct)}%"></i>` : i === cur ? `<i style="width:8%"></i>` : "";
     let label = name;
-    if (i === 3 && j.videos_total) label = `Render · ${j.mode === "clips" ? "clip" : "video"} ${Math.max(1, j.video_now || 1)} of ${j.videos_total}`;
+    if (i === 3 && j.videos_total) label = `Render · ${j.mode === "clips" ? "clip" : "video"} ${Math.max(1, j.video_now || 1)} of ${j.videos_total}${j.videos_resumed ? ` (${j.videos_resumed} reused from the stopped run)` : ""}`;
     if (i === cur) sub = (j.pct != null ? Math.round(j.pct) + "%" : "Working") + (j.eta ? ` · ~${esc(j.eta)} left` : "");
     return `<li class="${cls}"><div class="bar">${bar}</div><span style="font-weight:500">${esc(label)}</span><span class="small muted">${sub}</span></li>`;
   }).join("") + `</ol>`;
