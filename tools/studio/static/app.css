@@ -96,3 +96,52 @@ legend{font-size:12px;font-weight:600;color:var(--mute);padding:0 4px}
 .toast{position:fixed;right:20px;bottom:20px;background:#0F1115;color:#fff;padding:10px 14px;border-radius:8px;font-size:13px;display:none}
 .toast.on{display:block}
 .banner{display:flex;gap:10px;align-items:center;padding:10px 14px;border-radius:8px;background:var(--warn-bg);color:var(--warn-ink)}
+
+/* ===== Theme "Midnight Glass - Aurora" (owner's pick 2026-11-20): dark purple glass, a light shimmer passing over the cards,
+   liquid striped progress bars. Colours only + two light CSS animations; layout and behaviour unchanged. ===== */
+:root{--bg:#0a0a18;--panel:rgba(255,255,255,.06);--line:rgba(255,255,255,.11);--line2:rgba(255,255,255,.07);--ink:#ecebff;
+--mute:#a5a3c7;--soft:#cfcdf0;--accent:#8b5cf6;--accent-ink:#c4b5fd;--accent-bg:rgba(139,92,246,.14);--ok:#34d399;
+--ok-bg:rgba(52,211,153,.14);--ok-ink:#6ee7b7;--warn:#fbbf24;--warn-bg:rgba(251,191,36,.14);--warn-ink:#fcd34d;--bad:#f87171;
+--bad-bg:rgba(248,113,113,.14);--bad-ink:#fca5a5;--run:#22d3ee;--run-bg:rgba(34,211,238,.14);--nav:rgba(255,255,255,.035);
+--nav2:rgba(139,92,246,.28);--navline:rgba(255,255,255,.09);--navtext:#c9c7ea}
+body{background:radial-gradient(circle at 18% 0%,#2a1660 0,#0a0a18 55%) fixed,#0a0a18;color:var(--ink)}
+a{color:#a5b4fc}a:hover{color:#c7d2fe}
+nav.side{border-right:1px solid var(--navline);backdrop-filter:blur(14px)}
+.navlink.on{background:linear-gradient(90deg,rgba(139,92,246,.35),transparent);box-shadow:inset 2px 0 0 #8b5cf6}
+.logo{background:linear-gradient(135deg,#8b5cf6,#22d3ee);box-shadow:0 0 16px rgba(139,92,246,.6)}
+header.top{background:rgba(10,10,24,.55);border-bottom:1px solid var(--line);backdrop-filter:blur(14px)}
+.card,.kpi,.vcard,.tpl,.probes,.titlebox,fieldset{background:var(--panel);border:1px solid var(--line);backdrop-filter:blur(16px)}
+.btn{background:rgba(255,255,255,.07);border-color:var(--line);color:var(--ink)}.btn:hover{background:rgba(255,255,255,.12)}
+.btn.primary{background:linear-gradient(90deg,#8b5cf6,#22d3ee);border:0;box-shadow:0 6px 22px rgba(139,92,246,.4)}
+.btn.primary:hover{filter:brightness(1.1);background:linear-gradient(90deg,#8b5cf6,#22d3ee)}
+.btn.danger{border-color:var(--bad);color:var(--bad-ink)}.btn.accent{border-color:var(--accent);color:var(--accent-ink)}
+.chip{background:rgba(255,255,255,.08);color:var(--soft)}.chip.run{color:#67e8f9}
+textarea.links,select,input[type=text]{background:rgba(255,255,255,.05);border-color:var(--line);color:var(--ink)}
+.seg{background:rgba(255,255,255,.04);border-color:var(--line)}.seg button{color:var(--mute)}
+.seg button[aria-checked="true"]{background:rgba(139,92,246,.3);color:#fff;box-shadow:none}
+.tpl[aria-pressed="true"],.vcard[aria-pressed="true"]{border:2px solid #8b5cf6;box-shadow:0 0 18px rgba(139,92,246,.35)}
+.tpl.clips{background:rgba(255,255,255,.03)}
+.logbox{background:rgba(0,0,0,.45);border:1px solid var(--line)}
+.textdump{background:rgba(0,0,0,.3)}
+tr.failed{background:rgba(248,113,113,.07)}td{border-top-color:var(--line2)}
+.toast{background:#1b1640;border:1px solid var(--line)}
+.banner{background:var(--warn-bg);color:var(--warn-ink)}
+.thumb{background:#14122b}.thumb .rank{background:#ecebff}
+
+/* shimmer: a soft band of light sweeps across each card, staggered */
+.card,.kpi,.vcard{position:relative;overflow:hidden}
+.card::after,.kpi::after,.vcard::after{content:"";position:absolute;inset:0;pointer-events:none;
+ background:linear-gradient(110deg,transparent 30%,rgba(255,255,255,.09) 50%,transparent 70%);transform:translateX(-100%);
+ animation:hl-sweep 3.6s ease-in-out infinite}
+.kpi:nth-child(2)::after{animation-delay:.3s}.kpi:nth-child(3)::after{animation-delay:.6s}.kpi:nth-child(4)::after{animation-delay:.9s}
+@keyframes hl-sweep{60%,100%{transform:translateX(100%)}}
+
+/* liquid progress bars: purple fill with moving stripes */
+.steps .bar,.meter{height:10px;border-radius:6px;background:rgba(255,255,255,.08)}
+.steps .bar i,.meter i{height:10px;border-radius:6px;background:#8b5cf6;position:relative;overflow:hidden;box-shadow:0 0 12px rgba(139,92,246,.6)}
+.steps .bar i::after,.meter i::after{content:"";position:absolute;inset:0;
+ background:repeating-linear-gradient(-45deg,rgba(255,255,255,.2) 0 8px,transparent 8px 16px);background-size:22px 22px;
+ animation:hl-wave 1s linear infinite}
+.steps li.done .bar{background:linear-gradient(90deg,#34d399,#22d3ee)}
+@keyframes hl-wave{to{background-position:22px 0}}
+@media (prefers-reduced-motion:reduce){.card::after,.kpi::after,.vcard::after,.steps .bar i::after,.meter i::after{animation:none}}
