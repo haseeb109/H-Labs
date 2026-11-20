@@ -78,7 +78,7 @@ function runningCard(j) {
       <div style="display:flex;flex-direction:column;gap:4px;min-width:0">
         <span class="eyebrow">RUNNING NOW</span>
         <h2 style="font-size:17px">${esc(j.title || shortUrl(j.url))}</h2>
-        <span class="muted" style="font-size:13px">${j.stream_len ? hms(j.stream_len) + " stream · " : ""}${esc(styleName(j.style))} · ${esc(MODES[j.mode] || j.mode)}${j.note ? " · " + esc(j.note) : ""}</span>
+        <span class="muted" style="font-size:13px">${j.stream_len ? hms(j.stream_len) + " stream · " : ""}${esc(styleName(j.style))} · ${esc(MODES[j.mode] || j.mode)}${j.note ? " · " + esc(j.note) : ""}${took(j) ? " · ⏱ running " + took(j) : ""}</span>
       </div>
       <div class="spacer actions">
         <button class="btn" onclick="togglePause()">${S.snap.paused ? "Resume queue" : "Pause after this stream"}</button>
@@ -90,9 +90,18 @@ function runningCard(j) {
     <div class="logbox">${log.map((l, i) => `<div class="${i === log.length - 1 ? "last" : ""}">${esc(l)}</div>`).join("") || "Starting..."}</div>
   </article>`;
 }
+// how long a stream took (started -> ended, or -> now while it runs)
+function took(j) {
+  if (!j.started) return "";
+  const t0 = Date.parse(j.started.replace(" ", "T")), t1 = j.ended ? Date.parse(j.ended.replace(" ", "T")) : Date.now();
+  if (!(t1 > t0)) return "";
+  const m = Math.round((t1 - t0) / 60000), h = Math.floor(m / 60);
+  return h ? `${h}h ${String(m % 60).padStart(2, "0")}m` : `${m} min`;
+}
 function jobRow(j) {
   const sub = j.status === "failed" || j.status === "partial" || j.status === "nothing" ? `<div class="rowsub bad">${esc(j.error || "")}</div>`
-    : `<div class="rowsub">${j.stream_len ? hms(j.stream_len) + " · " : ""}${esc(shortUrl(j.url))}${j.ended ? " · " + esc(j.ended.slice(5, 16)) : ""}</div>`;
+    : `<div class="rowsub">${j.stream_len ? hms(j.stream_len) + " stream · " : ""}${esc(shortUrl(j.url))}${j.ended ? " · " + esc(j.ended.slice(5, 16)) : ""}</div>`;
+  const tk = j.status !== "queued" ? took(j) : "";
   let act = "";
   if (j.status === "queued") act = `<button class="btn sm" aria-label="Move up" onclick="jobAct('${j.id}','up')">Up</button><button class="btn sm" aria-label="Move down" onclick="jobAct('${j.id}','down')">Down</button><button class="btn sm" onclick="jobAct('${j.id}','remove')">Remove</button>`;
   else if (j.status !== "running") {
@@ -104,7 +113,7 @@ function jobRow(j) {
   }
   return `<tr class="${j.status === "failed" || j.status === "partial" ? "failed" : ""}">
     <td><div class="rowtitle">${esc(j.title || shortUrl(j.url))}</div>${sub}</td>
-    <td>${esc(styleName(j.style))}</td><td>${esc(MODES[j.mode] || j.mode)}</td><td>${statusChip(j)}</td>
+    <td>${esc(styleName(j.style))}</td><td>${esc(MODES[j.mode] || j.mode)}</td><td>${statusChip(j)}${tk ? `<div class="took">⏱ ${tk}</div>` : ""}</td>
     <td><span class="actions">${act}</span></td></tr>`;
 }
 function renderQueue() {
@@ -122,6 +131,8 @@ function renderQueue() {
     <a class="btn primary" href="#new">${ICON.play}New run</a></div></header>
   <div class="content">
     <section class="col-main">
+      ${S.logFor ? `<article class="card" id="logcard"><div style="display:flex;align-items:center;gap:8px"><h2>${S.logEv ? "Events" : "Log"}</h2><button class="btn sm spacer" onclick="closeLog()">Close</button></div>
+        <div class="logbox" style="max-height:420px;overflow:auto">${S.logText.map(esc).join("\n")}</div></article>` : ""}
       <div class="kpis">
         <div class="kpi"><span>Streams today</span><b>${st.streams_today ?? 0}</b></div>
         <div class="kpi"><span>Videos made today</span><b>${st.videos_today ?? 0}</b></div>
@@ -137,8 +148,6 @@ function renderQueue() {
       </article>
       ${finished.length ? `<article class="card flush"><div class="cardhead"><h2>Finished</h2><span class="muted" style="font-size:13px">latest first</span></div>
         <div class="tablewrap"><table><thead><tr><th>Stream</th><th>Template</th><th>Output</th><th>Status</th><th>Action</th></tr></thead><tbody>${finished.map(jobRow).join("")}</tbody></table></div></article>` : ""}
-      ${S.logFor ? `<article class="card"><div style="display:flex;align-items:center;gap:8px"><h2>${S.logEv ? "Events" : "Log"}</h2><button class="btn sm spacer" onclick="closeLog()">Close</button></div>
-        <div class="logbox" style="max-height:420px;overflow:auto">${S.logText.map(esc).join("\n")}</div></article>` : ""}
     </section>
     <aside class="col-side">
       <section class="card"><h2>This machine</h2>
@@ -163,7 +172,11 @@ function renderQueue() {
 async function jobAct(id, act) { await api(`/api/jobs/${id}/${act}`, {}); await refresh(); }
 async function stopRun() { if (!confirm("Stop the running stream now? The queue pauses; press Resume to go on.")) return; await api("/api/stop", {}); await refresh(); }
 async function togglePause() { await api("/api/pause", { paused: !S.snap.paused }); await refresh(); }
-async function openLog(id, events) { S.logFor = id; S.logEv = !!events; S.logText = (await api(`/api/log?id=${id}${events ? "&events=1" : ""}`)).log || []; render(); }
+async function openLog(id, events) {
+  S.logFor = id; S.logEv = !!events; S.logText = (await api(`/api/log?id=${id}${events ? "&events=1" : ""}`)).log || [];
+  if (!S.logText.length) S.logText = ["(no log lines kept for this stream - see work\\<stream id>\\run_log.txt on this PC)"];
+  render(); const c = $("logcard"); if (c) c.scrollIntoView({ behavior: "smooth", block: "start" });
+}
 function closeLog() { S.logFor = null; render(); }
 async function openOut(run) { await api("/api/open", { rel: run }); toast("Opening the folder"); }
 

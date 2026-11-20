@@ -145,3 +145,4 @@ tr.failed{background:rgba(248,113,113,.07)}td{border-top-color:var(--line2)}
 .steps li.done .bar{background:linear-gradient(90deg,#34d399,#22d3ee)}
 @keyframes hl-wave{to{background-position:22px 0}}
 @media (prefers-reduced-motion:reduce){.card::after,.kpi::after,.vcard::after,.steps .bar i::after,.meter i::after{animation:none}}
+.took{margin-top:5px;font-size:12px;font-weight:600;color:#c4b5fd;white-space:nowrap}
