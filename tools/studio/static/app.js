@@ -8,7 +8,7 @@ const ICON = {
   play: '<svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   folder: '<svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7h6l2 2h10v10H3z"/></svg>',
 };
-const MODES = { "30": "30 min videos", "60": "1 hour videos", all: "One video per case", clips: "Clips + editor guide", asis: "As-is re-edit" };
+const MODES = { "30": "30 min videos", "60": "1 hour videos", all: "One video per case", clips: "Clips + editor guide", asis: "As-is re-edit", download: "Download only" };
 const STAGES = ["Download", "Transcript", "Plan", "Render", "Finish"];
 
 async function api(path, body) {
@@ -225,6 +225,7 @@ function renderNew() {
           `<button type="button" role="radio" aria-checked="${nr.mode === k}" onclick="pickMode('${k}')">${esc(t)}</button>`).join("")}</div>
         <span class="muted small">${nr.mode === "clips" ? `Hook + whole case, dead air cut, no overlays / voice / watermark, plus EDITOR_GUIDE.txt for your editor (in this channel's name). Every case of ${nr.minCase}:00 or more.`
           : nr.mode === "all" ? `Every verified case of ${nr.minCase}:00 or more becomes its own fully edited video, ranked.`
+          : nr.mode === "download" ? "Only downloads each link as a best-quality MP4 into output/downloads (no transcript, brain, voice or editing; the template is ignored). A video that only exists below 720p is downloaded as it is."
           : nr.mode === "asis" ? "The WHOLE video becomes ONE fully edited video, as it is: no case selection, nothing skipped or cut out - one case or several. For a single video link or your own file."
           : "Several cases joined into one fully edited video."}</span>
         ${nr.mode === "all" || nr.mode === "clips" ? `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span style="font-weight:500">Shortest case</span>

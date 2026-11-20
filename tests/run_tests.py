@@ -2602,6 +2602,53 @@ def t49_resume_and_checks():
     return "resume skips done videos (--only forces, plan/version change drops), disk stop before render, VRAM read + warning, one command builder"
 
 
+def t51_download_only():
+    """Download-only tool (2026-11-20): link -> output/downloads/<title> [id].mp4 with the pipeline's engine, a sub-720p
+    video is taken as it is (the pipeline's 720p floor is lowered to what YouTube has), a bad link does not stop the batch,
+    the file is skipped when already there, and Studio / launcher build the command for mode "download"."""
+    import importlib.util
+    from ucf import download as D
+    from ucf.runspec import build_run_command
+    spec = importlib.util.spec_from_file_location("dlo", ROOT / "tools" / "download_only.py")
+    M = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(M)
+    assert M.safe_name('A/B: "Court"? day', "abc") == "A B Court day [abc].mp4"
+    cmd = build_run_command("py", "https://youtu.be/x", "trial_tales", "download", {"queued": True, "voice": True})
+    assert cmd[1].endswith("download_only.py") and cmd[2:] == ["https://youtu.be/x", "--queued"], cmd
+    tmp = Path(tempfile.mkdtemp())
+    real_info, real_fetch = D.info, D.fetch_video
+    seen = {}
+
+    def info(url, cfg):
+        if "bad" in url:
+            raise RuntimeError("yt-dlp could not read the URL")
+        return {"id": url[-3:], "title": "Hearing " + url[-3:], "duration": 60, "best_height": 480 if "lo" in url else 1080,
+                "is_live": False}
+
+    def fetch(url, vid, workdir, cfg, meta=None):
+        seen[vid] = (cfg["min_height"], cfg["max_height"])
+        Path(workdir).mkdir(parents=True, exist_ok=True)
+        f = Path(workdir) / "source.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=320x180:d=1", "-c:v", "libx264", str(f)], check=True)
+        f.write_bytes(f.read_bytes() + b"\0" * 1_100_000)
+        return f
+    D.info, D.fetch_video = info, fetch
+    try:
+        rc = M.main(["https://youtu.be/hi1", "https://youtu.be/bad", "https://youtu.be/lo2", "--out", str(tmp), "--queued",
+                     "--max-height", "2160"])
+        files = sorted(p.name for p in tmp.glob("*.mp4"))
+        assert rc == 0 and files == ["Hearing hi1 [hi1].mp4", "Hearing lo2 [lo2].mp4"], (rc, files)
+        assert seen["hi1"] == (720, 2160) and seen["lo2"] == (480, 2160), seen
+        assert not list(tmp.glob(".part_*")), "temp folder left behind"
+        seen.clear()
+        M.main(["https://youtu.be/hi1", "--out", str(tmp), "--queued"])
+        assert "hi1" not in seen, "an existing file must be skipped, not downloaded again"
+    finally:
+        D.info, D.fetch_video = real_info, real_fetch
+        shutil.rmtree(tmp, ignore_errors=True)
+    return "best quality to output/downloads, 480p-only video kept, bad link skipped, existing file skipped, Studio command ok"
+
+
 def main():
     print("H Labs self-test matrix")
     check(1, "environment", t1_environment)
@@ -2658,6 +2705,7 @@ def main():
     check(48, "smoke test (post-update PC check)", t48_smoke_test)
     check(49, "resume a stopped run, disk + VRAM checks, one command builder", t49_resume_and_checks)
     check(50, "events.jsonl + run_report + whisper device (GPU/CPU)", t50_events_and_whisper_device)
+    check(51, "download only (best quality, batch)", t51_download_only)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))

@@ -537,7 +537,8 @@ def main():
               "  3) Change brain provider\n  4) Edit API keys\n  5) Open output folder\n  6) Smoke test (2-3 min) / full self-test\n  7) Setup check (what is installed?)\n  8) Update H Labs (GitHub code + yt-dlp)\n"
               "  9) BULK QUEUE - many stream links, one after the other, until all are done\n"
               "  u) Undo the last update (go back to the previous build)\n"
-              "  0) Open H Labs Studio (browser app: queue, progress, upload kit)\n  q) Quit")
+              "  0) Open H Labs Studio (browser app: queue, progress, upload kit)\n"
+              "  d) DOWNLOAD ONLY - YouTube links -> best-quality MP4 files (no editing)\n  q) Quit")
         pick = ask("Pick: ", "q").lower()
         if pick == "1":
             url = ask("YouTube URL: ")
@@ -593,6 +594,17 @@ def main():
             doctor()
         elif pick == "9":
             bulk()
+        elif pick == "d":
+            print("\nPaste the YouTube links to download (one per line). Empty line = start.")
+            links = []
+            while True:
+                ln = ask("> ")
+                if not ln:
+                    break
+                links += _urls(ln)
+            if links:
+                subprocess.run([sys.executable, str(ROOT / "tools" / "download_only.py"), *links], cwd=ROOT)
+                ask("\nPress Enter...")
         elif pick == "0":
             subprocess.run([sys.executable, str(ROOT / "tools" / "studio" / "server.py")], cwd=ROOT)
         elif pick == "8" and WIN:

@@ -28,6 +28,8 @@ def build_run_command(python, url_or_path, style, mode, options=None, script=Non
       transcript_file "..."   --transcript-file (your own transcript for a local video)
     """
     o = dict(options or {})
+    if mode == "download":                     # download only (tools/download_only.py): no style, brain or render options
+        return [str(python), str(ROOT / "tools" / "download_only.py"), str(url_or_path)] + (["--queued"] if o.get("queued") else [])
     cmd = [str(python), str(script or (ROOT / "run_stream.py"))]
     cmd += [str(url_or_path)] if is_link(url_or_path) else ["--local", str(url_or_path)]
     if o.get("brain"):
