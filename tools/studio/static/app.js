@@ -223,6 +223,11 @@ function renderNew() {
         <div class="step"><b>STEP 1</b><h2>Stream links</h2></div>
         <label style="display:flex;flex-direction:column;gap:6px"><span class="muted" style="font-size:13px">One per line: YouTube links, or the path of your own downloaded video / folder (with its transcript if you have one - the download is skipped). Each line becomes one job; they run one after the other.</span>
           <textarea class="links" id="links" placeholder="https://www.youtube.com/live/...&#10;D:\Streams\Smith hearing">${esc(nr.text)}</textarea></label>
+        <div class="dropzone" id="dropzone">
+          <div><b>Your own video?</b> <span class="muted">Drop the file here, or</span></div>
+          <button type="button" class="btn sm" onclick="pickFile()">${ICON.folder}Choose from PC</button>
+          <span class="small muted" id="dropmsg">Choose from PC uses the file where it is (fastest). A dropped file is first copied into the H Labs <span class="mono">input</span> folder.</span>
+        </div>
         <div class="actions" style="justify-content:flex-start"><button type="button" class="btn" onclick="checkLinks()" ${urls.length ? "" : "disabled"}>Check ${urls.length || ""} link${urls.length === 1 ? "" : "s"}</button>
           <span class="muted small">Checks title, length, quality (${m.min_height || 720}p minimum), whether a stream is still live, and finds the video + transcript in your folder.</span></div>
         ${urls.length ? `<div class="probes">${urls.map(probeRow).join("")}</div>` : ""}
@@ -265,10 +270,39 @@ function renderNew() {
       <span class="small muted">They start one after the other as soon as the PC is free. You can close this tab; keep the Studio window open.</span>
     </section></aside>
   </div>`;
+  wireDrop();
   const ta = $("links"); ta.addEventListener("input", () => { S.nr.text = ta.value; clearTimeout(renderNew.t); renderNew.t = setTimeout(() => { const pos = ta.selectionStart; renderNew(); const t2 = $("links"); t2.focus(); t2.setSelectionRange(pos, pos); }, 500); });
 }
 function pickStyle(id) { S.nr.style = id; renderNew(); }
 function pickMode(k) { S.nr.mode = k; renderNew(); }
+// your own file: the browser never gives a page the real path, so "Choose from PC" asks the Studio server (it opens the PC's
+// own file dialog) and a dropped file is uploaded into H Labs\input (2026-11-21: typed paths kept going wrong)
+function addPath(p) {
+  if (!p) return;
+  S.nr.text = (S.nr.text.trim() ? S.nr.text.trim() + "\n" : "") + p; delete S.nr.probes[p];
+  renderNew(); checkLinks();
+}
+async function pickFile() {
+  const m = $("dropmsg"); if (m) m.textContent = "A file window opened on this PC (it may be behind the browser)...";
+  const r = await api("/api/pick", {});
+  if (r.path) addPath(r.path); else if ($("dropmsg")) $("dropmsg").textContent = "No file chosen.";
+}
+function wireDrop() {
+  const z = $("dropzone"); if (!z) return;
+  ["dragenter", "dragover"].forEach((e) => z.addEventListener(e, (ev) => { ev.preventDefault(); z.classList.add("over"); }));
+  ["dragleave", "drop"].forEach((e) => z.addEventListener(e, (ev) => { ev.preventDefault(); z.classList.remove("over"); }));
+  z.addEventListener("drop", (ev) => { const f = ev.dataTransfer.files[0]; if (f) uploadFile(f); });
+}
+function uploadFile(f) {
+  const m = $("dropmsg"), x = new XMLHttpRequest();
+  x.open("PUT", "/api/upload-file?name=" + encodeURIComponent(f.name));
+  x.setRequestHeader("Content-Type", "application/octet-stream");
+  x.upload.onprogress = (e) => { if (m && e.lengthComputable) m.textContent = `Copying ${f.name}: ${Math.round(e.loaded / e.total * 100)}% (keep this tab open)`; };
+  x.onload = () => { let r = {}; try { r = JSON.parse(x.responseText); } catch (e) { /* keep */ }
+    if (x.status === 200 && r.path) { toast("Copied into H Labs\\input"); addPath(r.path); } else if (m) m.textContent = "Copy failed: " + (r.error || x.status); };
+  x.onerror = () => { if (m) m.textContent = "Copy failed - is the Studio window still open?"; };
+  x.send(f);
+}
 async function checkLinks() {
   const urls = urlsOf(S.nr.text);
   urls.forEach((u) => { if (!S.nr.probes[u] || !S.nr.probes[u].ok) S.nr.probes[u] = { pending: true }; });

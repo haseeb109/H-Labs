@@ -406,6 +406,54 @@ class Studio:
             return list(j.get("log", [])) if j else []
 
 
+# ---------------------------------------------------------------------- your own file (New run step 1)
+def pick_file():
+    """The PC's own "Open file" dialog -> the real path ("" when cancelled). A browser never tells a page where a file is on
+    disk, so typed paths went wrong (2026-11-21); the Studio server runs on this PC and can ask Windows directly."""
+    if WIN:
+        ps = ("Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.Form -Property @{TopMost=$true}; "
+              "$d = New-Object System.Windows.Forms.OpenFileDialog; $d.Title = 'H Labs - choose your video'; "
+              "$d.Filter = 'Video (*.mp4;*.mkv;*.webm;*.mov;*.m4v;*.ts)|*.mp4;*.mkv;*.webm;*.mov;*.m4v;*.ts|All files|*.*'; "
+              "if ($d.ShowDialog($f) -eq 'OK') { [Console]::Out.Write($d.FileName) }")
+        r = subprocess.run(["powershell", "-NoProfile", "-STA", "-Command", ps], capture_output=True, text=True, encoding="utf-8")
+        return (r.stdout or "").strip()
+    try:
+        import tkinter
+        from tkinter import filedialog
+        root = tkinter.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        path = filedialog.askopenfilename(title="H Labs - choose your video")
+        root.destroy()
+        return path or ""
+    except Exception:  # noqa - no display / no tkinter: the page says so and the path can still be typed
+        return ""
+
+
+INPUT = ROOT / "input"
+
+
+def save_upload(name, stream, size):
+    """A file dropped on the page -> input/<name> (copied in 8 MB blocks; a browser gives the page the bytes, not the path)."""
+    INPUT.mkdir(exist_ok=True)
+    safe = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", Path(name).name).strip(" .") or "video.mp4"
+    out = INPUT / safe
+    tmp = out.with_name(out.name + ".part")
+    left = int(size)
+    with open(tmp, "wb") as f:
+        while left > 0:
+            b = stream.read(min(8 << 20, left))
+            if not b:
+                break
+            f.write(b)
+            left -= len(b)
+    if left:
+        tmp.unlink(missing_ok=True)
+        raise ValueError("the upload stopped before the end")
+    os.replace(tmp, out)
+    return out
+
+
 # ---------------------------------------------------------------------- library
 _dur_cache = {}
 
@@ -590,11 +638,28 @@ def make_handler(studio):
             except Exception as e:
                 return self._send(500, {"error": str(e)[:300]})
 
+        def do_PUT(self):
+            """/api/upload-file?name=x.mp4: the raw bytes of a dropped file. Not a "simple" request type, so another website
+            cannot send it without a CORS answer (never given); Host / Origin are checked like every other call."""
+            u = urlparse(self.path)
+            origin = self.headers.get("Origin")
+            if not self._trusted() or (origin and urlparse(origin).hostname not in ("127.0.0.1", "localhost")) \
+                    or u.path != "/api/upload-file":
+                return self._send(403, {"error": "forbidden"})
+            try:
+                name = (parse_qs(u.query).get("name") or ["video.mp4"])[0]
+                out = save_upload(name, self.rfile, int(self.headers.get("Content-Length") or 0))
+                return self._send(200, {"path": str(out)})
+            except (OSError, ValueError) as e:
+                return self._send(400, {"error": str(e)[:200]})
+
         def do_POST(self):
             u = urlparse(self.path)
             if not self._trusted(post=True):
                 return self._send(403, {"error": "forbidden"})
             d = self._json()
+            if u.path == "/api/pick":
+                return self._send(200, {"path": pick_file()})
             try:
                 if u.path == "/api/probe":
                     return self._send(200, studio.probe((d.get("url") or "").strip()))

@@ -41,3 +41,6 @@ config.local.json
 
 # agent worktrees (Claude Code), never part of the repo
 .claude/
+
+# videos dropped on H Labs Studio (copied here)
+input/

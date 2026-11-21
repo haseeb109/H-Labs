@@ -146,3 +146,7 @@ tr.failed{background:rgba(248,113,113,.07)}td{border-top-color:var(--line2)}
 @keyframes hl-wave{to{background-position:22px 0}}
 @media (prefers-reduced-motion:reduce){.card::after,.kpi::after,.vcard::after,.steps .bar i::after,.meter i::after{animation:none}}
 .took{margin-top:5px;font-size:12px;font-weight:600;color:#c4b5fd;white-space:nowrap}
+.dropzone{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:14px 16px;border:1.5px dashed rgba(167,139,250,.45);
+ border-radius:12px;background:rgba(139,92,246,.06);transition:.2s}
+.dropzone.over{border-color:#22d3ee;background:rgba(34,211,238,.12);box-shadow:0 0 18px rgba(34,211,238,.25)}
+.dropzone #dropmsg{flex-basis:100%}
