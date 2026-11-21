@@ -600,7 +600,8 @@ def make_handler(studio):
                     return self._send(200, studio.probe((d.get("url") or "").strip()))
                 if u.path == "/api/jobs":
                     urls = [x.strip().strip('"') for x in d.get("urls") or [] if x.strip()]
-                    mode = d.get("mode") if d.get("mode") in ("30", "60", "all", "clips") else "all"
+                    # every mode the front end offers (asis + download were silently turned into "all" before, 2026-11-21)
+                    mode = d.get("mode") if d.get("mode") in ("30", "60", "all", "clips", "asis", "download") else "all"
                     ids = {s["id"] for s in styles()}
                     style = d.get("style") if d.get("style") in ids else next(iter(sorted(ids)), "trial_tales")
                     return self._send(200, {"added": studio.add(urls, style, mode, d.get("options") or {})})

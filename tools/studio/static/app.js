@@ -50,6 +50,7 @@ function render() {
   renderSide();
   if (S.view === "new") return renderNew();
   if (S.view === "library") return renderLibrary();
+  if (S.view === "download") return renderDownload();
   return renderQueue();
 }
 
@@ -113,7 +114,7 @@ function jobRow(j) {
   }
   return `<tr class="${j.status === "failed" || j.status === "partial" ? "failed" : ""}">
     <td><div class="rowtitle">${esc(j.title || shortUrl(j.url))}</div>${sub}</td>
-    <td>${esc(styleName(j.style))}</td><td>${esc(MODES[j.mode] || j.mode)}</td><td>${statusChip(j)}${tk ? `<div class="took">⏱ ${tk}</div>` : ""}</td>
+    <td>${j.mode === "download" ? "—" : esc(styleName(j.style))}</td><td>${esc(MODES[j.mode] || j.mode)}</td><td>${statusChip(j)}${tk ? `<div class="took">⏱ ${tk}</div>` : ""}</td>
     <td><span class="actions">${act}</span></td></tr>`;
 }
 function renderQueue() {
@@ -234,7 +235,7 @@ function renderNew() {
       </section>
       <section class="card">
         <div class="step"><b>STEP 3</b><h2>Output</h2></div>
-        <div class="seg" role="radiogroup" aria-label="Output">${Object.entries(MODES).map(([k, t]) =>
+        <div class="seg" role="radiogroup" aria-label="Output">${Object.entries(MODES).filter(([k]) => k !== "download").map(([k, t]) =>
           `<button type="button" role="radio" aria-checked="${nr.mode === k}" onclick="pickMode('${k}')">${esc(t)}</button>`).join("")}</div>
         <span class="muted small">${nr.mode === "clips" ? `Hook + whole case, dead air cut, no overlays / voice / watermark, plus EDITOR_GUIDE.txt for your editor (in this channel's name). Every case of ${nr.minCase}:00 or more.`
           : nr.mode === "all" ? `Every verified case of ${nr.minCase}:00 or more becomes its own fully edited video, ranked.`
@@ -281,6 +282,31 @@ async function addJobs() {
   toast(`${(r.added || []).length} stream(s) added to the queue`);
   S.nr.text = ""; S.nr.probes = {};
   location.hash = "#queue"; await refresh();
+}
+
+/* ------------------------------------------------------------------ download only */
+const DL = { text: "", height: "1080" };
+function renderDownload() {
+  const urls = urlsOf(DL.text).filter(isLink);
+  $("view").innerHTML = `
+  <header class="top"><h1>Download</h1><span class="muted small">YouTube links -> best-quality MP4, nothing else</span></header>
+  <div class="content"><section class="col-main"><section class="card">
+    <label style="display:flex;flex-direction:column;gap:6px"><span class="muted" style="font-size:13px">Paste YouTube links, one per line. They download one after the other in the queue.</span>
+      <textarea class="links" id="dllinks" placeholder="https://www.youtube.com/watch?v=...">${esc(DL.text)}</textarea></label>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span style="font-weight:500">Highest quality</span>
+      <div class="seg" role="radiogroup" aria-label="Quality">${[["1080", "1080p"], ["1440", "1440p"], ["2160", "4K"]].map(([k, t]) =>
+        `<button type="button" role="radio" aria-checked="${DL.height === k}" onclick="DL.height='${k}';renderDownload()">${t}</button>`).join("")}</div></div>
+    <span class="small muted">Best video + best audio up to the height you pick. A video that only exists lower is downloaded as it is. Files go to <span class="mono">output\\downloads</span>; a file already there is skipped.</span>
+    <div class="actions" style="justify-content:flex-start"><button class="btn primary lg" onclick="addDownloads()" ${urls.length ? "" : "disabled"}>Download ${urls.length || ""} video${urls.length === 1 ? "" : "s"}</button>
+      <button class="btn" onclick="openOut('downloads')">${ICON.folder}Open downloads folder</button></div>
+  </section></section></div>`;
+  const ta = $("dllinks"); ta.addEventListener("input", () => { DL.text = ta.value; clearTimeout(renderDownload.t);
+    renderDownload.t = setTimeout(() => { const pos = ta.selectionStart; renderDownload(); const t2 = $("dllinks"); t2.focus(); t2.setSelectionRange(pos, pos); }, 400); });
+}
+async function addDownloads() {
+  const urls = urlsOf(DL.text).filter(isLink); if (!urls.length) return;
+  const r = await api("/api/jobs", { urls, style: "", mode: "download", options: { max_height: DL.height } });
+  toast(`${(r.added || []).length} download(s) added to the queue`); DL.text = ""; location.hash = "#queue"; await refresh();
 }
 
 /* ------------------------------------------------------------------ library */
