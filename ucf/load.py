@@ -30,7 +30,13 @@ def lower_priority(cfg):
         if os.name == "nt":
             import ctypes
             cls = {"idle": 0x40, "below_normal": 0x4000}.get(want, 0x4000)
+            from ctypes import wintypes
             k32 = ctypes.windll.kernel32
+            # 64-bit handles: without these types ctypes passes the pseudo-handle as a 32-bit int, Windows rejects the call
+            # and the run stayed at normal priority on every team PC (found by self-test 31, 2026-11-21)
+            k32.GetCurrentProcess.restype = wintypes.HANDLE
+            k32.SetPriorityClass.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+            k32.SetPriorityClass.restype = wintypes.BOOL
             if k32.SetPriorityClass(k32.GetCurrentProcess(), cls):
                 return want
             return ""

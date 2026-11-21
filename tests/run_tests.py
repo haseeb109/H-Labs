@@ -1172,7 +1172,7 @@ def t30_windows_run_fixes():
         work.mkdir()
 
         def fake(cmd, *a, **k):
-            if cmd[0] != "ffprobe" and "--help" not in cmd and "yt-dlp" in " ".join(map(str, cmd[:3])):
+            if cmd[0] != "ffprobe" and "--help" not in cmd and ("yt-dlp" in " ".join(map(str, cmd[:3])) or "yt_dlp" in " ".join(map(str, cmd[:3]))):
                 n[0] += 1                                   # 1st strategy only gets 360p, 2nd gets 720p
                 shutil.copy(tmp / ("s360.mp4" if n[0] == 1 else "s720.mp4"), work / "source.mp4")
                 with (work / "source.mp4").open("ab") as f:
@@ -1500,7 +1500,7 @@ def t41_min_720p():
         work.mkdir()
 
         def fake(cmd, *a, **k):                   # every strategy only gets 360p
-            if cmd[0] != "ffprobe" and "--help" not in cmd and "yt-dlp" in " ".join(map(str, cmd[:3])):
+            if cmd[0] != "ffprobe" and "--help" not in cmd and ("yt-dlp" in " ".join(map(str, cmd[:3])) or "yt_dlp" in " ".join(map(str, cmd[:3]))):
                 shutil.copy(tmp / "s360.mp4", work / "source.mp4")
                 with (work / "source.mp4").open("ab") as f:
                     f.write(b"\0" * 11_000_000)
