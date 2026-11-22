@@ -23,6 +23,15 @@ Work in small, tested steps. After each step: run the self-tests, commit. Ask be
 
 ---
 
+## 0.1 Source of truth: the real H Labs repo (public)
+
+The original code is public at **https://github.com/haseeb109/H-Labs** (branch `main`). Clone it first and treat it as
+the reference: copy its modules, prompts (`prompts/shared/*`), validator rules, config defaults, tests, Windows scripts
+and Studio files as they are, then REMOVE the four channel packs (`styles/trial_tales`, `overruled`, `justice_served`,
+`court_beacon`) and the channel-specific renderers (`ucf/render_tt.py`, `ucf/render_ov.py`, `styles/*/engine/*`),
+replacing them with the generic renderer of §3. Where this prompt and the repo disagree on a detail, the repo wins,
+except for the "no built-in channel templates" rule.
+
 ## 1. Platform and hard rules
 
 - Runs on the team's **Windows 10/11 laptops** (7th/8th gen Intel, 4–6 GB NVIDIA GPU, often an HDD). Develop anywhere,
