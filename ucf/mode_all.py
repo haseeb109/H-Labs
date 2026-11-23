@@ -127,6 +127,9 @@ def case_prompt(case, cfg, judge):
     txt = "\n\n".join(p for p in parts if p)
     for k, v in fill.items():
         txt = txt.replace(k, v)
+    if cfg.get("_dossier"):                      # documentary styles: the earlier hearings of this defendant (tools/dossier.py)
+        from . import dossier as DOS
+        txt += DOS.prompt_block(DOS.earlier(cfg["_dossier"], cfg.get("_upload", ""), ROOT / cfg.get("state_dir", "state")))
     case_json = json.dumps({k: v for k, v in case.items() if not k.startswith("_")}, indent=1, ensure_ascii=False)
     txt += ("\n\n" + "═" * 64 + "\n THE CASE (JSON)\n" + "═" * 64 + "\n" + case_json
             + "\n\nNow output the single {\"video\": {...}} JSON object.")

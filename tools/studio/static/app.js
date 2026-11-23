@@ -8,7 +8,7 @@ const ICON = {
   play: '<svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   folder: '<svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 7h6l2 2h10v10H3z"/></svg>',
 };
-const MODES = { "30": "30 min videos", "60": "1 hour videos", all: "One video per case", clips: "Clips + editor guide", asis: "As-is re-edit", download: "Download only" };
+const MODES = { "30": "30 min videos", "60": "1 hour videos", all: "One video per case", clips: "Clips + editor guide", asis: "As-is re-edit", download: "Download only", dossier: "Dossier (one defendant, several hearings)" };
 const STAGES = ["Download", "Transcript", "Plan", "Render", "Finish"];
 
 async function api(path, body) {
@@ -241,7 +241,7 @@ function renderNew() {
       </section>
       <section class="card">
         <div class="step"><b>STEP 3</b><h2>Output</h2></div>
-        <div class="seg" role="radiogroup" aria-label="Output">${Object.entries(MODES).filter(([k]) => k !== "download").map(([k, t]) =>
+        <div class="seg" role="radiogroup" aria-label="Output">${Object.entries(MODES).filter(([k]) => k !== "download" && k !== "dossier").map(([k, t]) =>
           `<button type="button" role="radio" aria-checked="${nr.mode === k}" onclick="pickMode('${k}')">${esc(t)}</button>`).join("")}</div>
         <span class="muted small">${nr.mode === "clips" ? `Hook + whole case, dead air cut, no overlays / voice / watermark, plus EDITOR_GUIDE.txt for your editor (in this channel's name). Every case of ${nr.minCase}:00 or more.`
           : nr.mode === "all" ? `Every verified case of ${nr.minCase}:00 or more becomes its own fully edited video, ranked.`
@@ -251,6 +251,10 @@ function renderNew() {
         ${nr.mode === "all" || nr.mode === "clips" ? `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span style="font-weight:500">Shortest case</span>
           <div class="seg" role="radiogroup" aria-label="Shortest case">${["8", "5"].map((k) =>
             `<button type="button" role="radio" aria-checked="${nr.minCase === k}" onclick="S.nr.minCase='${k}';renderNew()">${k} minutes</button>`).join("")}</div></div>` : ""}
+        ${(S.styles.find((x) => x.id === nr.style) || {}).doc ? `<div class="dossier">
+          <label class="check"><input type="checkbox" ${nr.dossier ? "checked" : ""} onchange="S.nr.dossier=this.checked;renderNew()"><span><b>These links are hearings of ONE defendant</b> (months or years apart) - make ONE documentary of all of them</span></label>
+          ${nr.dossier ? `<input id="dname" placeholder="Defendant's name as the court says it, e.g. Summer Diaz" value="${esc(nr.dname || "")}" oninput="S.nr.dname=this.value">
+          <span class="small muted">Each link is downloaded and searched for this name; the older hearings come first as dated chapters, the newest is the main hearing.</span>` : ""}</div>` : ""}
         <label class="check"><input type="checkbox" ${nr.voice && nr.mode !== "clips" ? "checked" : ""} ${nr.mode === "clips" ? "disabled" : ""} onchange="S.nr.voice=this.checked"><span>Allow AI voice-over above 5,000 characters</span></label>
         <label class="check"><input type="checkbox" ${nr.watermark ? "checked" : ""} ${nr.mode === "clips" ? "disabled" : ""} onchange="S.nr.watermark=this.checked"><span>Channel watermark</span></label>
         <label class="check"><input type="checkbox" ${nr.cleanup ? "checked" : ""} onchange="S.nr.cleanup=this.checked"><span>Delete the downloaded stream when its videos are done</span></label>
@@ -313,6 +317,14 @@ async function checkLinks() {
 async function addJobs() {
   const urls = usableUrls(); if (!urls.length) return;
   const nr = S.nr;
+  if (nr.dossier && (S.styles.find((x) => x.id === nr.style) || {}).doc) {
+    if (!(nr.dname || "").trim()) return toast("Type the defendant's name first");
+    const r = await api("/api/jobs", { urls, style: nr.style, mode: "dossier", options: { voice: nr.voice, name: nr.dname.trim() } });
+    if (r.error) return toast(r.error);
+    toast(`Dossier of ${urls.length} hearing(s) added to the queue`);
+    S.nr.text = ""; S.nr.probes = {}; S.nr.dossier = false;
+    location.hash = "#queue"; await refresh(); return;
+  }
   const r = await api("/api/jobs", { urls, style: nr.style, mode: nr.mode, options: { voice: nr.voice, watermark: nr.watermark, cleanup: nr.cleanup, min_case: nr.minCase } });
   toast(`${(r.added || []).length} stream(s) added to the queue`);
   S.nr.text = ""; S.nr.probes = {};

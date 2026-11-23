@@ -501,7 +501,7 @@ def styles():
     for f in sorted((ROOT / "styles").glob("*/style.json")):
         try:
             d = json.loads(f.read_text(encoding="utf-8"))
-            out.append({"id": d.get("id", f.parent.name), "name": d.get("name", f.parent.name)})
+            out.append({"id": d.get("id", f.parent.name), "name": d.get("name", f.parent.name), "doc": d.get("renderer") == "doc"})
         except (OSError, ValueError, AttributeError) as e:    # a broken pack is listed so the typo gets fixed
             out.append({"id": f.parent.name, "name": f"{f.parent.name} (style.json unreadable: {str(e)[:60]})"})
     return out
@@ -849,9 +849,16 @@ def make_handler(studio):
                 if u.path == "/api/jobs":
                     urls = [x.strip().strip('"') for x in d.get("urls") or [] if x.strip()]
                     # every mode the front end offers (asis + download were silently turned into "all" before, 2026-11-21)
-                    mode = d.get("mode") if d.get("mode") in ("30", "60", "all", "clips", "asis", "download") else "all"
+                    mode = d.get("mode") if d.get("mode") in ("30", "60", "all", "clips", "asis", "download", "dossier") else "all"
                     ids = {s["id"] for s in styles()}
                     style = d.get("style") if d.get("style") in ids else next(iter(sorted(ids)), "trial_tales")
+                    if mode == "dossier":                # ONE job: every link is a hearing of the same defendant
+                        name = str((d.get("options") or {}).get("name") or "").strip()
+                        links = [u for u in urls if is_link(u)]
+                        if not name or len(links) < 1:
+                            return self._send(400, {"error": "a dossier needs the defendant's name and the hearing links"})
+                        opts = dict(d.get("options") or {}, urls=links, name=name[:80])
+                        return self._send(200, {"added": studio.add([links[-1]], style, "dossier", opts)})
                     return self._send(200, {"added": studio.add(urls, style, mode, d.get("options") or {})})
                 m = re.match(r"/api/jobs/([0-9a-f]+)/(remove|retry|up|down)$", u.path)
                 if m:

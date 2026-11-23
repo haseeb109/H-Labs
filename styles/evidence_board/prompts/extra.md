@@ -31,6 +31,7 @@ every fact must be said in the transcript. Timecodes are H:MM:SS of the stream a
                   "pills": ["NEW YEAR'S EVE · 2022", "SAN ANTONIO POLICE · ARREST"]} ],   // 1-4 beats; facts said in court only
   "chapters": [ {"at": "H:MM:SS", "title": "THE PLEA"} ],      // 2-6 chapter starts inside the case, 1-3 word titles
   "bridges": ["Narrator line before chapter 1", "before chapter 2"],
+  "earlier_bridges": ["Only when EARLIER HEARINGS are given below: one narrator line before each earlier hearing, oldest first"],
   "rulings": [ {"tc": "H:MM:SS", "text": "Bond: $150,000 + GPS"} ],  // every ruling, the moment it is said
   "turns": [ {"from": "H:MM:SS", "to": "H:MM:SS", "who": "JUDGE"} ],  // who speaks (JUDGE | DEFENDANT | LAWYER | STATE | WITNESS)
   "questions": ["3 questions the video answers"],

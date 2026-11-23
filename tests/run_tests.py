@@ -2883,6 +2883,76 @@ def t55_doc_styles():
     return "6 packs load unbranded; video made from a bare plan with the case document; own-folder B-roll; series memory"
 
 
+def t56_dossier():
+    """Dossier (2026-11-23): the defendant's part of an earlier stream is found by name (biggest cluster, ends at the next
+    case call) and cut without re-encode; earlier hearings come first in the documentary as dated chapters; the brain gets
+    their text; Studio builds one tools/dossier.py command; a docu-series' next episode shows the earlier episode's footage."""
+    from ucf import config, dossier as D, tts
+    from ucf.render_doc import DocRenderer
+    from ucf.runspec import build_run_command
+    segs = [{"start": 5, "end": 8, "text": "calling cause number 1"}, {"start": 30, "end": 33, "text": "Mr. Brown please"},
+            {"start": 400, "end": 403, "text": "Summer Diaz is here"}, {"start": 430, "end": 433, "text": "Ms. Diaz, sit down"},
+            {"start": 470, "end": 473, "text": "Diaz, you are on probation"}, {"start": 520, "end": 523, "text": "calling the next case"},
+            {"start": 900, "end": 903, "text": "Diaz mentioned once"}]
+    a, b, n = D.find_window(segs, "Summer Diaz")
+    assert n == 3 and a == 380 and b == 518, (a, b, n)
+    assert D.find_window(segs, "Nobody Smith") is None
+    assert D.nice_date("20230515") == "MAY 15, 2023"
+    cmd = build_run_command("py", "u3", "case_file_doc", "dossier", {"urls": ["u1", "u2", "u3"], "name": "Summer Diaz", "queued": True})
+    assert cmd[1].endswith("dossier.py") and cmd[2:5] == ["u1", "u2", "u3"] and "--name" in cmd and "--queued" in cmd, cmd
+    tmp = Path(tempfile.mkdtemp())
+    real = tts.synth
+    try:
+        state = tmp / "state"
+        old = tmp / "old.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=640x360:d=40:r=30", "-f", "lavfi",
+                        "-i", "sine=f=200:d=40", "-c:v", "libx264", "-preset", "ultrafast", "-g", "30", "-c:a", "aac", str(old)], check=True)
+        osegs = [{"start": 6, "end": 9, "text": "Jo Test, you are charged"}, {"start": 20, "end": 23, "text": "Test, sit down"}]
+        h = D.add_hearing("Jo Test", old, osegs, "20220101", "https://x", "old hearing", state_dir=state)
+        assert h["date"] == "JAN 01, 2022" and (D.folder("Jo Test", state) / h["file"]).exists()
+        eh = D.earlier("Jo Test", "20230101", state)
+        assert len(eh) == 1 and not D.earlier("Jo Test", "20210101", state)
+        assert "HEARING 1 - JAN 01, 2022" in D.prompt_block(eh)
+        src = tmp / "s.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=s=640x360:d=45:r=30", "-f", "lavfi",
+                        "-i", "sine=f=300:d=45", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(src)], check=True)
+        work = tmp / "work"
+        (work / "tts").mkdir(parents=True)
+        (work / "transcript.json").write_text(json.dumps([{"start": 8, "end": 11, "text": "Jo Test, bond is revoked."}]))
+
+        def fake(text, cache, cfg):
+            p = Path(cache) / f"v{abs(hash(text)) % 10**7}.wav"
+            if not p.exists():
+                subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=f=500:d=1.2", "-ar", "48000", str(p)], check=True)
+            return p
+        tts.synth = fake
+        case = {"id": 1, "name": "Jo Test", "in": "0:00:05", "out": "0:00:35", "status": "used", "charge": "Theft"}
+        video = {"n": 1, "case_ids": [1], "hook": {"in": "0:00:10", "out": "0:00:18", "headline": "x"},
+                 "vo1": {"text": "Story."}, "vo_final": {"text": "End."}}
+        plan = {"source_file": "s.mp4", "cases": [case], "videos": [video]}
+        cfg = config.load(style="case_file_doc")
+        cfg.update(media_library="", state_dir=str(state), _dossier="Jo Test", _upload="20230601", _hearing_date="JUN 01, 2023")
+        out = tmp / "o1"
+        out.mkdir()
+        rn = DocRenderer(cfg, {"s.mp4": {"path": str(src), "url": ""}}, ROOT)
+        res = rn.render_video(plan, video, out, work / "tts", ui=lambda *m: None)
+        names = [p.name for _, p, *_ in rn.pieces]
+        assert names.index("g00_court.mp4") < names.index("h00_court.mp4"), names
+        assert any(r.get("src") == h["file"] for r in res["rows"]), "the earlier hearing must be in the footage log"
+        for k, up in enumerate(("20230601", "20230901")):   # docu-series: episode 2 shows episode 1's footage
+            c2 = config.load(style="docu_series")
+            c2.update(media_library="", state_dir=str(state), _upload=up)
+            o2 = tmp / f"ds{k}"
+            o2.mkdir()
+            rn2 = DocRenderer(c2, {f"s{k}.mp4": {"path": str(src), "url": ""}}, ROOT)
+            rn2.render_video(dict(plan, source_file=f"s{k}.mp4"), video, o2, work / "tts", ui=lambda *m: None)
+        assert "s00_prev0.mp4" in [p.name for _, p, *_ in rn2.pieces], "episode 2 must open with episode 1's real footage"
+    finally:
+        tts.synth = real
+        shutil.rmtree(tmp, ignore_errors=True)
+    return "defendant found + cut by name, earlier hearings first as chapters, brain context, Studio command, series footage"
+
+
 def main():
     print("H Labs self-test matrix")
     check(1, "environment", t1_environment)
@@ -2943,6 +3013,7 @@ def main():
     check(53, "Studio settings: API keys + media library", t53_studio_settings)
     check(54, "case document + retention scheduler", t54_casedoc_and_engage)
     check(55, "documentary styles: 6 packs, doc renderer, own B-roll folder, series memory", t55_doc_styles)
+    check(56, "dossier: several hearings of one defendant + series footage", t56_dossier)
     check(52, "documentary kit: music ducking, SFX, speaker captions, paper cards, stock library", t52_shared_doc_kit)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)

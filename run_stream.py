@@ -279,6 +279,8 @@ def parse_args(argv=None):
     ap.add_argument("--tts", help="force one TTS provider (ai33|voicestudio|say|dummy)")
     ap.add_argument("--no-watermark", action="store_true", help="skip the anti-copy watermark for this run")
     ap.add_argument("--keep-source", action="store_true", help="keep the downloaded stream at the end (no cleanup)")
+    ap.add_argument("--dossier", help="documentary styles: the defendant's name; earlier hearings cut by tools/dossier.py "
+                                      "(state/dossier/<name>/) come before this one in the video")
     ap.add_argument("--queued", action="store_true", help="part of a bulk queue: no per-stream notification / folder window "
                                                           "(the queue reports once at the end)")
     return ap.parse_args(argv)
@@ -398,6 +400,14 @@ def stage_info(R):
             ui(f"stream: {R.meta['title']}  ({fmt_dur(R.meta['duration'])}, id {R.sid})")
     R.url = R.meta.get("url") or R.a.url or ""
     R.upload = R.meta.get("upload_date", "") or time.strftime("%Y%m%d")
+    from ucf import dossier as _DOS
+    R.cfg["_upload"] = R.upload
+    R.cfg["_hearing_date"] = _DOS.nice_date(R.upload) if R.meta.get("upload_date") else ""
+    if R.a.dossier:
+        R.cfg["_dossier"] = R.a.dossier
+        _eh = _DOS.earlier(R.a.dossier, R.upload, R.state)
+        ui(f"dossier '{R.a.dossier}': {len(_eh)} earlier hearing(s) go before this one"
+           + ("" if _eh else " (none found in state/dossier - run tools/dossier.py with all the links)"))
     R.stream_len = R.meta.get("duration") or (parse_tc(R.a.stream_length) if R.a.stream_length else 0)
     # court for the on-screen court line, from the stream title ("... /187TH DISTRICT COURT/ ...") - never a judge's name
     _cm = re.search(r"(\d{1,3})\s*(st|nd|rd|th)\s+district\s+court", R.meta.get("title") or "", re.I)

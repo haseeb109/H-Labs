@@ -162,3 +162,5 @@ tr.failed{background:rgba(248,113,113,.07)}td{border-top-color:var(--line2)}
 @media (max-width:720px){.keyrow{grid-template-columns:1fr auto}.keyrow input{grid-column:1/-1}}
 .libwrap{display:block;width:100%}.libwrap h3{margin:14px 0 4px}
 #stockcount{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);color:inherit;border-radius:8px;padding:6px 8px}
+.dossier{display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:10px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1)}
+#dname{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);color:inherit;border-radius:10px;padding:9px 12px;font:inherit}

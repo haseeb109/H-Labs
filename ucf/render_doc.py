@@ -262,11 +262,11 @@ class DocRenderer(Renderer):
         a, b = parse_tc(self.case["in"]), parse_tc(self.case["out"])
         self.case_a, self.case_b = a, b
         text = " ".join(s["text"] for s in self.segs if a - 30 <= s["start"] <= b + 30)
-        meta = {"court": self.cfg.get("court_line_plain") or plan.get("court") or "", "date": self.doc.get("date") or plan.get("date", "")}
+        meta = {"court": self.cfg.get("court_line_plain") or plan.get("court") or "", "date": self.doc.get("date") or plan.get("date", "") or self.cfg.get("_hearing_date", "")}
         self.facts, dropped = casedoc.build_facts(dict(self.case, case_doc=self.doc.get("case_doc")), text, meta)
         for k, why in dropped:
             self.ui(f"  case document: '{k}' left out ({why})")
-        self.date = self.doc.get("date") or self.facts.get("hearing_date", "")
+        self.date = self.doc.get("date") or self.facts.get("hearing_date", "") or self.cfg.get("_hearing_date", "")
         self.name = self.facts.get("defendant") or self.case.get("name", "")
         self.hook = (parse_tc(video["hook"]["in"]), parse_tc(video["hook"]["out"]))
 
@@ -318,7 +318,8 @@ class DocRenderer(Renderer):
         lines = [(s["start"] - a, s.get("end", s["start"] + 3) - a, s["text"]) for s in self.segs if a <= s["start"] < b]
         cands = []
         kmap = {"coming_up": "question", "verdict_q": "question", "so_far": "fact", "watch": "quote"}
-        for o in (self.video.get("overlays") or []) + (self.case.get("overlays") or []):
+        plan_items = [] if self._earlier else (self.video.get("overlays") or []) + (self.case.get("overlays") or [])
+        for o in plan_items:
             try:
                 t = (parse_tc(o["tc"]) if "tc" in o else float(o.get("t"))) - a
             except (KeyError, ValueError, TypeError):
@@ -333,7 +334,7 @@ class DocRenderer(Renderer):
         for f in ("bond", "plea", "state_asked", "defense_asked"):
             if self.facts.get(f):
                 cands.append({"t": None, "kind": "fact", "text": f"{casedoc.LABEL[f]}: {self.facts[f]}", "dur": 4.0})
-        for r in self.doc.get("rulings") or []:
+        for r in [] if self._earlier else (self.doc.get("rulings") or []):
             try:
                 t = (parse_tc(r["tc"]) - a) / speed
             except (KeyError, ValueError, TypeError):
@@ -372,7 +373,8 @@ class DocRenderer(Renderer):
         beats, punch = self.beats_for(a, b, kw.get("speed", 1.0))
         out = self.work / out_name
         if not out.exists():
-            self.seg_court(a, b, out, date=self.date, tag=tag, beats=beats, punch=punch, turns=self.doc.get("turns"), **kw)
+            self.seg_court(a, b, out, date=self.date, tag=tag, beats=beats, punch=punch,
+                           turns=None if self._earlier else self.doc.get("turns"), **kw)
         self.add("court", out, a=a, b=b)
 
     def doc_steps(self, name, per=0.9, last=2.5):
@@ -591,6 +593,15 @@ class DocRenderer(Renderer):
         prev = [e for e in hist["episodes"] if e.get("stream") != sid]
         ep = next((i + 1 for i, e in enumerate(hist["episodes"]) if e.get("stream") == sid), len(hist["episodes"]) + 1)
         if prev:
+            for i, e in enumerate(prev[-3:]):            # real footage of the earlier episodes (kept in state/series/)
+                clip = sdir / key / e.get("clip", "")
+                if e.get("clip") and clip.exists():
+                    old = self.using(clip, e.get("segs", []), e.get("date", ""), clip.name)
+                    try:
+                        self.court_block(0.0, min(9.0, probe_dur(clip)), f"PREVIOUSLY · EPISODE {e['n']}", f"s00_prev{i}.mp4")
+                    finally:
+                        self.restore(old)
+                    self.role_last("cold")
             txt = "Previously. " + " ".join(e.get("summary", "") for e in prev[-3:])
             pills = [(paper.pill_stack([f"EPISODE {e['n']} · {_short(e.get('title', ''), 26)}"], self.png(f"prev{i}.png"),
                                        self.pal, kinds=["r"])[0], 0.3 + i * 2.2, 99) for i, e in enumerate(prev[-3:])]
@@ -613,8 +624,21 @@ class DocRenderer(Renderer):
         nxt = self.doc.get("cliffhanger") or (f"NEXT HEARING: {self.facts['next_date']}" if self.facts.get("next_date") else "TO BE CONTINUED")
         self.ending(extra_card=paper.black_text(_short(nxt, 40).upper(), self.png("next.png"), self.pal, sub=f"EPISODE {ep + 1}"))
         summ = self.doc.get("episode_summary") or f"{self.name}: {self.facts.get('result', 'the hearing')} ({self.date})."
+        # keep this episode's strongest moment (stream copy, ~10 s) for the next episode's "previously on"
+        from . import dossier as DOS
+        ha, hb, _ = self.moments(1)[0]
+        hb = min(hb, ha + 10.0)
+        clip_name = f"ep{ep:02d}.mp4"
+        try:
+            DOS.cut(self.srcp, ha, hb, sdir / key / clip_name)
+            clip_segs = [dict(x, start=float(x["start"]) - ha, end=float(x.get("end", x["start"])) - ha) for x in self.segs
+                         if ha <= float(x["start"]) < hb]
+        except RuntimeError as e:
+            self.notes_once(f"episode clip for the next 'previously on' not kept: {e}")
+            clip_name, clip_segs = "", []
         hist["episodes"] = [e for e in hist["episodes"] if e.get("stream") != sid] + [
-            {"n": ep, "stream": sid, "title": title, "summary": _short(summ, 220), "date": self.date}]
+            {"n": ep, "stream": sid, "title": title, "summary": _short(summ, 220), "date": self.date,
+             "clip": clip_name, "segs": clip_segs}]
         hist["episodes"].sort(key=lambda e: e["n"])
         sfile.write_text(json.dumps(hist, indent=1, ensure_ascii=False), encoding="utf-8")
 
@@ -648,11 +672,56 @@ class DocRenderer(Renderer):
                 self.seg_cards([(png, 4.0)], p)
             self.add("story", p, mood="story", sfx="stamp_thud")
 
+    def earlier(self):
+        """Earlier hearings of this defendant from the dossier (tools/dossier.py), oldest first."""
+        if not self.cfg.get("_dossier"):
+            return []
+        from . import dossier as DOS
+        return DOS.earlier(self.cfg["_dossier"], self.cfg.get("_upload", ""), ROOT / self.cfg.get("state_dir", "state"))
+
+    def using(self, path, segs, date, name):
+        """Switch the footage / transcript / date used by court_block + seg_blur (an earlier hearing's clip)."""
+        old = (self.srcp, self.segs, self.date, self.srcname, self.case_a, self.case_b, self._earlier)
+        self.srcp, self.segs, self.date, self.srcname, self.case_a = str(path), segs, date, name, 0.0
+        self.case_b, self._earlier = probe_dur(path), True
+        return old
+
+    def restore(self, old):
+        self.srcp, self.segs, self.date, self.srcname, self.case_a, self.case_b, self._earlier = old
+
+    def earlier_hearings(self, start_n=1, numbered=True):
+        """Every earlier hearing as a dated chapter: chapter card (+ the brain's bridge line) and the court block.
+        -> number of hearings added."""
+        hs = self.earlier()
+        bridges = self.doc.get("earlier_bridges") or []
+        for i, h in enumerate(hs):
+            d = probe_dur(h["path"])
+            old = self.using(h["path"], h.get("segs", []), h.get("date", ""), Path(h["path"]).name)
+            try:
+                kick = f"HEARING {start_n + i}" if numbered else f"EARLIER · {start_n + i}"
+                p = self.work / f"g{i:02d}_ch.mp4"
+                if not p.exists():
+                    self.seg_blur(paper.chapter_card(kick, h.get("date") or " ", "EARLIER HEARING", self.png(f"gch{i}.png"), self.pal),
+                                  bridges[i] if i < len(bridges) else "", p, f"gch{i}", t0=min(5, d / 3), min_dur=3.0)
+                self.add("bridge", p, mood="bridge", sfx="riser")
+                self.court_block(0.0, d, "EARLIER HEARING", f"g{i:02d}_court.mp4")
+                self.pieces[-1][4]["src"] = Path(h["path"]).name
+            finally:
+                self.restore(old)
+            if True:                                   # a time jump after every earlier hearing
+                jump = paper.big_text("TIME PASSES", self.png(f"tj{i}.png"), self.pal,
+                                      sub=f"{h.get('date', '')} → {(hs[i + 1].get('date') if i + 1 < len(hs) else self.date) or ''}")
+                p = self.work / f"g{i:02d}_jump.mp4"
+                if not p.exists():
+                    self.seg_blur(jump, "", p, f"tj{i}", t0=self.case_a + 2, min_dur=2.4)
+                self.add("bridge", p, mood="bridge", sfx="bass_drop")
+        return len(hs)
+
     def hearings(self, numbered=True):
-        bridges = {b.get("after_case_id"): b for b in self.video.get("bridges", [])}
+        n0 = self.earlier_hearings(1, numbered)
         chs = self.chapters()
         for i, (a, b, t) in enumerate(chs):
-            kick = f"HEARING {i + 1}" if numbered else f"PART {i + 1}"
+            kick = f"HEARING {n0 + i + 1}" if numbered else f"PART {i + 1}"
             p = self.work / f"h{i:02d}_ch.mp4"
             if not p.exists():
                 self.seg_blur(paper.chapter_card(kick, self.date or " ", t, self.png(f"ch{i}.png"), self.pal),
@@ -684,6 +753,7 @@ class DocRenderer(Renderer):
         (self.work / "gfx").mkdir(parents=True, exist_ok=True)
         self.tts_cache, self.ui, self.video = Path(tts_cache), ui, video
         self.pieces, self.used_broll, self.beat_report = [], set(), []
+        self._earlier = False
         self._ctx(plan, video)
         ui(f"  style: {self.style}  |  B-roll: {stock.broll_available(self.cfg)}"
            + ("" if self.libass else "  |  captions OFF (this ffmpeg has no libass)"))
