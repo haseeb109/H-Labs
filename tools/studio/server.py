@@ -1017,6 +1017,18 @@ def make_handler(studio):
     return H
 
 
+class QuietServer(ThreadingHTTPServer):
+    """A page that is closed / reloaded while the Studio answers (WinError 10053 / 10054, broken pipe) is normal - not a
+    traceback in the Studio window (2026-11-23: an update check answered after the tab was reloaded)."""
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        import sys as _s
+        if isinstance(_s.exc_info()[1], (ConnectionError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def serve(port=8765, open_browser=True):
     import urllib.request
     for p in range(port, port + 20):                     # already running on this PC? just open it again
@@ -1034,7 +1046,7 @@ def serve(port=8765, open_browser=True):
         except Exception as e:  # noqa - the Studio must start even when the update report cannot be written
             print("update report skipped:", e)
         try:
-            httpd = ThreadingHTTPServer(("127.0.0.1", p), make_handler(Studio()))
+            httpd = QuietServer(("127.0.0.1", p), make_handler(Studio()))
         except OSError:
             continue
         url = f"http://127.0.0.1:{p}"

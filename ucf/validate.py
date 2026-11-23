@@ -27,6 +27,25 @@ RULE_LEAK = [r"RULES\s*\(do not print", r"never list the hook", r"5-8 chapters o
              r"first at 00:00", r"one chapter minimum"]
 
 
+# "cause number" alone is not a call-out: in a ruling the judge reads the causes of the SAME case ("the court is finding
+# violations ... in cause number 49 true", 2026-11-23 Bexar run: the whole video failed on that line). A call-out names a case
+# that is being called / announced; a finding / plea / paragraph sentence is part of this case.
+_CALL_STRONG = re.compile(r"\b(court is calling|now calling|calling (the )?(case|cause|matter|number)|parties announce|"
+                          r"call(ing)? cause (no|number))\b", re.I)
+_CALL_CAUSE = re.compile(r"\bcause (no|number)\b", re.I)
+_CALL_CONTEXT = re.compile(r"\b(calling|call|state of texas (versus|vs|v)\b|state (versus|vs)\b|announce|ready|present for)", re.I)
+_NOT_CALL = re.compile(r"\b(true|not true|finding|finds|found|violat\w*|paragraph|plead\w*|plea|motion|revok\w*|adjudicat\w*|"
+                       r"sentenc\w*|probation|condition)\b", re.I)
+
+
+def is_callout(text):
+    """True when a transcript line calls / announces a (new) case, not when it only mentions a cause number."""
+    t = text or ""
+    if _CALL_STRONG.search(t):
+        return True
+    return bool(_CALL_CAUSE.search(t) and _CALL_CONTEXT.search(t) and not _NOT_CALL.search(t))
+
+
 def _tc(v, where, errs):
     try:
         return parse_tc(v)
@@ -126,8 +145,7 @@ def validate(plan, stream_len, segs=None, cfg=None):
             if c.get("status") == "used" and segs is not None and not cfg.get("_asis"):   # as-is: other hearings stay inside
                 # "recall_ok": ["1:12:40"] = the brain says that call-out is THIS case called again (after a break), not a new case
                 ok_at = [t for t in (_tc(x, w + " recall_ok", []) for x in (c.get("recall_ok") or [])) if t is not None]
-                hit = next((x for x in segs if a + 30 < x["start"] < b - 1
-                            and re.search(r"\bcourt is calling\b|\bcause (no|number)\b|\bparties announce\b", x["text"], re.I)
+                hit = next((x for x in segs if a + 30 < x["start"] < b - 1 and is_callout(x["text"])
                             and not any(abs(x["start"] - t) <= 15 for t in ok_at)), None)
                 if hit:
                     E.append(f"{w}: C-04 at {fmt_tc(hit['start'], False)} the transcript says \"{hit['text'].strip()[:90]}\" - if that is a "

@@ -3007,6 +3007,24 @@ def t58_studio_update():
     return "version shown, refused while a stream runs, queue held + released, old -> new + change list after restart"
 
 
+def t59_callout_vs_ruling():
+    """2026-11-23 Bexar run: "the court is finding violations ... and cause number 49 true" (a ruling inside the case) was
+    taken for a new case being called (C-04) and the whole video failed. Only a real call-out counts now."""
+    from ucf.validate import is_callout
+    assert not is_callout("So the court is finding violations of two and two ending and cause number 49 true.")
+    assert not is_callout("In cause number 3 how do you plead")
+    assert is_callout("The court is calling cause number 2023CR1234, State of Texas versus Smith")
+    assert is_callout("cause number 2024CR55 state versus Jones")
+    sys.path.insert(0, str(ROOT / "tools" / "studio"))
+    import server as SV
+    srv = SV.QuietServer.__new__(SV.QuietServer)
+    try:
+        raise ConnectionAbortedError(10053, "aborted")
+    except ConnectionAbortedError:
+        srv.handle_error(None, ("127.0.0.1", 1))          # must not print a traceback
+    return "a ruling that names a cause number is not a call-out; closed browser tabs are not tracebacks"
+
+
 def main():
     print("H Labs self-test matrix")
     check(1, "environment", t1_environment)
@@ -3070,6 +3088,7 @@ def main():
     check(56, "dossier: several hearings of one defendant + series footage", t56_dossier)
     check(57, "ffmpeg / yt-dlp never wait on the console", t57_tools_never_read_console)
     check(58, "Studio Update button (restart + what changed)", t58_studio_update)
+    check(59, "C-04: a ruling is not a new case; quiet Studio on closed tabs", t59_callout_vs_ruling)
     check(52, "documentary kit: music ducking, SFX, speaker captions, paper cards, stock library", t52_shared_doc_kit)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
