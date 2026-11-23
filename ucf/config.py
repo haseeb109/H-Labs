@@ -22,6 +22,7 @@ DEFAULTS = {
     "coming_up_tag": True,                             # small "COMING UP" label on the hook teaser
     "channel_intro_file": "assets/channel_intro.mp4",   # your 5-8 s animation; if missing a title card is generated
     "output_dir": "output",
+    "media_library": "",                               # B-roll / music / SFX library (broll/<tag>, music/<mood>, sfx/<kind>)
     "work_dir": "work",
     "state_dir": "state",
     # --- brain (Master Prompt v9) ---

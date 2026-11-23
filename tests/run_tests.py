@@ -2649,6 +2649,77 @@ def t51_download_only():
     return "best quality to output/downloads, 480p-only video kept, bad link skipped, existing file skipped, Studio command ok"
 
 
+def t52_shared_doc_kit():
+    """Shared kit for the new documentary styles (2026-11-23): music bed ducks under court audio and SFX never land on
+    court, speaker-labelled captions, paper / statute / pill cards render (no channel branding), and the Pexels/Pixabay
+    library filler (fake API) downloads, credits, skips known clips and picks without repeats."""
+    import re
+    from ucf import audiomix as A, speakers as S, paper as P, stock as K
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        lib = tmp / "lib"
+        for sub, name, src in (("music", "drone_tense", "sine=f=220:d=4"), ("sfx", "stamp_thud", "sine=f=80:d=0.4")):
+            d = lib / sub / name
+            d.mkdir(parents=True)
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", src, str(d / "a.wav")], check=True)
+        vid = tmp / "in.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=gray:s=320x180:d=10", "-f", "lavfi",
+                        "-i", "anullsrc=r=48000:cl=stereo", "-t", "10", "-c:v", "libx264", "-c:a", "aac", str(vid)], check=True)
+        plan = A.MixPlan(duration=10, court=[(4.0, 7.0)], music=[A.MusicCue(0, 10, "drone_tense")],
+                         sfx=[A.SfxCue(1.0, "stamp_thud"), A.SfxCue(5.0, "stamp_thud"), A.SfxCue(8.0, "whoosh")])
+        rep = A.mix_onto(vid, tmp / "out.mp4", plan, lib, ui=lambda *a: None)
+        assert any("dropped: inside court" in r for r in rep) and any("'whoosh' missing" in r for r in rep), rep
+
+        def level(a, b):
+            r = subprocess.run(["ffmpeg", "-v", "info", "-ss", str(a), "-t", str(b - a), "-i", str(tmp / "out.mp4"),
+                                "-af", "volumedetect", "-f", "null", "-"], capture_output=True, text=True)
+            return float(re.search(r"mean_volume: (-?[\d.]+)", r.stderr).group(1))
+        assert level(2.0, 3.5) - level(5.0, 6.5) > 15, "music must duck inside the court window"
+        lines = [(0, 2, "How do you plead?"), (2.1, 3, "Not guilty."), (3.2, 4, "Okay."), (5, 6, "The weather.")]
+        lab = S.label(lines, turns=[{"from": 4.5, "to": 6.5, "who": "LAWYER"}], names={"DEFENDANT": "SUMMER"})
+        assert [x[2] for x in lab] == ["JUDGE", "SUMMER", "SUMMER", "LAWYER"], lab
+        assert S.build_ass(lab, tmp / "c.ass", blocks=[(5, 6)]) == 3 and "SUMMER:" in (tmp / "c.ass").read_text()
+        from PIL import Image
+        a, b = P.statute_card("Penal Code 49.08", "A person commits an offense if the person causes the death of another by accident.",
+                              "causes the death of another", tmp / "st.png", plain="DEATH WHILE DRUNK", penalty="2 TO 20 YEARS")
+        assert Image.open(a).size == (1920, 1080) and a.read_bytes() != b.read_bytes()
+        try:
+            P.statute_card("X", "real text", "made up words", tmp / "bad.png")
+            raise AssertionError("a highlight not in the statute text must be refused")
+        except ValueError:
+            pass
+        steps = P.pill_stack(["JUNE 2022", "A FATHER'S DAY BARBECUE", "20 TO 30 ROUNDS · POLICE SAY"], tmp / "ps.png")
+        assert len(steps) == 3 and Image.open(steps[0]).mode == "RGBA"
+        for f in (P.chapter_card("HEARING 6", "JANUARY 28, 2025", "THE BOND", tmp / "ch.png"),
+                  P.sentence_card("5 YEARS", "SENTENCE", ["State asked for: 2 years"], tmp / "se.png", struck="NO CONVICTION"),
+                  P.comparison(("THE STATE ASKS", "2 YEARS"), ("DEFENSE ASKS", "ONE MORE CHANCE"), tmp / "cmp.png"),
+                  P.calendar_grid("REPORTS TO PROBATION", [("MAR 23", True), ("APR 23", False)], tmp / "cal.png"),
+                  P.top_bar("JAN 28, 2025", tmp / "tb.png", tag="BOND"), P.poll("WHAT WOULD YOU DO?", ["JAIL", "PROBATION"], tmp / "po.png", reveal=1)):
+            assert Image.open(f).size == (1920, 1080), f
+        real = (K._get_json, K._download, K._keys)
+        K._keys = lambda: ("pk", "")
+        K._get_json = lambda url, headers=None, tries=3: {"videos": [
+            {"id": i, "duration": 10, "url": f"https://p/{i}", "user": {"name": "A"},
+             "video_files": [{"file_type": "video/mp4", "width": 3840, "height": 2160, "link": f"u{i}4k"},
+                             {"file_type": "video/mp4", "width": 1920, "height": 1080, "link": f"u{i}hd"}]} for i in range(5)]}
+        got = []
+        K._download = lambda url, dest, tries=3: (got.append(url), Path(dest).write_bytes(b"x"))[1]
+        try:
+            assert K.fetch_tag(lib, "gavel", count=3, ui=lambda *a: None) == 3 and got == ["u0hd", "u1hd", "u2hd"], got
+            assert K.fetch_tag(lib, "gavel", count=3, ui=lambda *a: None) == 0
+            (lib / "broll" / "gavel" / "pexels_0.mp4").unlink()
+            K.fetch_tag(lib, "gavel", count=3, ui=lambda *a: None)
+            assert got[-1] == "u3hd", "a clip already in credits.csv must not be downloaded again"
+            used = set()
+            first = K.pick_clips(lib, "gavel", 3, used)
+            assert len(set(first)) == 3 and K.tags_on_disk(lib) == ["gavel"]
+        finally:
+            K._get_json, K._download, K._keys = real
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return "music ducks under court, SFX kept off court, speaker captions, 7 card types render, stock fetch/credits/no repeats"
+
+
 def main():
     print("H Labs self-test matrix")
     check(1, "environment", t1_environment)
@@ -2706,6 +2777,7 @@ def main():
     check(49, "resume a stopped run, disk + VRAM checks, one command builder", t49_resume_and_checks)
     check(50, "events.jsonl + run_report + whisper device (GPU/CPU)", t50_events_and_whisper_device)
     check(51, "download only (best quality, batch)", t51_download_only)
+    check(52, "documentary kit: music ducking, SFX, speaker captions, paper cards, stock library", t52_shared_doc_kit)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
     print(f"RESULT: {sum(1 for r in RESULTS if r[2])}/{len(RESULTS)} passed" + (f"  FAILURES: {[r[1] for r in bad]}" if bad else "  - ALL GREEN"))
