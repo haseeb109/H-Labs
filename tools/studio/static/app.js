@@ -86,6 +86,7 @@ function runningCard(j) {
       <div class="spacer actions">
         <button class="btn" onclick="togglePause()">${S.snap.paused ? "Resume queue" : "Pause after this stream"}</button>
         <button class="btn" onclick="openLog('${j.id}')">Full log</button>
+        <button class="btn" onclick="copyLog('${j.id}')">Copy log</button>
         <button class="btn danger" onclick="stopRun()">Stop</button>
       </div>
     </div>
@@ -112,7 +113,7 @@ function jobRow(j) {
       act += `<button class="btn sm accent" onclick="jobAct('${j.id}','retry')">${j.status === "partial" ? "Retry failed video" + ((j.failed_videos || []).length > 1 ? "s" : "") : "Retry"}</button>`;
     if (j.out_dir) act += `<button class="btn sm" onclick="openOut('${esc(j.out_dir.split(/[\\/]/).pop())}')">${ICON.folder}Open</button>`;
     if (j.events) act += `<button class="btn sm" title="${esc(j.events)}" onclick="openLog('${j.id}', true)">Events</button>`;
-    act += `<button class="btn sm" onclick="openLog('${j.id}')">Full log</button><button class="btn sm" onclick="jobAct('${j.id}','remove')">Clear</button>`;
+    act += `<button class="btn sm accent" onclick="copyLog('${j.id}')">Copy log</button><button class="btn sm" onclick="openLog('${j.id}')">Full log</button><button class="btn sm" onclick="jobAct('${j.id}','remove')">Clear</button>`;
   }
   return `<tr class="${j.status === "failed" || j.status === "partial" ? "failed" : ""}">
     <td><div class="rowtitle">${esc(j.title || shortUrl(j.url))}</div>${sub}</td>
@@ -134,7 +135,7 @@ function renderQueue() {
     <a class="btn primary" href="#new">${ICON.play}New run</a></div></header>
   <div class="content">
     <section class="col-main">
-      ${S.logFor ? `<article class="card" id="logcard"><div style="display:flex;align-items:center;gap:8px"><h2>${S.logEv ? "Events" : "Log"}</h2><button class="btn sm spacer" onclick="closeLog()">Close</button></div>
+      ${S.logFor ? `<article class="card" id="logcard"><div style="display:flex;align-items:center;gap:8px"><h2>${S.logEv ? "Events" : "Log"}</h2><button class="btn sm spacer" onclick="copyLog(S.logFor, S.logEv)">Copy all</button><button class="btn sm" onclick="closeLog()">Close</button></div>
         <div class="logbox" style="max-height:420px;overflow:auto">${S.logText.map(esc).join("\n")}</div></article>` : ""}
       <div class="kpis">
         <div class="kpi"><span>Streams today</span><b>${st.streams_today ?? 0}</b></div>
@@ -179,6 +180,16 @@ async function openLog(id, events) {
   S.logFor = id; S.logEv = !!events; S.logText = (await api(`/api/log?id=${id}${events ? "&events=1" : ""}`)).log || [];
   if (!S.logText.length) S.logText = ["(no log lines kept for this stream - see work\\<stream id>\\run_log.txt on this PC)"];
   render(); const c = $("logcard"); if (c) c.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+// one click -> the whole log + what the job was, ready to paste into Claude ("what is this error, fix it")
+async function copyLog(id, events) {
+  const j = ((S.snap && S.snap.jobs) || []).find((x) => x.id === id) || {};
+  let lines = [];
+  try { lines = (await api(`/api/log?id=${id}${events ? "&events=1" : ""}`)).log || []; } catch (e) { lines = ["(could not read the log: " + e + ")"]; }
+  const head = [`H Labs Studio log - ${j.title || j.url || id}`, `URL: ${j.url || "-"}`,
+    `Style: ${j.style || "-"} | Mode: ${j.mode || "-"} | Status: ${j.status || "-"}${j.stream_len ? " | Stream: " + hms(j.stream_len) : ""}`,
+    j.error ? `Error: ${j.error}` : "", `Version: ${(S.ver && S.ver.version) || "-"} | Copied: ${new Date().toLocaleString()}`, "-".repeat(60)].filter(Boolean);
+  await copy(head.concat(lines.length ? lines : ["(no log lines kept for this stream)"]).join("\n"));
 }
 function closeLog() { S.logFor = null; render(); }
 async function openOut(run) { await api("/api/open", { rel: run }); toast("Opening the folder"); }
