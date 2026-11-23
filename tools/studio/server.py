@@ -566,6 +566,139 @@ TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=u
          ".svg": "image/svg+xml", ".json": "application/json"}
 
 
+# ------------------------------------------------------------------ Settings: API keys + media library (2026-11-23)
+# Keys are written ONLY to ~/.config/umf/<file>.env (never the repo, logs or state). The browser can set or clear a key,
+# never read one back: the API answers "set / not set" only.
+KEY_SPECS = [
+    {"id": "hive", "label": "Hive (brain)", "file": "hive.env", "var": "HIVE_API_KEY", "need": True,
+     "help": "The brain that plans the videos."},
+    {"id": "ai33", "label": "ai33 (AI voice)", "file": "ai33.env", "var": "AI33_API_KEY", "need": True,
+     "help": "Narrator / voice-over."},
+    {"id": "pexels", "label": "Pexels (stock B-roll)", "file": "pexels.env", "var": "PEXELS_API_KEY", "need": False,
+     "help": "Free key: pexels.com/api"},
+    {"id": "pixabay", "label": "Pixabay (stock B-roll)", "file": "pixabay.env", "var": "PIXABAY_API_KEY", "need": False,
+     "help": "Free key: pixabay.com/api/docs"},
+    {"id": "anthropic", "label": "Anthropic (optional brain)", "file": "anthropic.env", "var": "ANTHROPIC_API_KEY", "need": False,
+     "help": "Only if you switch the brain to Anthropic."},
+    {"id": "deepseek", "label": "DeepSeek (optional brain)", "file": "deepseek.env", "var": "DEEPSEEK_API_KEY", "need": False, "help": ""},
+    {"id": "openai", "label": "OpenAI (optional brain)", "file": "openai.env", "var": "OPENAI_API_KEY", "need": False, "help": ""},
+]
+KEY_DIR = Path.home() / ".config" / "umf"
+STOCK_LOG = STATE / "stock_fetch.log"
+_stock = {"proc": None}
+
+
+def _key_lines(spec):
+    try:
+        return (KEY_DIR / spec["file"]).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+
+
+def key_is_set(spec):
+    for ln in _key_lines(spec):
+        k, _, v = ln.partition("=")
+        if k.strip() == spec["var"] and v.strip().strip("'\""):
+            return True
+    return False
+
+
+def keys_status():
+    return [dict({k: s[k] for k in ("id", "label", "need", "help")}, set=key_is_set(s)) for s in KEY_SPECS]
+
+
+def set_key(kid, value):
+    """Write (value) or remove (empty value) one key. Other lines of the .env file are kept."""
+    spec = next((s for s in KEY_SPECS if s["id"] == kid), None)
+    if not spec:
+        raise ValueError("unknown key")
+    value = (value or "").strip().strip("'\"")
+    if len(value) > 400 or any(c in value for c in "\r\n\0 ") or (value and not value.isprintable()):
+        raise ValueError("that does not look like an API key (spaces, line breaks or too long)")
+    KEY_DIR.mkdir(parents=True, exist_ok=True)
+    lines = [ln for ln in _key_lines(spec) if ln.partition("=")[0].strip() != spec["var"]]
+    if value:
+        lines.append(f"{spec['var']}={value}")
+    f = KEY_DIR / spec["file"]
+    tmp = f.with_suffix(".tmp")
+    tmp.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    try:
+        os.chmod(tmp, 0o600)
+    except OSError:
+        pass
+    os.replace(tmp, f)
+    os.environ.pop(spec["var"], None)          # this process re-reads the file next time
+    return key_is_set(spec)
+
+
+def _local_cfg_path():
+    return ROOT / "config.local.json"
+
+
+def settings_get():
+    from ucf import audiomix, stock
+    try:
+        local = json.loads(_local_cfg_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        local = {}
+    lib = local.get("media_library", "")
+    out = {"keys": keys_status(), "media_library": lib, "library": None, "stock": stock_status()}
+    if lib and Path(lib).is_dir():
+        st = audiomix.library_status(lib)
+        out["library"] = {"broll": {t: len(stock.clips_in(Path(lib) / "broll" / t))
+                                    for t in sorted(set(stock.DEFAULT_TAGS) | set(stock.tags_on_disk(lib, 0)))},
+                          "music": st["music"], "sfx": st["sfx"]}
+    return out
+
+
+def settings_set(d):
+    """Only media_library for now; merged into config.local.json (this PC only, not in git)."""
+    p = _local_cfg_path()
+    try:
+        local = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        local = {}
+    if "media_library" in d:
+        lib = str(d.get("media_library") or "").strip().strip('"')
+        if lib:
+            lp = Path(lib)
+            if not lp.is_absolute():
+                raise ValueError("use a full folder path, e.g. D:\\HLabsLibrary")
+            for sub in ("broll", "music", "sfx"):
+                (lp / sub).mkdir(parents=True, exist_ok=True)
+        local["media_library"] = lib
+    p.write_text(json.dumps(local, indent=2), encoding="utf-8")
+    return settings_get()
+
+
+def stock_start(tags=None, count=8):
+    """Run tools/stock_fetch.py in the background (one at a time); output in state/stock_fetch.log."""
+    pr = _stock["proc"]
+    if pr and pr.poll() is None:
+        raise ValueError("a stock download is already running")
+    cmd = [sys.executable, str(ROOT / "tools" / "stock_fetch.py"), "--count", str(max(1, min(int(count or 8), 40)))]
+    from ucf import stock
+    for t in tags or []:
+        if re.fullmatch(r"[a-z0-9_]{2,40}", t):
+            cmd += ["--tag", t]
+    env = {k: v for k, v in os.environ.items() if k not in ("PEXELS_API_KEY", "PIXABAY_API_KEY")}
+    env.update(PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
+    STATE.mkdir(exist_ok=True)
+    log = open(STOCK_LOG, "w", encoding="utf-8")
+    kw = {"creationflags": 0x08000000} if WIN else {}
+    _stock["proc"] = subprocess.Popen(cmd, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, env=env, **kw)
+    return stock_status()
+
+
+def stock_status():
+    pr = _stock["proc"]
+    try:
+        tail = STOCK_LOG.read_text(encoding="utf-8", errors="replace").splitlines()[-14:]
+    except OSError:
+        tail = []
+    return {"running": bool(pr and pr.poll() is None), "log": tail}
+
+
 def make_handler(studio):
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -622,6 +755,10 @@ def make_handler(studio):
                     return self._send(200, styles())
                 if u.path == "/api/library":
                     return self._send(200, library())
+                if u.path == "/api/settings":
+                    return self._send(200, settings_get())
+                if u.path == "/api/stock":
+                    return self._send(200, stock_status())
                 if u.path == "/api/log":
                     return self._send(200, {"log": studio.job_log((q.get("id") or [""])[0], events=bool(q.get("events")))})
                 if u.path == "/api/text":
@@ -661,6 +798,21 @@ def make_handler(studio):
             if u.path == "/api/pick":
                 return self._send(200, {"path": pick_file()})
             try:
+                if u.path == "/api/keys":
+                    try:
+                        return self._send(200, {"set": set_key(d.get("id"), d.get("value")), "keys": keys_status()})
+                    except ValueError as e:
+                        return self._send(400, {"error": str(e)})
+                if u.path == "/api/settings":
+                    try:
+                        return self._send(200, settings_set(d))
+                    except (ValueError, OSError) as e:
+                        return self._send(400, {"error": str(e)[:200]})
+                if u.path == "/api/stock":
+                    try:
+                        return self._send(200, stock_start(d.get("tags"), d.get("count") or 8))
+                    except ValueError as e:
+                        return self._send(400, {"error": str(e)})
                 if u.path == "/api/probe":
                     return self._send(200, studio.probe((d.get("url") or "").strip()))
                 if u.path == "/api/jobs":

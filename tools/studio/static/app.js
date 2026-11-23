@@ -31,7 +31,7 @@ const shortUrl = (u) => isLink(u) ? u.replace(/^https?:\/\/(www\.)?/, "").slice(
 function route() {
   S.view = (location.hash || "#queue").slice(1) || "queue";
   document.querySelectorAll(".navlink").forEach((a) => a.classList.toggle("on", a.dataset.view === S.view));
-  if (S.view === "library") loadLibrary(); else render();
+  if (S.view === "library") loadLibrary(); else if (S.view === "settings") loadSettings(); else render();
 }
 window.addEventListener("hashchange", route);
 
@@ -51,6 +51,7 @@ function render() {
   if (S.view === "new") return renderNew();
   if (S.view === "library") return renderLibrary();
   if (S.view === "download") return renderDownload();
+  if (S.view === "settings") return S.settings ? null : loadSettings();
   return renderQueue();
 }
 
@@ -162,7 +163,7 @@ function renderQueue() {
       </section>
       <section class="card"><h2>Needs attention</h2>
         ${bad ? `<div class="attn"><span class="dot" style="background:var(--bad)"></span><div><b>${bad} stream(s) with a failure</b><div class="small muted">Retry from the Finished list - the download is kept.</div></div></div>` : ""}
-        ${!m.checking && m.keys && (!m.keys.hive || !m.keys.ai33) ? `<div class="attn"><span class="dot" style="background:var(--bad)"></span><div><b>API key missing</b><div class="small muted">H Labs.bat → option 4.</div></div></div>` : ""}
+        ${!m.checking && m.keys && (!m.keys.hive || !m.keys.ai33) ? `<div class="attn"><span class="dot" style="background:var(--bad)"></span><div><b>API key missing</b><div class="small muted">Open Settings to add it.</div></div></div>` : ""}
         ${free && free < 20 ? `<div class="attn"><span class="dot" style="background:var(--warn)"></span><div><b>Disk almost full</b><div class="small muted">Delete uploaded videos from the output folder.</div></div></div>` : ""}
         ${m.smoke && m.smoke.fails ? `<div class="attn"><span class="dot" style="background:var(--bad)"></span><div><b>Smoke test: ${m.smoke.fails} problem(s) on this PC</b><div class="small muted">${esc(m.smoke.first_fail)} (${esc(m.smoke.date)}) — H Labs.bat → option 6, or option u to undo the last update.</div></div></div>` : ""}
         <div class="attn"><span class="dot" style="background:var(--ok)"></span><div><b>Finished videos</b><div class="small"><a href="#library">Open the library</a></div></div></div>
@@ -341,6 +342,69 @@ async function addDownloads() {
   const urls = urlsOf(DL.text).filter(isLink); if (!urls.length) return;
   const r = await api("/api/jobs", { urls, style: "", mode: "download", options: { max_height: DL.height } });
   toast(`${(r.added || []).length} download(s) added to the queue`); DL.text = ""; location.hash = "#queue"; await refresh();
+}
+
+/* ------------------------------------------------------------------ settings: API keys + media library */
+async function loadSettings() {
+  if (!S.settings) $("view").innerHTML = `<header class="top"><h1>Settings</h1></header><div class="empty">Loading...</div>`;
+  S.settings = await api("/api/settings"); renderSettings();
+}
+function renderSettings() {
+  const st = S.settings; if (!st) return;
+  const keyRow = (k) => `<div class="keyrow">
+      <div><b>${esc(k.label)}</b> ${k.need ? '<span class="chip">needed</span>' : ""}<div class="small muted">${esc(k.help || "")}</div></div>
+      <span class="${k.set ? "good" : (k.need ? "badtext" : "muted")}" style="min-width:70px">${k.set ? "✓ Set" : "Not set"}</span>
+      <input type="password" id="key_${k.id}" placeholder="${k.set ? "paste a new key to replace" : "paste key"}" autocomplete="off" spellcheck="false">
+      <button class="btn primary" onclick="saveKey('${k.id}')">Save</button>
+      ${k.set ? `<button class="btn" onclick="clearKey('${k.id}')">Remove</button>` : ""}</div>`;
+  const lib = st.library;
+  const grid = (obj) => Object.entries(obj || {}).map(([t, n]) =>
+      `<div class="libcell ${n ? "" : "empty0"}"><span class="mono">${esc(t)}</span><b>${n}</b></div>`).join("");
+  const stock = st.stock || {};
+  const stockKey = st.keys.some((k) => (k.id === "pexels" || k.id === "pixabay") && k.set);
+  $("view").innerHTML = `
+  <header class="top"><h1>Settings</h1><span class="muted small">Keys are saved only on this PC (your user folder, .config\\umf). They are never shown again, never sent anywhere else.</span></header>
+  <div class="content"><section class="col-main">
+    <section class="card"><h2>API keys</h2>${st.keys.map(keyRow).join("")}</section>
+    <section class="card"><h2 style="display:block;width:100%">Media library <span class="small muted">(B-roll, music, SFX for the documentary styles)</span></h2>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <input id="libpath" style="flex:1;min-width:260px" placeholder="D:\\HLabsLibrary" value="${esc(st.media_library || "")}">
+        <button class="btn primary" onclick="saveLib()">Save folder</button>
+      ${lib ? `<div class="libwrap">
+        <div class="actions" style="justify-content:flex-start;margin-top:12px">
+          <button class="btn primary" onclick="fetchStock()" ${stock.running || !stockKey ? "disabled" : ""}>${stock.running ? "Downloading B-roll..." : "Fill empty B-roll folders from Pexels / Pixabay"}</button>
+          <label class="small">clips per folder <input id="stockcount" type="number" min="1" max="40" value="8" style="width:64px"></label>
+          ${stockKey ? "" : '<span class="small badtext">Add a Pexels or Pixabay key above first.</span>'}</div>
+        ${(stock.log || []).length ? `<pre class="logbox">${esc(stock.log.join("\n"))}</pre>` : ""}
+        <h3 class="small muted" style="margin-top:14px">B-roll (stock footage)</h3><div class="libgrid">${grid(lib.broll)}</div>
+        <h3 class="small muted">Music <span class="muted">- add your own files to music\\&lt;folder&gt;</span></h3><div class="libgrid">${grid(lib.music)}</div>
+        <h3 class="small muted">Sound effects <span class="muted">- add your own files to sfx\\&lt;folder&gt;</span></h3><div class="libgrid">${grid(lib.sfx)}</div></div>`
+      : '<div class="small muted" style="margin-top:10px">Pick a folder (a full path). The broll, music and sfx folders are created inside it.</div>'}
+    </section>
+  </section></div>`;
+  clearTimeout(renderSettings.t);
+  if (stock.running) renderSettings.t = setTimeout(async () => { if (S.view === "settings") { S.settings.stock = await api("/api/stock");
+    if (!S.settings.stock.running) S.settings = await api("/api/settings"); renderSettings(); } }, 2000);
+}
+async function saveKey(id) {
+  const v = $("key_" + id).value.trim(); if (!v) return toast("Paste the key first");
+  const r = await api("/api/keys", { id, value: v });
+  if (r.error) return toast(r.error);
+  S.settings.keys = r.keys; renderSettings(); toast("Key saved"); refresh();
+}
+async function clearKey(id) {
+  if (!confirm("Remove this key from this PC?")) return;
+  const r = await api("/api/keys", { id, value: "" }); S.settings.keys = r.keys; renderSettings(); toast("Key removed"); refresh();
+}
+async function saveLib() {
+  const r = await api("/api/settings", { media_library: $("libpath").value.trim() });
+  if (r.error) return toast(r.error);
+  S.settings = r; renderSettings(); toast("Library folder saved");
+}
+async function fetchStock() {
+  const r = await api("/api/stock", { count: +($("stockcount").value || 8) });
+  if (r.error) return toast(r.error);
+  S.settings.stock = r; renderSettings();
 }
 
 /* ------------------------------------------------------------------ library */

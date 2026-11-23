@@ -2720,6 +2720,42 @@ def t52_shared_doc_kit():
     return "music ducks under court, SFX kept off court, speaker captions, 7 card types render, stock fetch/credits/no repeats"
 
 
+def t53_studio_settings():
+    """Studio Settings (2026-11-23): keys are written only to ~/.config/umf/<file>.env (other lines kept, 0600), the API
+    never returns a key value, bad input is refused, and the media library folder goes into config.local.json."""
+    sys.path.insert(0, str(ROOT / "tools" / "studio"))
+    import os
+    import server as SV
+    tmp = Path(tempfile.mkdtemp())
+    old = (SV.KEY_DIR, SV._local_cfg_path)
+    SV.KEY_DIR = tmp / "umf"
+    SV._local_cfg_path = lambda: tmp / "config.local.json"
+    try:
+        SV.KEY_DIR.mkdir()
+        (SV.KEY_DIR / "pexels.env").write_text("# note\nOTHER=1\n", encoding="utf-8")
+        assert SV.set_key("pexels", " sk-123 ") is True
+        txt = (SV.KEY_DIR / "pexels.env").read_text()
+        assert "OTHER=1" in txt and "PEXELS_API_KEY=sk-123" in txt, txt
+        if os.name != "nt":
+            assert oct((SV.KEY_DIR / "pexels.env").stat().st_mode & 0o777) == "0o600"
+        assert "sk-123" not in json.dumps(SV.keys_status())
+        for bad in ("two words", "a\nB=1", "x" * 500):
+            try:
+                SV.set_key("pexels", bad)
+                raise AssertionError("bad key accepted: " + bad[:20])
+            except ValueError:
+                pass
+        assert SV.set_key("pexels", "") is False and "OTHER=1" in (SV.KEY_DIR / "pexels.env").read_text()
+        lib = tmp / "lib"
+        st = SV.settings_set({"media_library": str(lib)})
+        assert (lib / "broll").is_dir() and st["library"]["broll"]["gavel"] == 0
+        assert json.loads((tmp / "config.local.json").read_text())["media_library"] == str(lib)
+    finally:
+        SV.KEY_DIR, SV._local_cfg_path = old
+        shutil.rmtree(tmp, ignore_errors=True)
+    return "keys saved to .config/umf only (0600, never sent back), bad keys refused, library folder saved"
+
+
 def main():
     print("H Labs self-test matrix")
     check(1, "environment", t1_environment)
@@ -2777,6 +2813,7 @@ def main():
     check(49, "resume a stopped run, disk + VRAM checks, one command builder", t49_resume_and_checks)
     check(50, "events.jsonl + run_report + whisper device (GPU/CPU)", t50_events_and_whisper_device)
     check(51, "download only (best quality, batch)", t51_download_only)
+    check(53, "Studio settings: API keys + media library", t53_studio_settings)
     check(52, "documentary kit: music ducking, SFX, speaker captions, paper cards, stock library", t52_shared_doc_kit)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)

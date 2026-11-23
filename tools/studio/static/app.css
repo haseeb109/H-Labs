@@ -150,3 +150,15 @@ tr.failed{background:rgba(248,113,113,.07)}td{border-top-color:var(--line2)}
  border-radius:12px;background:rgba(139,92,246,.06);transition:.2s}
 .dropzone.over{border-color:#22d3ee;background:rgba(34,211,238,.12);box-shadow:0 0 18px rgba(34,211,238,.25)}
 .dropzone #dropmsg{flex-basis:100%}
+
+/* settings (2026-11-23) */
+.keyrow{display:grid;grid-template-columns:minmax(180px,1.3fr) auto minmax(160px,1.4fr) auto auto;gap:10px;align-items:center;padding:12px 0;border-bottom:1px solid rgba(255,255,255,.07)}
+.keyrow:last-child{border-bottom:0}
+.keyrow input,#libpath{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);color:inherit;border-radius:10px;padding:9px 12px;font:inherit}
+.libgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px;margin:6px 0 12px}
+.libcell{display:flex;justify-content:space-between;padding:6px 10px;border-radius:8px;background:rgba(255,255,255,.05);font-size:12px}
+.libcell.empty0{opacity:.5}
+.logbox{max-height:220px;overflow:auto;background:rgba(0,0,0,.35);padding:10px;border-radius:8px;font-size:12px;white-space:pre-wrap}
+@media (max-width:720px){.keyrow{grid-template-columns:1fr auto}.keyrow input{grid-column:1/-1}}
+.libwrap{display:block;width:100%}.libwrap h3{margin:14px 0 4px}
+#stockcount{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);color:inherit;border-radius:8px;padding:6px 8px}
