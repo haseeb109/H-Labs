@@ -22,8 +22,9 @@ def tile_count_events(path, a, b):
         return []
     d = b - a
     ev, prev = [], None
-    for t0, t1, layout, _active in runs(samples, d):
-        n = int(layout[0]) if str(layout)[0].isdigit() else 1
+    for r in runs(samples, d):          # (t0, t1, layout, template, active); times are from the window start
+        t0, layout = a + r[0], r[2]
+        n = int(str(layout)[0]) if str(layout)[:1].isdigit() else 1
         if prev is not None and n != prev[1] and a <= t0 <= b:
             ev.append((round(t0, 1), prev[1], n))
         prev = (t0, n)

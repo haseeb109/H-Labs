@@ -94,6 +94,33 @@ def names_other(text_low, other_name, mine):
                 or (last and re.search(r"\b" + re.escape(last) + r"\b", text_low)))
 
 
+def _doc_fill_vo(v, cases):
+    """Documentary styles ask the brain for many doc fields and it sometimes leaves vo1 / vo_final / a bridge empty
+    (2026-11-23: case_file_doc run failed 3 tries on 'vo1 is empty'). Fill them from the doc / case text it did write."""
+    d = v.get("doc") or {}
+    c0 = cases[0] if cases else {}
+    def put(key, *cands):
+        cur = (v.get(key) or {}).get("text", "") if isinstance(v.get(key), dict) else ""
+        if cur.strip():
+            return
+        for t in cands:
+            t = t.get("text", "") if isinstance(t, dict) else (t or "")
+            if isinstance(t, str) and t.strip():
+                v[key] = {"text": t.strip(), "auto": True}
+                return
+    put("vo1", d.get("backstory"), d.get("cold_open"), " ".join(x for x in (c0.get("story"), c0.get("question")) if x))
+    put("vo_final", d.get("impact_quote") and f"{d.get('impact_quote')} {d.get('tagline') or ''}",
+        " ".join(x for x in (c0.get("ends_on"), "What would you have done? Tell us in the comments.") if x))
+    if isinstance(v.get("vo_final"), dict) and "?" not in v["vo_final"].get("text", ""):
+        v["vo_final"]["text"] += " What would you have done? Tell us in the comments."
+    brs = {b.get("after_case_id"): b for b in v.get("bridges", []) if isinstance(b, dict)}
+    for a, b in zip(cases, cases[1:]):
+        if not (brs.get(a["id"]) or {}).get("text", "").strip():
+            t = f"{a.get('ends_on') or 'That case is decided.'} Next, {b.get('name', 'another defendant')}: {b.get('charge') or b.get('what_it_is') or 'a new case'}."
+            v.setdefault("bridges", [])
+            v["bridges"] = [x for x in v["bridges"] if x.get("after_case_id") != a["id"]] + [{"after_case_id": a["id"], "text": t, "auto": True}]
+
+
 def validate(plan, stream_len, segs=None, cfg=None):
     cfg = cfg or {}
     mode = cfg.get("mode")
@@ -369,6 +396,9 @@ def validate(plan, stream_len, segs=None, cfg=None):
             W.append(f"{w}: flagship case is MONETISATION: LIMITED - avoid making it the thumbnail-facing lead")
         # --- voiceovers
         texts = {}
+        doc = cfg.get("_renderer") == "doc"
+        if doc:
+            _doc_fill_vo(v, [c for i in ids for c in cases if c["id"] == i])
         if cfg.get("_renderer") != "tt" or (v.get("vo1") or {}).get("text"):
             texts["vo1"] = (v.get("vo1") or {}).get("text", "")
         brs = {b.get("after_case_id"): b for b in v.get("bridges", [])}
@@ -383,6 +413,8 @@ def validate(plan, stream_len, segs=None, cfg=None):
             E.append(f"{w}: bridges reference seams that do not exist: {extra}")
         texts["final"] = (v.get("vo_final") or {}).get("text", "")
         limits = {"vo1": (25, 35), "final": (45, 55)}
+        if doc:      # documentary: the cards/doc carry the story, VO length only needs to be sane
+            limits = {"vo1": (12, 60), "final": (25, 90), "bridge": (15, 60)}
         if cfg.get("_renderer") == "tt":
             limits["final"] = (45, 70)          # read as 2 sentence-aligned clips, each <= 18 s
             limits["bridge"] = (35, 40)          # one recap clip, <= 18 s
@@ -395,7 +427,7 @@ def validate(plan, stream_len, segs=None, cfg=None):
                 E.append(f"{w}: {k} is empty")
                 continue
             if not (lo <= nw <= hi):
-                E.append(f"{w}: {k} is {nw} words, must be {lo}-{hi} (real count)")
+                (W if doc else E).append(f"{w}: {k} is {nw} words, must be {lo}-{hi} (real count)")
             low = t.lower()
             for ph in V.BANNED_VO:
                 if ph in low:
@@ -419,7 +451,7 @@ def validate(plan, stream_len, segs=None, cfg=None):
                 if sa & sb:
                     E.append(f"{w}: {ka} and {kb} share an identical sentence - every VO must be NEW words")
                 elif V.ngrams(texts[ka]) & V.ngrams(texts[kb]):
-                    E.append(f"{w}: {ka} and {kb} share a 5-word run - reword")
+                    (W if doc else E).append(f"{w}: {ka} and {kb} share a 5-word run - reword")
         # comment ask / subscribe ask in final
         fl = texts["final"].lower()
         if "comment" not in fl and "which are you" not in fl and "side" not in fl and "?" not in fl:

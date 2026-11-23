@@ -271,6 +271,9 @@ class Studio:
                 j["status"] = "nothing"
                 j["error"] = (f"No case of {(j.get('options') or {}).get('min_case') or 8}:00+ in this stream - "
                               "try 5 min cases, the 30 min / 1 hour mode, or As-is.")
+            elif rc == 0 and any(re.search(r"\bvideos 0\b", x) for x in j["log"][-200:]):
+                j["status"] = "nothing"      # finished, but the plan made no video (every case skipped / needs review)
+                j["error"] = "Finished with 0 videos - every case was skipped or needs review. Copy log and ask."
             elif rc == 0 and not j["failed_videos"]:
                 j["status"] = "done"
             elif rc == 0 or (j["failed_videos"] and j["out_dir"]):
