@@ -2756,6 +2756,71 @@ def t53_studio_settings():
     return "keys saved to .config/umf only (0600, never sent back), bad keys refused, library folder saved"
 
 
+def t54_casedoc_and_engage():
+    """Case document (2026-11-23): facts kept only with transcript evidence, the summary always exists (plan fallback),
+    no official look; a real PDF page gets highlights + automatic black bars over personal data. Retention scheduler:
+    no gap over the limit, value beats first, nothing shown before it is said."""
+    import os
+    from ucf import casedoc as C, engage as E
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        tx = ("Summer Diaz, you are charged with tampering with a governmental record. Bond is set at $3,000. "
+              "I find you guilty and sentence you to 5 years in the Texas Department of Criminal Justice.")
+        case = {"name": "Summer Diaz", "charge": "Tampering with a governmental record", "case_doc": {
+            "defendant": {"value": "Summer Diaz", "evidence": "Summer Diaz, you are charged with"},
+            "bond": {"value": "$3,000", "evidence": "Bond is set at $3,000"},
+            "sentence": {"value": "5 years", "evidence": "sentence you to 5 years in the Texas Department"},
+            "age": {"value": "26", "evidence": "she is twenty six years old"},
+            "plea": {"value": "Guilty 10 years", "evidence": "I find you guilty and sentence you"}}}
+        facts, dropped = C.build_facts(case, tx, {"court": "187th District Court"})
+        assert facts["bond"] == "$3,000" and facts["sentence"] == "5 years" and "age" not in facts and "plea" not in facts, (facts, dropped)
+        assert facts["charges"].startswith("Tampering") and facts["court"] == "187th District Court"
+        f2, _ = C.build_facts({"id": "c7"}, "", {})
+        assert f2["defendant"] == "c7", "the document must exist even with no facts"
+        steps = C.summary_card(facts, tmp / "sum.png")
+        assert len(steps) == len(facts) + 1, len(steps)
+        html = " ".join(p.read_text() for p in tmp.glob("*.html")) if list(tmp.glob("*.html")) else ""
+        assert "OFFICIAL" not in html.upper()
+        assert C.mini_doc(facts, tmp / "mini.png").exists()
+        # a real PDF (made here) with personal data
+        from PIL import Image, ImageDraw
+        pdf = tmp / "rec.pdf"
+        r = subprocess.run(["python", "-c", "import pypdfium2"], capture_output=True)
+        im = Image.new("RGB", (850, 1100), "white")
+        im.save(tmp / "blank.pdf")
+        txt = "STATE OF TEXAS v. SUMMER DIAZ\nPhone (210) 555-0147  DOB: 04/12/1997\nThe defendant is placed on deferred adjudication."
+        subprocess.run(["python", "-c", f"""
+import pypdfium2.raw as R, ctypes
+doc=R.FPDF_CreateNewDocument(); page=R.FPDFPage_New(doc,0,612,792)
+font=R.FPDFText_LoadStandardFont(doc,b'Helvetica')
+for i,line in enumerate({txt!r}.split('\\n')):
+    o=R.FPDFPageObj_CreateTextObj(doc,font,12.0)
+    w=(line+'\\0').encode('utf-16-le'); R.FPDFText_SetText(o,ctypes.cast(ctypes.c_char_p(w),R.FPDF_WIDESTRING))
+    R.FPDFPageObj_Transform(o,1,0,0,1,60,700-i*24); R.FPDFPage_InsertObject(page,o)
+R.FPDFPage_GenerateContent(page)
+import pypdfium2 as P
+d=P.PdfDocument(doc); d.save({str(pdf)!r})
+"""], check=True)
+        assert "555-0147" in C.pdf_page_text(pdf)
+        a, b, rep = C.record_card(pdf, tmp / "r", highlights=["deferred adjudication", "not on page"])
+        assert any("2 redaction" in x for x in rep) and any("not on page" in x for x in rep), rep
+        assert a.read_bytes() != b.read_bytes()
+        # retention
+        segs = [(0, 30, "vo"), (30, 150, "court"), (150, 170, "vo")]
+        cands = [{"t": 40, "kind": "ruling", "text": "BOND: $3,000"}, {"t": 70, "kind": "fact", "text": "26 YEARS OLD"},
+                 {"t": 160, "kind": "fact", "text": "TOO LATE"}] + E.find_jargon([(95, 98, "she is on deferred adjudication")])
+        beats, rep = E.schedule(170, segs, cands, existing=[(0, 5)])
+        g = E.max_gap(beats, segs, 170, existing=[(0, 5)])
+        assert g["court"] <= 18.6 and g["vo"] <= 7.6, g
+        late = [b for b in beats if b["text"] == "TOO LATE"]
+        assert not late or late[0]["start"] >= 158, "a fact must not appear before it is said"
+        assert any(b["kind"] == "jargon" for b in beats) and any(not b["value"] for b in beats) and rep
+        assert all(beats[i]["kind"] != beats[i + 1]["kind"] or beats[i]["kind"] in ("zoom", "push") for i in range(len(beats) - 1))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return "facts need transcript evidence, document always made, PDF highlight + auto redaction, no screen gap over limit"
+
+
 def main():
     print("H Labs self-test matrix")
     check(1, "environment", t1_environment)
@@ -2814,6 +2879,7 @@ def main():
     check(50, "events.jsonl + run_report + whisper device (GPU/CPU)", t50_events_and_whisper_device)
     check(51, "download only (best quality, batch)", t51_download_only)
     check(53, "Studio settings: API keys + media library", t53_studio_settings)
+    check(54, "case document + retention scheduler", t54_casedoc_and_engage)
     check(52, "documentary kit: music ducking, SFX, speaker captions, paper cards, stock library", t52_shared_doc_kit)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)

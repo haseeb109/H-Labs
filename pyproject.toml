@@ -12,6 +12,7 @@ dependencies = [
     "faster-whisper",
     "playwright",
     "mediapipe",
+    "pypdfium2",               # case documents: PDF page -> image + text positions (highlight / redaction)
 ]
 
 [project.optional-dependencies]
