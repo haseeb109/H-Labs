@@ -366,6 +366,15 @@ function renderSettings() {
   <header class="top"><h1>Settings</h1><span class="muted small">Keys are saved only on this PC (your user folder, .config\\umf). They are never shown again, never sent anywhere else.</span></header>
   <div class="content"><section class="col-main">
     <section class="card"><h2>API keys</h2>${st.keys.map(keyRow).join("")}</section>
+    <section class="card"><h2 style="display:block;width:100%">B-roll source <span class="small muted">(stock footage for the documentary styles)</span></h2>
+      <div class="seg" role="radiogroup" aria-label="B-roll source" style="margin-top:8px">${[["auto", "Both (API first, then my folder)"], ["api", "Pexels / Pixabay only"], ["folder", "My folder only"]].map(([k, t]) =>
+        `<button type="button" role="radio" aria-checked="${st.broll_source === k}" onclick="saveBroll({broll_source:'${k}'})">${t}</button>`).join("")}</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px">
+        <input id="brollpath" style="flex:1;min-width:260px" placeholder="Your B-roll folder, e.g. D:\\Stock Footage" value="${esc(st.broll_folder || "")}">
+        <button class="btn" onclick="pickBroll()">${ICON.folder || ""}Choose folder</button>
+        <button class="btn primary" onclick="saveBroll({broll_folder:$('brollpath').value.trim()})">Save</button></div>
+      <div class="small muted" style="margin-top:8px">${st.broll_folder ? `<b>${st.broll_folder_clips}</b> video clip(s) found in your folder (sub-folders too). Clips are picked at random; a file whose name matches the scene (e.g. <span class="mono">police car.mp4</span>) is picked first.` : "Attach a folder with your own B-roll clips (any names, any sub-folders). The styles pick clips from it at random."}</div>
+    </section>
     <section class="card"><h2 style="display:block;width:100%">Media library <span class="small muted">(B-roll, music, SFX for the documentary styles)</span></h2>
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
         <input id="libpath" style="flex:1;min-width:260px" placeholder="D:\\HLabsLibrary" value="${esc(st.media_library || "")}">
@@ -400,6 +409,16 @@ async function saveLib() {
   const r = await api("/api/settings", { media_library: $("libpath").value.trim() });
   if (r.error) return toast(r.error);
   S.settings = r; renderSettings(); toast("Library folder saved");
+}
+async function saveBroll(body) {
+  const r = await api("/api/settings", body);
+  if (r.error) return toast(r.error);
+  S.settings = r; renderSettings(); toast("B-roll setting saved");
+}
+async function pickBroll() {
+  toast("A folder window opened on this PC");
+  const r = await api("/api/pick", { folder: true });
+  if (r.path) saveBroll({ broll_folder: r.path });
 }
 async function fetchStock() {
   const r = await api("/api/stock", { count: +($("stockcount").value || 8) });

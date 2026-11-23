@@ -18,6 +18,8 @@ EXTRA_CONFIG_KEYS = {
     "court", "court_line", "disable_thinking", "footage_post", "footage_pre", "json_mode",
     "mock_passA_replies", "mock_passB_replies", "mock_reply_file", "output_kind", "prices", "prompt_cache",
     "provider_max_tokens", "send_temperature", "sting_audio_file", "thumb_min_face_px", "yt_dlp_extra_args",
+    # documentary styles (ucf/render_doc.py)
+    "doc_style", "palette", "music_moods", "mix", "caption_look", "speaker_names", "beat_gap_court", "court_line_plain",
 }
 KNOWN_CONFIG_KEYS = frozenset(DEFAULTS) | EXTRA_CONFIG_KEYS
 

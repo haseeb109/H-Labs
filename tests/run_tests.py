@@ -2821,6 +2821,68 @@ d=P.PdfDocument(doc); d.save({str(pdf)!r})
     return "facts need transcript evidence, document always made, PDF highlight + auto redaction, no screen gap over limit"
 
 
+def t55_doc_styles():
+    """Documentary styles (2026-11-23): the 6 style packs load (no channel name / watermark / logo), the doc renderer makes a
+    real video from a plan that has NO doc fields at all (fallbacks) with the case document in it, B-roll comes from the
+    owner's folder when there is no API library, and a docu-series remembers the episode number per defendant."""
+    import os
+    from ucf import config, tts, stock
+    from ucf.render_doc import DocRenderer
+    ids = ["case_file_doc", "verdict_first", "emotional_cut", "evidence_board", "instant_replay", "docu_series"]
+    for sid in ids:
+        c = config.load(style=sid)
+        assert c["_renderer"] == "doc" and c["watermark"] is False and not c.get("channel_name"), sid
+        assert "doc" in (ROOT / "styles" / sid / "prompts" / "extra.md").read_text().lower()
+    tmp = Path(tempfile.mkdtemp())
+    real = tts.synth
+    try:
+        src = tmp / "s.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=640x360:d=50:r=30", "-f", "lavfi",
+                        "-i", "sine=f=300:d=50", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(src)], check=True)
+        bf = tmp / "myclips" / "night"
+        bf.mkdir(parents=True)
+        for n in ("police car.mp4", "street.mp4"):
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=s=640x360:d=6:r=30", "-c:v", "libx264",
+                            "-preset", "ultrafast", str(bf / n)], check=True)
+        cfgb = {"broll_source": "folder", "broll_folder": str(tmp / "myclips")}
+        got = stock.pick_broll(cfgb, "police_car_night", 1, set())
+        assert got and got[0].name == "police car.mp4", got
+        assert len(stock.pick_broll(cfgb, "gavel", 3, set())) == 2
+        work = tmp / "work"
+        (work / "tts").mkdir(parents=True)
+        (work / "transcript.json").write_text(json.dumps([{"start": 8, "end": 11, "text": "Do you understand the charges?"},
+                                                          {"start": 20, "end": 23, "text": "Bond is set at $3,000."}]))
+
+        def fake(text, cache, cfg):
+            p = Path(cache) / f"v{abs(hash(text)) % 10**7}.wav"
+            if not p.exists():
+                subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=f=500:d=1.5", "-ar", "48000", str(p)], check=True)
+            return p
+        tts.synth = fake
+        case = {"id": 1, "name": "Jo Test", "in": "0:00:05", "out": "0:00:40", "status": "used", "charge": "Theft"}
+        video = {"n": 1, "case_ids": [1], "hook": {"in": "0:00:20", "out": "0:00:26", "headline": "x"},
+                 "vo1": {"text": "A short story."}, "vo_final": {"text": "The end."}}
+        plan = {"source_file": "s.mp4", "cases": [case], "videos": [video]}
+        for sid in ("docu_series", "docu_series"):
+            cfg = config.load(style=sid)
+            cfg.update(cfgb, media_library="", state_dir=str(tmp / "state"))
+            rn = DocRenderer(cfg, {"s.mp4": {"path": str(src), "url": ""}}, ROOT)
+            out = tmp / "out"
+            shutil.rmtree(out, ignore_errors=True)
+            out.mkdir()
+            res = rn.render_video(plan, video, out, work / "tts", ui=lambda *m: None)
+            assert res["measured_total"] > 20 and (out / "case_document.json").exists()
+        facts = json.loads((out / "case_document.json").read_text())
+        assert facts["defendant"] == "Jo Test" and facts["charges"] == "Theft"
+        hist = json.loads((tmp / "state" / "series" / "jo_test.json").read_text())
+        assert [e["n"] for e in hist["episodes"]] == [1], "the same stream again is the same episode, not a new one"
+        assert any(r["kind"] == "court" for r in res["rows"]) and res["timeline"]["segments"][0]["kind"] == "hook"
+    finally:
+        tts.synth = real
+        shutil.rmtree(tmp, ignore_errors=True)
+    return "6 packs load unbranded; video made from a bare plan with the case document; own-folder B-roll; series memory"
+
+
 def main():
     print("H Labs self-test matrix")
     check(1, "environment", t1_environment)
@@ -2880,6 +2942,7 @@ def main():
     check(51, "download only (best quality, batch)", t51_download_only)
     check(53, "Studio settings: API keys + media library", t53_studio_settings)
     check(54, "case document + retention scheduler", t54_casedoc_and_engage)
+    check(55, "documentary styles: 6 packs, doc renderer, own B-roll folder, series memory", t55_doc_styles)
     check(52, "documentary kit: music ducking, SFX, speaker captions, paper cards, stock library", t52_shared_doc_kit)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)

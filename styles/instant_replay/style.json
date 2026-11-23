@@ -1,0 +1,27 @@
+{
+  "id": "instant_replay",
+  "name": "Instant Replay Breakdown",
+  "renderer": "doc",
+  "look": "doc",
+  "prompt_master": "prompts/master_v9.md",
+  "prompt_addendum": "prompts/json_addendum.md",
+  "prompt_extra": "prompts/extra.md",
+  "title_rules": "prompts/title_rules.md",
+  "config": {
+    "doc_style": "instant_replay",
+    "channel_name": "",
+    "watermark": false,
+    "logo_file": "",
+    "channel_intro_file": "",
+    "coming_up_tag": false,
+    "intro_seconds_tt": 0,
+    "vo_clip_max": 18.0,
+    "vo_clip_target": 17.0,
+    "hook_min": 10.0,
+    "hook_max": 30.0,
+    "palette": {
+      "accent": "#FFD23F",
+      "danger": "#EF233C"
+    }
+  }
+}

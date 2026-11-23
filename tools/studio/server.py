@@ -430,6 +430,27 @@ def pick_file():
         return ""
 
 
+def pick_folder(title="H Labs - choose a folder"):
+    """The PC's own folder dialog -> the real path ("" when cancelled): B-roll folder, media library."""
+    if WIN:
+        ps = ("Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.Form -Property @{TopMost=$true}; "
+              f"$d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = '{title}'; "
+              "if ($d.ShowDialog($f) -eq 'OK') { [Console]::Out.Write($d.SelectedPath) }")
+        r = subprocess.run(["powershell", "-NoProfile", "-STA", "-Command", ps], capture_output=True, text=True, encoding="utf-8")
+        return (r.stdout or "").strip()
+    try:
+        import tkinter
+        from tkinter import filedialog
+        root = tkinter.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        path = filedialog.askdirectory(title=title)
+        root.destroy()
+        return path or ""
+    except Exception:  # noqa - no display / no tkinter: the path can still be typed
+        return ""
+
+
 INPUT = ROOT / "input"
 
 
@@ -642,7 +663,10 @@ def settings_get():
     except (OSError, ValueError):
         local = {}
     lib = local.get("media_library", "")
-    out = {"keys": keys_status(), "media_library": lib, "library": None, "stock": stock_status()}
+    bf = local.get("broll_folder", "")
+    out = {"keys": keys_status(), "media_library": lib, "library": None, "stock": stock_status(),
+           "broll_source": local.get("broll_source", "auto"), "broll_folder": bf,
+           "broll_folder_clips": len(stock.folder_clips(bf)) if bf else 0}
     if lib and Path(lib).is_dir():
         st = audiomix.library_status(lib)
         out["library"] = {"broll": {t: len(stock.clips_in(Path(lib) / "broll" / t))
@@ -667,6 +691,13 @@ def settings_set(d):
             for sub in ("broll", "music", "sfx"):
                 (lp / sub).mkdir(parents=True, exist_ok=True)
         local["media_library"] = lib
+    if "broll_folder" in d:
+        bf = str(d.get("broll_folder") or "").strip().strip('"')
+        if bf and not Path(bf).is_dir():
+            raise ValueError("that B-roll folder does not exist on this PC")
+        local["broll_folder"] = bf
+    if d.get("broll_source") in ("auto", "api", "folder"):
+        local["broll_source"] = d["broll_source"]
     p.write_text(json.dumps(local, indent=2), encoding="utf-8")
     return settings_get()
 
@@ -796,7 +827,7 @@ def make_handler(studio):
                 return self._send(403, {"error": "forbidden"})
             d = self._json()
             if u.path == "/api/pick":
-                return self._send(200, {"path": pick_file()})
+                return self._send(200, {"path": pick_folder() if d.get("folder") else pick_file()})
             try:
                 if u.path == "/api/keys":
                     try:

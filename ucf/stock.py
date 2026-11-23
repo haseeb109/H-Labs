@@ -219,3 +219,63 @@ def pick_clips(library, tag, n, used=None, seed=0):
         out.append(rnd.choice(files))
     used.update(str(f) for f in out)
     return out
+
+
+# ------------------------------------------------------------------ B-roll for a render: API library and/or own folder
+def folder_clips(folder):
+    """Every video file under the owner's B-roll folder (sub-folders too)."""
+    d = Path(folder)
+    if not d.is_dir():
+        return []
+    return sorted(p for p in d.rglob("*") if p.suffix.lower() in VIDEO_EXT and p.is_file() and p.stat().st_size > 50_000)
+
+
+def _tag_score(path, tag):
+    words = [w for w in tag.lower().split("_") if len(w) > 2]
+    name = str(path).lower()
+    return sum(1 for w in words if w in name)
+
+
+def pick_broll(cfg, tag, n, used=None, seed=0, ui=print):
+    """n B-roll clips for one beat. cfg["broll_source"]:
+         "auto"   (default) - library tag folder (Pexels/Pixabay) -> fills it from the API when a key is set ->
+                              the owner's B-roll folder (random, files whose name matches the tag first)
+         "api"    - only the Pexels/Pixabay library
+         "folder" - only the owner's folder (cfg["broll_folder"])
+    -> list of paths (may be shorter than n, or empty: the renderer then uses blurred court footage)."""
+    used = used if used is not None else set()
+    src = cfg.get("broll_source", "auto")
+    lib = cfg.get("media_library") or ""
+    out = []
+    if src in ("auto", "api") and lib:
+        if not clips_in(Path(lib) / "broll" / tag):
+            try:
+                pk, xk = _keys()
+                if pk or xk:
+                    fetch_tag(lib, tag, count=int(cfg.get("broll_fetch_count", 8)), ui=ui)
+            except StockError as e:
+                ui(f"  b-roll: {tag}: {e}")
+        if clips_in(Path(lib) / "broll" / tag):
+            out = pick_clips(lib, tag, n, used, seed)
+    if len(out) < n and src in ("auto", "folder") and cfg.get("broll_folder"):
+        allc = folder_clips(cfg["broll_folder"])
+        rnd = random.Random(f"{tag}:{seed}:folder")
+        fresh = [c for c in allc if str(c) not in used]
+        rnd.shuffle(fresh)
+        fresh.sort(key=lambda c: -_tag_score(c, tag))        # stable: name matches first, random inside each group
+        take = fresh[:n - len(out)] or (rnd.sample(allc, min(len(allc), n - len(out))) if allc else [])
+        used.update(str(c) for c in take)
+        out += take
+    return out
+
+
+def broll_available(cfg):
+    """-> short text of what the renderer can use, for the Studio / run log."""
+    lib = cfg.get("media_library") or ""
+    pk, xk = _keys()
+    parts = []
+    if lib:
+        parts.append(f"library {len(tags_on_disk(lib))} tag folder(s)" + (" + API" if (pk or xk) else ""))
+    if cfg.get("broll_folder"):
+        parts.append(f"own folder {len(folder_clips(cfg['broll_folder']))} clip(s)")
+    return ", ".join(parts) or "none (blurred court footage is used)"

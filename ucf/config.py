@@ -22,7 +22,10 @@ DEFAULTS = {
     "coming_up_tag": True,                             # small "COMING UP" label on the hook teaser
     "channel_intro_file": "assets/channel_intro.mp4",   # your 5-8 s animation; if missing a title card is generated
     "output_dir": "output",
-    "media_library": "",                               # B-roll / music / SFX library (broll/<tag>, music/<mood>, sfx/<kind>)
+    "media_library": "",
+    "broll_source": "auto",                            # auto = Pexels/Pixabay library first, then your folder | api | folder
+    "broll_folder": "",                                # your own B-roll folder (any videos, sub-folders ok): random picks
+    "broll_fetch_count": 8,                            # clips fetched per new tag when the library folder is empty                               # B-roll / music / SFX library (broll/<tag>, music/<mood>, sfx/<kind>)
     "work_dir": "work",
     "state_dir": "state",
     # --- brain (Master Prompt v9) ---
@@ -170,7 +173,7 @@ def load(path=None, style=None):
         cfg["_prompt_master"] = s.get("prompt_master", "prompts/master_v9.md")
         cfg["_prompt_addendum"] = s.get("prompt_addendum", "prompts/json_addendum.md")
         for k, v in (s.get("config") or {}).items():
-            if k in ("logo_file", "channel_intro_file") and not Path(v).is_absolute():
+            if k in ("logo_file", "channel_intro_file") and v and not Path(v).is_absolute():
                 v = f"{cfg['style_dir']}/{v}"
             cfg[k] = v
     else:

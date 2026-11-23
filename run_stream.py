@@ -327,6 +327,10 @@ def stage_setup(R):
         R.cfg["_asis"] = True
         R.a.mode = "all"
     R.mode = config.apply_mode(R.cfg, R.a.mode)
+    if R.cfg.get("_renderer") == "doc" and R.mode not in ("all", "asis", "clips"):
+        # documentary styles tell ONE defendant's story per video: 30 / 60 min bundles do not fit them
+        ui(f"style {R.cfg['style']}: one video per case (mode {R.mode} -> all)")
+        R.mode = config.apply_mode(R.cfg, "all")
     # after apply_mode: mode "all" sets its own 8:00 default, the run's choice wins over it
     if R.cfg.get("_asis"):
         R.cfg["min_case_minutes"] = 0.0
@@ -721,6 +725,9 @@ def stage_render(R):
         _mod = importlib.util.module_from_spec(_spec)
         _spec.loader.exec_module(_mod)
         rn = getattr(_mod, _sj.get("renderer_class", "Renderer"))(R.cfg, R.sources, R.root)
+    elif R.cfg.get("_renderer") == "doc":
+        from ucf.render_doc import DocRenderer
+        rn = DocRenderer(R.cfg, R.sources, R.root)
     elif R.cfg.get("_look") == "ov":
         from ucf.render_ov import OVRenderer
         rn = OVRenderer(R.cfg, R.sources, R.root)

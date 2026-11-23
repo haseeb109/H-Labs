@@ -290,7 +290,7 @@ def big_text(text, out, palette=None, sub="", colour=None):
     return render(inner, out, p)
 
 
-def profile_card(photo, pills, out, palette=None, caption=""):
+def profile_card(photo, pills, out, palette=None, caption="", stamp_text=""):
     """Polaroid-style photo left + stacked fact pills right. -> one PNG per pill step."""
     p = _pal(palette)
     ph = Path(photo).resolve().as_uri() if photo else ""
@@ -302,6 +302,128 @@ def profile_card(photo, pills, out, palette=None, caption=""):
     for n in range(0, len(pills) + 1):
         stack = "<br>".join(f'<span class="pill" style="font-size:40px">{esc(t)}</span>' for t in pills[:n])
         inner = (f'<div class="a" style="inset:0;background:radial-gradient(circle at 30% 40%,#8a7f72,#3e3a35)"></div>'
-                 + pol + f'<div class="a" style="left:960px;top:300px">{stack}</div>')
+                 + pol + f'<div class="a" style="left:960px;top:300px">{stack}</div>'
+                 + (f'<div class="a" style="left:560px;top:640px;transform:rotate(-9deg)"><span class="stamp" '
+                    f'style="font-size:96px">{esc(stamp_text)}</span></div>' if stamp_text else ""))
         outs.append(render(inner, Path(out).with_name(f"{Path(out).stem}_{n}"), p, transparent=False))
     return outs
+
+
+# ---------------------------------------------------------------- style extras (2026-11-23)
+def board(items, links, out, palette=None, reveal=None, master=None, stamp_text=None):
+    """Evidence board: cork background, pinned cards, red strings. items = [{"id","label","sub"}] (max 8),
+    links = [[id_a, id_b, "label"]]. reveal = how many items are pinned yet (None = all); strings only between pinned
+    items. master = facts dict -> the case summary pinned in the middle. Full frame."""
+    p = _pal(palette)
+    n = len(items) if reveal is None else max(0, min(reveal, len(items)))
+    slots = [(180, 150), (760, 120), (1340, 170), (160, 640), (1380, 660), (560, 760), (1000, 780), (1500, 420)]
+    pos = {it["id"]: slots[i % len(slots)] for i, it in enumerate(items[:8])}
+    shown = {it["id"] for it in items[:n]}
+    lines = ""
+    for a, b, *lab in links:
+        if a in shown and b in shown:
+            (x1, y1), (x2, y2) = pos[a], pos[b]
+            x1, y1, x2, y2 = x1 + 150, y1 + 40, x2 + 150, y2 + 40
+            lines += (f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{p["danger"]}" stroke-width="5"/>'
+                      + (f'<text x="{(x1 + x2) / 2}" y="{(y1 + y2) / 2 - 10}" fill="#fff" font-family="Mono" font-size="22" '
+                         f'text-anchor="middle" style="paint-order:stroke;stroke:#000;stroke-width:5px">{esc(lab[0])}</text>' if lab and lab[0] else ""))
+    cards_ = ""
+    for i, it in enumerate(items[:n]):
+        x, y = pos[it["id"]]
+        rot = (-3, 2, -1.5, 3, -2, 1.5, -2.5, 2)[i % 8]
+        cards_ += (f'<div class="a" style="left:{x}px;top:{y}px;width:300px;background:{p["paper"]};color:{p["ink"]};padding:16px 18px;'
+                   f'transform:rotate({rot}deg);box-shadow:0 12px 24px rgba(0,0,0,.5);font-family:{p["mono"]}">'
+                   f'<div style="position:absolute;left:138px;top:-12px;width:24px;height:24px;border-radius:50%;background:{p["danger"]};'
+                   f'box-shadow:0 3px 6px rgba(0,0,0,.5)"></div><div style="font-size:28px;font-weight:700;text-transform:uppercase">{esc(it["label"])}</div>'
+                   f'<div style="font-size:19px;color:{p["muted"]};margin-top:6px">{esc(it.get("sub", ""))}</div></div>')
+    mid = ""
+    if master:
+        rows = "".join(f'<div style="font-size:19px;margin-top:4px">{esc(k.upper())}: <b>{esc(v)}</b></div>'
+                       for k, v in list(master.items())[:5])
+        mid = (f'<div class="a" style="left:700px;top:380px;width:520px;background:{p["paper"]};color:{p["ink"]};padding:20px 24px;'
+               f'font-family:{p["mono"]};box-shadow:0 18px 36px rgba(0,0,0,.55);transform:rotate(-1deg)">'
+               f'<div style="font-size:16px;letter-spacing:3px;color:{p["muted"]}">CASE SUMMARY · MASTER FILE</div>{rows}</div>')
+    st = (f'<div class="a" style="left:1200px;top:860px;transform:rotate(-8deg)"><span class="stamp">{esc(stamp_text)}</span></div>'
+          if stamp_text else "")
+    inner = (f'<div class="a" style="inset:0;background:radial-gradient(circle at 40% 40%,#8a6440,#4a3220 75%)"></div>'
+             f'<svg class="a" style="inset:0" width="1920" height="1080">{lines}</svg>{mid}{cards_}{st}')
+    return render(inner, out, p, transparent=False)
+
+
+def telestrator(marks, out, palette=None, label=""):
+    """Replay drawing layer (transparent): marks = [{"kind": "circle"|"arrow"|"underline", "x": 0-1, "y": 0-1, "r": 0-1}]
+    in frame fractions. label = small caption next to the first mark (e.g. EYES DOWN)."""
+    p = _pal(palette)
+    col = p["accent"]
+    svg = ""
+    for m in marks[:4]:
+        x, y = float(m.get("x", .5)) * 1920, float(m.get("y", .45)) * 1080
+        r = float(m.get("r", .09)) * 1080
+        k = m.get("kind", "circle")
+        if k == "arrow":
+            svg += (f'<line x1="{x + 260}" y1="{y - 200}" x2="{x + 30}" y2="{y - 20}" stroke="{col}" stroke-width="12" stroke-linecap="round"/>'
+                    f'<polygon points="{x + 10},{y} {x + 70},{y - 20} {x + 30},{y - 70}" fill="{col}"/>')
+        elif k == "underline":
+            svg += f'<path d="M{x - r} {y} Q {x} {y + 18} {x + r} {y - 4}" stroke="{col}" stroke-width="10" fill="none" stroke-linecap="round"/>'
+        else:
+            svg += f'<ellipse cx="{x}" cy="{y}" rx="{r * 1.1}" ry="{r}" stroke="{col}" stroke-width="10" fill="none"/>'
+    lab = ""
+    if label and marks:
+        x, y = float(marks[0].get("x", .5)) * 1920, float(marks[0].get("y", .45)) * 1080
+        lab = (f'<div class="a" style="left:{min(1500, x + 140)}px;top:{max(40, y - 260)}px"><span class="pill" '
+               f'style="font-size:36px">{esc(label)}</span></div>')
+    inner = f'<svg class="a" style="inset:0" width="1920" height="1080">{svg}</svg>{lab}'
+    return render(inner, out, p)
+
+
+def title_card(kicker, title, lines, out, palette=None):
+    """Case title card: THE STATE OF TEXAS v. NAME / charge / court. Full frame, legal background."""
+    p = _pal(palette)
+    rows = "".join(f'<div style="font-family:{p["mono"]};font-size:30px;margin-top:10px;color:{p["muted"]};text-transform:uppercase">{esc(x)}</div>'
+                   for x in lines if x)
+    inner = (_legal_bg() + f'<div class="card a" style="left:50%;top:50%;transform:translate(-50%,-50%);width:1400px;text-align:center;'
+             f'background:rgba(10,10,12,.88)"><div style="font-family:{p["mono"]};font-size:24px;letter-spacing:6px;color:{p["accent"]}">{esc(kicker)}</div>'
+             f'<div class="big" style="font-size:84px;margin:16px 0 6px">{esc(title)}</div>{rows}</div>')
+    return render(inner, out, p, transparent=False)
+
+
+def episode_card(n, title, out, palette=None, sub=""):
+    p = _pal(palette)
+    inner = (f'<div class="a" style="inset:0;background:#0b0b0d"></div><div class="a" style="left:0;right:0;top:50%;transform:translateY(-50%);text-align:center">'
+             f'<div style="font-family:{p["mono"]};font-size:34px;letter-spacing:10px;color:{p["accent"]}">EPISODE {esc(n)}</div>'
+             f'<div class="big" style="font-size:130px;margin-top:10px">{esc(title)}</div>'
+             + (f'<div style="font-family:{p["mono"]};font-size:28px;margin-top:16px;color:{p["muted"]};text-transform:uppercase">{esc(sub)}</div>' if sub else "")
+             + "</div>")
+    return render(inner, out, p, transparent=False)
+
+
+def black_text(text, out, palette=None, sub="", colour=None):
+    """Kinetic line on black (full frame)."""
+    p = _pal(palette)
+    inner = (f'<div class="a" style="inset:0;background:#000"></div>'
+             f'<div class="a" style="left:120px;right:120px;top:50%;transform:translateY(-50%);text-align:center">'
+             f'<div class="big" style="font-size:110px;color:{colour or p["white"]}">{esc(text)}</div>'
+             + (f'<div style="font-family:{p["mono"]};font-size:30px;letter-spacing:6px;margin-top:24px;color:{p["muted"]};text-transform:uppercase">{esc(sub)}</div>' if sub else "")
+             + "</div>")
+    return render(inner, out, p, transparent=False)
+
+
+# Texas punishment ranges by offense level (Penal Code ch. 12) - fixed table, the brain only names the level.
+PENALTY = {"capital": "LIFE OR DEATH", "F1": "5 TO 99 YEARS OR LIFE", "F2": "2 TO 20 YEARS", "F3": "2 TO 10 YEARS",
+           "SJF": "180 DAYS TO 2 YEARS", "MA": "UP TO 1 YEAR", "MB": "UP TO 180 DAYS", "MC": "FINE UP TO $500"}
+PENALTY_NAME = {"capital": "CAPITAL FELONY", "F1": "FIRST-DEGREE FELONY", "F2": "SECOND-DEGREE FELONY",
+                "F3": "THIRD-DEGREE FELONY", "SJF": "STATE JAIL FELONY", "MA": "CLASS A MISDEMEANOR",
+                "MB": "CLASS B MISDEMEANOR", "MC": "CLASS C MISDEMEANOR"}
+
+
+def penalty_card(charge, level, out, palette=None):
+    """Charge + its punishment range (Texas Penal Code 12.xx). None when the level is unknown."""
+    if level not in PENALTY:
+        return None
+    p = _pal(palette)
+    inner = (_legal_bg() + f'<div class="paper" style="left:360px;top:300px;width:1200px;transform:rotate(-1deg)">'
+             f'<div class="k">THE CHARGE · Texas Penal Code ch. 12</div><div class="t">{esc(charge)}</div>'
+             f'<div style="font-size:30px">{PENALTY_NAME[level]}</div></div>'
+             f'<div class="a" style="right:300px;bottom:180px;background:{p["danger"]};color:{p["white"]};font-family:{p["head"]};'
+             f'font-weight:700;font-size:80px;padding:10px 40px;border:6px solid {p["white"]};transform:rotate(-3deg)">{PENALTY[level]}</div>')
+    return render(inner, out, p, transparent=False)
