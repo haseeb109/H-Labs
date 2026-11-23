@@ -23,6 +23,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+import ucf  # noqa: E402,F401 - ffmpeg / yt-dlp never read the console (ucf/__init__.py)
 os.chdir(ROOT)
 os.environ.setdefault("PYTHONUTF8", "1")
 WIN = os.name == "nt"

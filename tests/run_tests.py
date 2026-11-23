@@ -2953,6 +2953,18 @@ def t56_dossier():
     return "defendant found + cut by name, earlier hearings first as chapters, brain context, Studio command, series footage"
 
 
+def t57_tools_never_read_console():
+    """2026-11-23 laptop smoke test: a key pressed during setup put ffmpeg into its "Enter command:" mode and the whisper /
+    download checks timed out. ffmpeg / ffprobe / yt-dlp started by H Labs now get an empty input; Python children keep it."""
+    import ucf  # noqa: F401
+    t = time.time()
+    r = subprocess.run(["ffmpeg", "-v", "error", "-f", "s16le", "-i", "-", "-f", "null", "-"], capture_output=True, timeout=20)
+    assert time.time() - t < 10 and r.returncode == 0, "ffmpeg waited for console input"
+    p = subprocess.Popen([sys.executable, "-c", "import sys; print(sys.stdin.read())"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    assert p.communicate(b"ok")[0].strip() == b"ok", "an explicit stdin= must still work"
+    return "ffmpeg gets EOF at once instead of waiting on the console; explicit stdin untouched"
+
+
 def main():
     print("H Labs self-test matrix")
     check(1, "environment", t1_environment)
@@ -3014,6 +3026,7 @@ def main():
     check(54, "case document + retention scheduler", t54_casedoc_and_engage)
     check(55, "documentary styles: 6 packs, doc renderer, own B-roll folder, series memory", t55_doc_styles)
     check(56, "dossier: several hearings of one defendant + series footage", t56_dossier)
+    check(57, "ffmpeg / yt-dlp never wait on the console", t57_tools_never_read_console)
     check(52, "documentary kit: music ducking, SFX, speaker captions, paper cards, stock library", t52_shared_doc_kit)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)

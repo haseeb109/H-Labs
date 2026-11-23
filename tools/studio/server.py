@@ -26,6 +26,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+import ucf  # noqa: E402,F401 - ffmpeg / yt-dlp never read the console (ucf/__init__.py)
 STATIC = Path(__file__).resolve().parent / "static"
 STATE = ROOT / "state"
 QFILE = STATE / "studio_queue.json"
