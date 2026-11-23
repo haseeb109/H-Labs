@@ -731,6 +731,122 @@ def stock_status():
     return {"running": bool(pr and pr.poll() is None), "log": tail}
 
 
+# ------------------------------------------------------------------ Update from the Studio (2026-11-23)
+# Windows: packages cannot be replaced while this Python runs (same reason menu 8 closes first). So the Update button makes the
+# server exit with code 88; tools\win\studio.ps1 (started by "H Labs Studio.bat") then runs the normal update (setup.ps1 -Update:
+# git pull with state kept, uv sync, newest yt-dlp, smoke test) in the same window and starts the Studio again. The open page
+# waits and then shows "updated vA (c0) -> vB (c1)" with the list of changes. Mac / Linux: git pull + yt-dlp in place, restart.
+UPD_PENDING = STATE / "update_pending.json"
+UPD_RESULT = STATE / "update_result.json"
+_upd = {"check": None}
+
+
+def _git(*a, timeout=60):
+    try:
+        return subprocess.run(["git", "-C", str(ROOT), *a], capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return subprocess.CompletedProcess(a, 1, "", str(e))
+
+
+def _ver():
+    try:
+        return (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    except OSError:
+        return "dev"
+
+
+def version_info():
+    try:
+        last = json.loads(UPD_RESULT.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        last = None
+    br = _git("symbolic-ref", "-q", "--short", "HEAD").stdout.strip()
+    return {"version": _ver(), "commit": _git("rev-parse", "--short", "HEAD").stdout.strip(), "branch": br,
+            "last_update": last, "check": _upd["check"], "can_update": (ROOT / ".git").exists(),
+            "restart_ok": bool(os.environ.get("HL_STUDIO_LOOP")) or not WIN}
+
+
+def update_check():
+    """git fetch + what the update would bring (commit subjects, newest first)."""
+    main = "main"
+    f = _git("fetch", "-q", "origin", main, timeout=90)
+    if f.returncode:
+        out = {"ok": False, "error": "could not reach GitHub: " + (f.stderr or f.stdout).strip()[-200:]}
+    else:
+        log = _git("log", "--pretty=%h\t%s", f"HEAD..origin/{main}").stdout.strip().splitlines()
+        out = {"ok": True, "behind": len(log), "changes": [dict(zip(("commit", "text"), ln.split("\t", 1))) for ln in log[:25]],
+               "remote_version": _git("show", f"origin/{main}:VERSION").stdout.strip()}
+    out["at"] = _now()
+    _upd["check"] = out
+    return out
+
+
+def finish_update():
+    """At start: an update just ran -> write what changed (old -> new + commit list + smoke test) for the page."""
+    try:
+        p = json.loads(UPD_PENDING.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    now_c = _git("rev-parse", "--short", "HEAD").stdout.strip()
+    log = _git("log", "--pretty=%h\t%s", f"{p.get('commit_full', '')}..HEAD").stdout.strip().splitlines() if p.get("commit_full") else []
+    try:
+        sj = json.loads((STATE / "smoke_last.json").read_text(encoding="utf-8"))
+        bad = [c["name"] for c in sj.get("checks", []) if not c.get("ok")]
+        smoke = {"date": sj.get("date", ""), "fails": bad}
+    except (OSError, ValueError, KeyError):
+        smoke = None
+    if not p.get("paused_before"):                          # the queue was running before the update: let it run again
+        try:
+            q = json.loads(QFILE.read_text(encoding="utf-8"))
+            q["paused"] = False
+            QFILE.write_text(json.dumps(q, indent=1), encoding="utf-8")
+        except (OSError, ValueError):
+            pass
+    res = {"from_version": p.get("version"), "from_commit": p.get("commit"), "to_version": _ver(), "to_commit": now_c,
+           "changed": now_c != p.get("commit"), "changes": [dict(zip(("commit", "text"), ln.split("\t", 1))) for ln in log[:40]],
+           "smoke": smoke, "started": p.get("at"), "finished": _now(), "seen": False}
+    UPD_RESULT.write_text(json.dumps(res, indent=1, ensure_ascii=False), encoding="utf-8")
+    UPD_PENDING.unlink(missing_ok=True)
+    _upd["check"] = None
+    return res
+
+
+def start_update(studio):
+    """-> (ok, message). Refuses while a stream is being made (the update restarts the Studio)."""
+    if any(j.get("status") == "running" for j in studio.jobs):
+        return False, "a stream is being made right now - update when the queue is idle (or press Stop first)"
+    if not (ROOT / ".git").exists():
+        return False, "this folder was not cloned with git - updates need a git clone (see WINDOWS_SETUP.md)"
+    if WIN and not os.environ.get("HL_STUDIO_LOOP"):
+        return False, "this Studio was not started by 'H Labs Studio.bat' - close it and open it with that file once, then the button works"
+    STATE.mkdir(exist_ok=True)
+    was_paused = studio.paused
+    studio.set_paused(True)                                 # no queued stream may start in the second before the restart
+    UPD_PENDING.write_text(json.dumps({"paused_before": was_paused, "version": _ver(), "commit": _git("rev-parse", "--short", "HEAD").stdout.strip(),
+                                       "commit_full": _git("rev-parse", "HEAD").stdout.strip(), "at": _now()}), encoding="utf-8")
+
+    def go():
+        time.sleep(1.0)                                     # let the answer reach the page first
+        if WIN:
+            os._exit(88)                                    # studio.ps1: run setup.ps1 -Update, then start the Studio again
+        subprocess.run([sys.executable, str(ROOT / "tools" / "launcher.py"), "--record-last-good"], cwd=ROOT)
+        _git("pull", "--ff-only", timeout=300)
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-U", "yt-dlp[default]"], cwd=ROOT)
+        subprocess.run([sys.executable, str(ROOT / "tools" / "smoke_test.py"), "--offline"], cwd=ROOT)
+        os.execv(sys.executable, [sys.executable, str(Path(__file__).resolve()), "--no-browser"])
+    threading.Thread(target=go, daemon=True).start()
+    return True, "updating"
+
+
+def mark_update_seen():
+    try:
+        r = json.loads(UPD_RESULT.read_text(encoding="utf-8"))
+        r["seen"] = True
+        UPD_RESULT.write_text(json.dumps(r, indent=1, ensure_ascii=False), encoding="utf-8")
+    except (OSError, ValueError):
+        pass
+
+
 def make_handler(studio):
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -789,6 +905,8 @@ def make_handler(studio):
                     return self._send(200, library())
                 if u.path == "/api/settings":
                     return self._send(200, settings_get())
+                if u.path == "/api/version":
+                    return self._send(200, version_info())
                 if u.path == "/api/stock":
                     return self._send(200, stock_status())
                 if u.path == "/api/log":
@@ -830,6 +948,14 @@ def make_handler(studio):
             if u.path == "/api/pick":
                 return self._send(200, {"path": pick_folder() if d.get("folder") else pick_file()})
             try:
+                if u.path == "/api/update-check":
+                    return self._send(200, update_check())
+                if u.path == "/api/update":
+                    ok, msg = start_update(studio)
+                    return self._send(200 if ok else 409, {"ok": ok, "message": msg} if ok else {"error": msg})
+                if u.path == "/api/update-seen":
+                    mark_update_seen()
+                    return self._send(200, {"ok": True})
                 if u.path == "/api/keys":
                     try:
                         return self._send(200, {"set": set_key(d.get("id"), d.get("value")), "keys": keys_status()})
@@ -903,6 +1029,10 @@ def serve(port=8765, open_browser=True):
                     return
         except (OSError, ValueError):             # nothing answers on that port (or not Studio): try to bind it
             pass
+        try:
+            finish_update()
+        except Exception as e:  # noqa - the Studio must start even when the update report cannot be written
+            print("update report skipped:", e)
         try:
             httpd = ThreadingHTTPServer(("127.0.0.1", p), make_handler(Studio()))
         except OSError:

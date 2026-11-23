@@ -43,7 +43,8 @@ function renderSide() {
   $("machinebox").innerHTML = `<b>${esc(m.machine || "This PC")}</b>` + (m.checking ? "<span>checking...</span>" :
     `<span>Encode · ${esc(m.encoder === "libx264" ? "CPU (x264)" : (m.encoder || "?").replace("h264_", "").toUpperCase())}</span>
      <span>Decode · ${esc(m.decode === "CPU" ? "CPU" : "GPU (" + m.decode + ")")}</span>
-     <span>${m.version ? "Version " + esc(m.version) : ""}</span>`);
+     <span>${m.version ? "Version " + esc(m.version) : ""}</span>
+     ${S.ver && S.ver.check && S.ver.check.behind ? `<a href="#settings" class="updpill">⬆ ${S.ver.check.behind} update${S.ver.check.behind > 1 ? "s" : ""} - Settings</a>` : ""}`);
 }
 
 function render() {
@@ -358,6 +359,7 @@ async function addDownloads() {
 
 /* ------------------------------------------------------------------ settings: API keys + media library */
 async function loadSettings() {
+  loadVersion().then(() => { if (S.view === "settings" && S.settings) renderSettings(); });
   if (!S.settings) $("view").innerHTML = `<header class="top"><h1>Settings</h1></header><div class="empty">Loading...</div>`;
   S.settings = await api("/api/settings"); renderSettings();
 }
@@ -377,6 +379,7 @@ function renderSettings() {
   $("view").innerHTML = `
   <header class="top"><h1>Settings</h1><span class="muted small">Keys are saved only on this PC (your user folder, .config\\umf). They are never shown again, never sent anywhere else.</span></header>
   <div class="content"><section class="col-main">
+    ${updateCard()}
     <section class="card"><h2>API keys</h2>${st.keys.map(keyRow).join("")}</section>
     <section class="card"><h2 style="display:block;width:100%">B-roll source <span class="small muted">(stock footage for the documentary styles)</span></h2>
       <div class="seg" role="radiogroup" aria-label="B-roll source" style="margin-top:8px">${[["auto", "Both (API first, then my folder)"], ["api", "Pexels / Pixabay only"], ["folder", "My folder only"]].map(([k, t]) =>
@@ -509,8 +512,78 @@ async function refresh() {
   if (S.logFor) { try { S.logText = (await api(`/api/log?id=${S.logFor}${S.logEv ? "&events=1" : ""}`)).log || []; } catch (e) { /* keep */ } }
   if (S.view === "queue") render(); else renderSide();
 }
+/* ------------------------------------------------------------------ update from the Studio (2026-11-23) */
+// Update button: the Studio server exits, the window ("H Labs Studio.bat") runs the normal update + smoke test and starts the
+// Studio again; this page waits, reconnects and shows old -> new version with the list of changes.
+const UPD = { busy: false, since: 0, checking: false };
+async function loadVersion() { try { S.ver = await api("/api/version"); } catch (e) { /* server restarting */ } renderSide(); return S.ver; }
+function verLine(v) { return v ? `v${esc(v.version)} <span class="mono">(${esc(v.commit || "?")})</span>` : "…"; }
+function updateCard() {
+  const v = S.ver || {}, c = v.check, last = v.last_update, running = S.snap && S.snap.running;
+  const changes = (list) => (list || []).length ? `<ul class="chg">${list.map((x) => `<li><span class="mono">${esc(x.commit)}</span> ${esc(x.text)}</li>`).join("")}</ul>` : "";
+  return `<section class="card" id="updcard"><h2 style="display:block;width:100%">H Labs version</h2>
+    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><span style="font-size:20px;font-weight:700">${verLine(v)}</span>
+      <button class="btn" onclick="checkUpdate()" ${UPD.checking ? "disabled" : ""}>${UPD.checking ? "Checking..." : "Check for updates"}</button>
+      <button class="btn primary" onclick="doUpdate()" ${running || !v.can_update ? "disabled" : ""}>Update now</button></div>
+    ${running ? '<div class="small" style="color:var(--warn-ink)">A stream is being made - update when the queue is idle.</div>' : ""}
+    ${v.can_update && !v.restart_ok ? `<div class="small" style="color:var(--warn-ink)">This Studio was not opened with <b>H Labs Studio.bat</b> (or menu 0): close it and open it that way once, then this button works.</div>` : ""}
+    ${c ? (c.ok ? (c.behind ? `<div style="margin-top:10px"><b>${c.behind} new change${c.behind > 1 ? "s" : ""}</b> waiting${c.remote_version ? ` (v${esc(c.remote_version)})` : ""}:</div>${changes(c.changes)}`
+      : `<div class="small good" style="margin-top:8px">✓ This PC has the newest code.</div>`) : `<div class="small badtext" style="margin-top:8px">${esc(c.error)}</div>`) : ""}
+    ${last ? `<div class="lastupd"><b>Last update (${esc(last.finished || "")}):</b> ${last.changed ? `v${esc(last.from_version)} (${esc(last.from_commit)}) → <b>v${esc(last.to_version)} (${esc(last.to_commit)})</b>` : `no new code - already up to date (v${esc(last.to_version)})`}
+      ${last.smoke ? (last.smoke.fails.length ? `<div class="small badtext">Smoke test: FAILED ${esc(last.smoke.fails.join(", "))} - see the Studio window</div>` : '<div class="small good">Smoke test passed - this PC makes videos.</div>') : ""}
+      ${changes(last.changes)}</div>` : ""}
+  </section>`;
+}
+async function checkUpdate() {
+  UPD.checking = true; renderSettings();
+  try { const r = await api("/api/update-check", {}); S.ver = Object.assign(S.ver || {}, { check: r }); } finally { UPD.checking = false; renderSettings(); }
+}
+async function doUpdate() {
+  if (!confirmBox("Update H Labs now? The Studio restarts (about 3-6 minutes: newest code, packages, smoke test). The queue waits.")) return;
+  const r = await api("/api/update", {}).catch(() => ({ error: "no answer from the Studio" }));
+  if (r.error) return toast(r.error);
+  UPD.busy = true; UPD.since = Date.now(); showUpdating();
+  setTimeout(waitBack, 6000);
+}
+function confirmBox(msg) { try { return window.confirm(msg); } catch (e) { return true; } }
+function showUpdating(extra) {
+  let o = $("updlayer");
+  if (!o) { o = document.createElement("div"); o.id = "updlayer"; document.body.appendChild(o); }
+  const mins = Math.floor((Date.now() - UPD.since) / 60000);
+  o.innerHTML = `<div class="updbox"><div class="spin"></div><h2>Updating H Labs…</h2>
+    <p>Getting the newest code, packages and yt-dlp, then the smoke test. The Studio window shows every step. This page reconnects by itself.</p>
+    <p class="small muted">${mins} min so far${extra ? " · " + esc(extra) : ""}</p></div>`;
+}
+async function waitBack() {
+  if (!UPD.busy) return;
+  try {
+    const r = await fetch("/api/ping", { cache: "no-store" });
+    if (r.ok) {
+      const v = await api("/api/version");
+      if (v.last_update && v.last_update.finished && !v.last_update.seen && Date.now() - UPD.since > 8000) {
+        UPD.busy = false; S.ver = v; $("updlayer") && $("updlayer").remove();
+        showUpdateResult(v.last_update); return;
+      }
+    }
+  } catch (e) { /* down while updating: expected */ }
+  showUpdating(); if (Date.now() - UPD.since < 30 * 60000) setTimeout(waitBack, 3000);
+  else showUpdating("taking long - look at the Studio window");
+}
+function showUpdateResult(u) {
+  let o = $("updlayer"); if (!o) { o = document.createElement("div"); o.id = "updlayer"; document.body.appendChild(o); }
+  o.innerHTML = `<div class="updbox"><h2>${u.changed ? "✓ H Labs updated" : "Already up to date"}</h2>
+    <p style="font-size:18px">${u.changed ? `v${esc(u.from_version)} <span class="mono">(${esc(u.from_commit)})</span> → <b>v${esc(u.to_version)} <span class="mono">(${esc(u.to_commit)})</span></b>` : `v${esc(u.to_version)} (${esc(u.to_commit)})`}</p>
+    ${u.smoke ? (u.smoke.fails.length ? `<p class="badtext">Smoke test FAILED: ${esc(u.smoke.fails.join(", "))}. The Studio window says how to fix it (Settings → Undo is menu u in H Labs.bat).</p>` : '<p class="good">Smoke test passed - this PC makes videos.</p>') : ""}
+    ${(u.changes || []).length ? `<div style="text-align:left"><b>What changed:</b><ul class="chg">${u.changes.map((x) => `<li>${esc(x.text)}</li>`).join("")}</ul></div>` : ""}
+    <button class="btn primary lg" onclick="closeUpdateResult()">OK</button></div>`;
+}
+async function closeUpdateResult() { $("updlayer") && $("updlayer").remove(); await api("/api/update-seen", {}); location.reload(); }
+
 (async function start() {
   S.styles = await api("/api/styles").catch(() => []);
+  const v = await loadVersion();
+  if (v && v.last_update && !v.last_update.seen) showUpdateResult(v.last_update);
+  api("/api/update-check", {}).then((c) => { if (S.ver) { S.ver.check = c; renderSide(); } }).catch(() => {});
   await refresh(); route();
   setInterval(refresh, 2000);
 })();

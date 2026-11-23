@@ -11,5 +11,6 @@ if not exist ".venv\.hlabs-uv" (
 )
 call "%~dp0tools\win\env.bat"
 title H Labs Studio - keep this window open
-".venv\Scripts\python.exe" tools\studio\server.py
+rem the Studio runs inside tools\win\studio.ps1: its Update button (exit code 88) updates H Labs and starts the Studio again
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\win\studio.ps1"
 pause

@@ -2965,6 +2965,48 @@ def t57_tools_never_read_console():
     return "ffmpeg gets EOF at once instead of waiting on the console; explicit stdin untouched"
 
 
+def t58_studio_update():
+    """Update from the Studio (2026-11-23): version + commit shown, the update is refused while a stream runs, the queue is
+    held during the restart, and after the restart the page gets old -> new version with the list of changes."""
+    sys.path.insert(0, str(ROOT / "tools" / "studio"))
+    import server as SV
+    tmp = Path(tempfile.mkdtemp())
+    old = (SV.UPD_PENDING, SV.UPD_RESULT, SV.QFILE)
+    SV.UPD_PENDING, SV.UPD_RESULT, SV.QFILE = tmp / "p.json", tmp / "r.json", tmp / "q.json"
+    try:
+        v = SV.version_info()
+        assert v["version"] and v["commit"] and v["can_update"], v
+
+        class FakeStudio:
+            jobs = [{"status": "running"}]
+            paused = False
+
+            def set_paused(self, x):
+                self.paused = x
+        ok, msg = SV.start_update(FakeStudio())
+        assert not ok and "being made" in msg and not SV.UPD_PENDING.exists()
+        first = SV._git("rev-list", "--max-parents=0", "HEAD").stdout.split()[0]
+        head = SV._git("rev-parse", "HEAD").stdout.strip()
+        back = SV._git("rev-parse", "HEAD~2").stdout.strip()
+        SV.UPD_PENDING.write_text(json.dumps({"version": "2026.01.01", "commit": back[:7], "commit_full": back, "paused_before": False}))
+        SV.QFILE.write_text(json.dumps({"jobs": [], "paused": True}))
+        r = SV.finish_update()
+        assert r["changed"] and r["from_version"] == "2026.01.01" and len(r["changes"]) == 2 and r["to_commit"] == head[:len(r["to_commit"])]
+        assert not SV.UPD_PENDING.exists() and json.loads(SV.QFILE.read_text())["paused"] is False, "the queue must run again"
+        assert SV.version_info()["last_update"]["seen"] is False
+        SV.mark_update_seen()
+        assert SV.version_info()["last_update"]["seen"] is True
+        assert first
+        bat = (ROOT / "H Labs Studio.bat").read_bytes()
+        assert b"studio.ps1" in bat and b"\r\n" in bat and b"\n" not in bat.replace(b"\r\n", b"")
+        ps = (ROOT / "tools" / "win" / "studio.ps1").read_text()
+        assert "-eq 88" in ps or "-ne 88" in ps
+    finally:
+        SV.UPD_PENDING, SV.UPD_RESULT, SV.QFILE = old
+        shutil.rmtree(tmp, ignore_errors=True)
+    return "version shown, refused while a stream runs, queue held + released, old -> new + change list after restart"
+
+
 def main():
     print("H Labs self-test matrix")
     check(1, "environment", t1_environment)
@@ -3027,6 +3069,7 @@ def main():
     check(55, "documentary styles: 6 packs, doc renderer, own B-roll folder, series memory", t55_doc_styles)
     check(56, "dossier: several hearings of one defendant + series footage", t56_dossier)
     check(57, "ffmpeg / yt-dlp never wait on the console", t57_tools_never_read_console)
+    check(58, "Studio Update button (restart + what changed)", t58_studio_update)
     check(52, "documentary kit: music ducking, SFX, speaker captions, paper cards, stock library", t52_shared_doc_kit)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)

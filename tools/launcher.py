@@ -605,6 +605,10 @@ def main():
             if links:
                 subprocess.run([sys.executable, str(ROOT / "tools" / "download_only.py"), *links], cwd=ROOT)
                 ask("\nPress Enter...")
+        elif pick == "0" and WIN:
+            # its own window, through "H Labs Studio.bat": there the Studio's Update button can update + restart it
+            os.startfile(str(ROOT / "H Labs Studio.bat"))
+            print("  H Labs Studio opened in its own window (keep that window open). This menu stays here.")
         elif pick == "0":
             subprocess.run([sys.executable, str(ROOT / "tools" / "studio" / "server.py")], cwd=ROOT)
         elif pick == "8" and WIN:
