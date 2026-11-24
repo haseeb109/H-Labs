@@ -133,7 +133,9 @@ def doc_split(errs):
     """-> (blocking, not blocking) for the documentary renderer."""
     hard, soft = [], []
     for e in errs:
-        video_level = re.match(r"video \S+:", e) and not _DOC_HARD_VIDEO.search(e)
+        # "video 1: ..." and "video 1 [karma]: T-03 ..." (title rules carry the title's style; 2026-11-25 they stayed
+        # blocking and a 19 min case went through 3 attempts again)
+        video_level = re.match(r"video [^:]*:", e) and not _DOC_HARD_VIDEO.search(e)
         overlay = re.search(r"\boverlay\b.*: O-0\d|: O-0\d ", e)
         (soft if video_level or overlay else hard).append(e)
     return hard, soft

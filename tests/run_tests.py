@@ -3050,6 +3050,13 @@ def t60_doc_styles_hardening():
         e2, w2 = VAL.validate(plan, 3300, segs, cfg)
         assert not e2, e2[:3]
         assert any("documentary style - not blocking" in w for w in w2)
+        # the 2026-11-25 laptop run: 5 titles where one breaks the title banks ("video 1 [karma]: T-04 ...") must not block
+        bad = copy.deepcopy(plan)
+        vt = video_obj(caseA, 1, "a", "13")["titles"]
+        vt[0]["text"] = vt[0]["text"].replace("REFUSES", "SLAPS")
+        bad["videos"] = [dict(v, titles=vt) if v["case_ids"] == [1] else v for v in bad["videos"]]
+        e3, w3 = VAL.validate(bad, 3300, segs, cfg)
+        assert not e3 and any("[karma]: T-04" in w for w in w3), (e3[:3], [w for w in w3 if "T-0" in w][:3])
         for v in plan["videos"]:
             c = next(x for x in plan["cases"] if x["id"] == v["case_ids"][0])
             a, b = parse_tc(c["in"]), parse_tc(c["out"])
@@ -3098,8 +3105,10 @@ def t60_doc_styles_hardening():
     assert tts.chars_needed({"videos": [{"n": 1, "vo_final": {"text": "de"}}]}) == 2, "a missing vo1 is no crash"
     hard, soft = VAL.doc_split(["video 1: vo1 is empty", "video 1: needs 1-5 cases, has 0",
                                 "case 1 overlay 0:01:00 (fact): O-06 evidence quote not found in the case transcript",
-                                "case 1 (X): ruling_tc missing (or set ruling_deferred true)"])
-    assert len(hard) == 2 and len(soft) == 2, (hard, soft)
+                                "case 1 (X): ruling_tc missing (or set ruling_deferred true)",
+                                "video 1 [karma]: T-03 judge name 'Judge Boyd' must appear exactly once, found 0: \"x\"",
+                                "video 1 [karma]: T-04 CAPS word SLAPS is not in this style pack's banks"])
+    assert len(hard) == 2 and len(soft) == 4, (hard, soft)
     return "weak + non-JSON Pass B -> 2 videos; retry repackages; 8 years/TDCJ kept; phases list; neutral doc; TTS count"
 
 
