@@ -183,10 +183,11 @@ def edit_sheet(plan, video, tl, durs):
     return "\n".join(L)
 
 
-def metadata(plan, video, tl, cfg, source_url=""):
+def metadata(plan, video, tl, cfg, source_url="", chs=None):
+    """chs: [(out seconds, label)] from the renderer itself (documentary styles), else built from video["chapters"]."""
     by_id = {c["id"]: c for c in plan["cases"]}
     d = video["description"]
-    chs = chapters(video, by_id, tl)
+    chs = chapters(video, by_id, tl) if chs is None else chs
     L = []
     L.append("╔" + "═" * 62 + "╗")
     L.append("║  BLOCK 2 — METADATA")

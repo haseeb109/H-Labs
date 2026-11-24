@@ -52,6 +52,30 @@ def neutral_text(text, names):
     return pat.sub(sub, text)
 
 
+_DOC_KEEP = {"evidence", "in", "out", "tc", "at", "from", "to", "kind", "id", "tags", "tag"}
+
+
+def _walk_doc(node, fix):
+    """Every spoken / shown string inside video["doc"]. Evidence quotes stay word for word (the case document checks
+    them against the transcript) and timecodes / tags are not text."""
+    if isinstance(node, dict):
+        for k in list(node.keys()):
+            if k in _DOC_KEEP:
+                continue
+            if isinstance(node[k], str):
+                fix(node, k)
+            else:
+                _walk_doc(node[k], fix)
+    elif isinstance(node, list):
+        for i, x in enumerate(node):
+            if isinstance(x, str):
+                box = {"t": x}
+                fix(box, "t")
+                node[i] = box["t"]
+            else:
+                _walk_doc(x, fix)
+
+
 def neutralize(plan, names):
     """Rewrite the plan's spoken / on-screen texts in place. -> number of fields changed."""
     if not names:
@@ -78,6 +102,7 @@ def neutralize(plan, names):
             fix(q["options"], k)
         for o in v.get("overlays") or []:
             fix(o, "text")
+        _walk_doc(v.get("doc"), fix)              # documentary styles: narration, pills, cards, board labels
     for c in plan.get("cases", []) or []:
         for k in CASE_KEYS:
             fix(c, k)

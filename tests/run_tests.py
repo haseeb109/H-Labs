@@ -3007,6 +3007,102 @@ def t58_studio_update():
     return "version shown, refused while a stream runs, queue held + released, old -> new + change list after restart"
 
 
+def t60_doc_styles_hardening():
+    """Documentary styles, deep check 2026-11-24 (a real Case File run made 0 videos): a weak / broken Pass B reply never
+    costs the case (sanitised + made from the case), a retry repackages set-aside cases, case-document facts survive
+    number words ("eight years") and TDCJ, the v10 result dict / facing are shown right, phases as a LIST give the ruling
+    (Verdict First crashed), doc text is judge-neutral, the TTS count includes narration, chapters come from the render."""
+    import copy
+    import json as _json
+    from ucf import mode_all, config as CFG, casedoc, doc_pack as DP, validate as VAL, sheets, judge_neutral as JN, tts
+    from ucf.render_doc import DocRenderer, youtube_chapters
+
+    # 1) case document: number words, abbreviations, v10 result / facing
+    assert casedoc._tokens_ok("8 years TDCJ", "asking for eight years in the Texas Department of Criminal Justice")
+    assert casedoc._tokens_ok("$50,000", "bond is fifty thousand dollars") and casedoc._tokens_ok("112 days", "one hundred twelve days")
+    assert not casedoc._tokens_ok("$3,000", "bond set at five thousand") and not casedoc._tokens_ok("19 years", "she is nine")
+    f = casedoc.from_case({"name": "Jo Test", "charge": "Theft", "facing": "Up to 2 years", "cause_no": "2024CR1",
+                           "result": {"sentence": "180 days jail", "conditions": "none"}})
+    assert f == {"sentence": "180 days jail", "defendant": "Jo Test", "cause_no": "2024CR1", "charges": "Theft",
+                 "facing": "Up to 2 years"}, f
+
+    # 2) Pass B: a reply that breaks the classic rules + a reply that is not JSON -> both cases still get a video
+    segs, lines, caseA, caseB, caseC, passA, video_obj = _t12_fixtures()
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        cfg = CFG.load(style="case_file_doc")
+        cfg.update({"brain": "mock", "mode": "all", "title_system": "v10", "_mode_source": "cli", "brain_fallback": "",
+                    "max_repair_rounds": 0, "_source_file": "mock.mp4"})
+        weak = {"hook": {"in": "0:45:00", "out": "0:45:12"}, "vo1": {"text": ""}, "titles": [],
+                "doc": {"impact_quote": "I was terrified of prison", "bridges": [{"text": "x"}], "backstory": "One beat.",
+                        "chapters": [{"tc": "0:12:00", "label": "THE PLEA"}]},
+                "overlays": [{"tc": "0:11:30", "kind": "fact", "text": "Not said", "evidence": "a quote nobody said"}]}
+        (tmp / "a.json").write_text(_json.dumps(passA), encoding="utf-8")
+        (tmp / "b1.json").write_text(_json.dumps({"video": weak}), encoding="utf-8")
+        (tmp / "b2.json").write_text("sorry, I cannot produce JSON today", encoding="utf-8")
+        cfg["mock_passA_replies"] = [str(tmp / "a.json")]
+        cfg["mock_passB_replies"] = [str(tmp / "b1.json"), str(tmp / "b2.json")]
+        work = tmp / "w"
+        work.mkdir()
+        plan, errs = mode_all.build_plan(segs, lines, "SCAN", 3300, cfg, lambda *m: None, work)
+        assert not errs and len(plan["videos"]) == 2, (errs, len(plan.get("videos", [])))
+        assert not any(c.get("needs_review") for c in plan["cases"])
+        e2, w2 = VAL.validate(plan, 3300, segs, cfg)
+        assert not e2, e2[:3]
+        assert any("documentary style - not blocking" in w for w in w2)
+        for v in plan["videos"]:
+            c = next(x for x in plan["cases"] if x["id"] == v["case_ids"][0])
+            a, b = parse_tc(c["in"]), parse_tc(c["out"])
+            assert a <= parse_tc(v["hook"]["in"]) < parse_tc(v["hook"]["out"]) <= b, "hook must be THIS case's footage"
+            assert v["vo1"]["text"] and v["vo_final"]["text"] and v["title"] and v["quiz"]["options"]["C"]
+            assert not v["overlays"], "an overlay whose quote is not in the transcript is left out"
+            tl = {"segments": [], "total": 600.0, "seams": []}
+            md, chs = sheets.metadata(plan, v, tl, dict(cfg, base_tags=["court"]), "", chs=[(0.0, "The moment"), (50.0, "The case file")])
+            assert "TITLE" in md and chs[1][1] == "The case file"
+        v1 = next(v for v in plan["videos"] if v["case_ids"] == [1])
+        assert v1["doc"]["impact_quote"] == {"text": "I was terrified of prison"} and v1["doc"]["bridges"] == ["x"]
+        assert v1["doc"]["chapters"][0]["at"] == "0:12:00" and v1["doc"]["backstory"] == [{"text": "One beat."}]
+
+        # 3) retry: a case the last run set aside is packaged again (the saved plan alone made 0 videos)
+        p2 = copy.deepcopy(plan)
+        c2 = next(c for c in p2["cases"] if c["id"] == 2)
+        c2.update(status="skipped", needs_review=True, reject_reason="packaging failed validation - needs review")
+        p2["videos"] = [v for v in p2["videos"] if v["case_ids"] != [2]]
+        (tmp / "b3.json").write_text(_json.dumps({"video": video_obj(caseB, 2, "b", "6")}), encoding="utf-8")
+        cfg["mock_passB_replies"] = [str(tmp / "b3.json")]
+        cfg["_mock_queue"] = [str(tmp / "b3.json")]
+        assert mode_all.repackage(p2, segs, lines, 3300, cfg, lambda *m: None, work) == 1
+        assert len(p2["videos"]) == 2 and c2["status"] == "used" and not c2.get("needs_review")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # 4) the ruling from phases as a LIST (and the doc renderer's helpers)
+    rn = DocRenderer.__new__(DocRenderer)
+    rn.case, rn.case_a, rn.case_b, rn.doc = caseA, 600.0, 1170.0, {}
+    assert rn.ruling_tc() == 1080.0
+    rn.case = dict(caseA, phases={"ruling": {"tc": "0:17:00"}})
+    assert rn.ruling_tc() == 1020.0
+    rows = [{"start": 0, "chapter": None}, {"start": 30, "chapter": "The case file"}, {"start": 60, "chapter": "What the law allows"},
+            {"start": 64, "chapter": "Chapter 1 · The Plea"}, {"start": 400, "chapter": "The outcome"}]
+    assert youtube_chapters(rows, 430) == [(0.0, "The moment"), (30, "The case file"), (60, "Chapter 1 · The Plea")]
+    assert youtube_chapters([{"start": 0}, {"start": 9, "chapter": "Previously"}, {"start": 40, "chapter": "Episode 2"},
+                             {"start": 90, "chapter": "Part 1"}], 300)[0] == (0.0, "Previously")
+
+    # 5) judge-neutral narration / pills, TTS count, blocking vs not blocking
+    p3 = {"videos": [{"doc": {"tease": "Judge Test has heard it all.", "backstory": [{"text": "Judge Test gave him a chance.",
+                                                                                     "pills": ["JUDGE TEST · 2022"]}],
+                              "case_doc": {"defendant": {"value": "Jo", "evidence": "judge test said jo"}}}}], "cases": []}
+    assert JN.neutralize(p3, ["Test"]) == 3 and p3["videos"][0]["doc"]["case_doc"]["defendant"]["evidence"] == "judge test said jo"
+    assert tts.chars_needed({"videos": [{"n": 1, "vo1": {"text": "abc"}, "vo_final": {"text": "de"},
+                                         "doc": {"backstory": [{"text": "x" * 100}]}}]}) >= 105
+    assert tts.chars_needed({"videos": [{"n": 1, "vo_final": {"text": "de"}}]}) == 2, "a missing vo1 is no crash"
+    hard, soft = VAL.doc_split(["video 1: vo1 is empty", "video 1: needs 1-5 cases, has 0",
+                                "case 1 overlay 0:01:00 (fact): O-06 evidence quote not found in the case transcript",
+                                "case 1 (X): ruling_tc missing (or set ruling_deferred true)"])
+    assert len(hard) == 2 and len(soft) == 2, (hard, soft)
+    return "weak + non-JSON Pass B -> 2 videos; retry repackages; 8 years/TDCJ kept; phases list; neutral doc; TTS count"
+
+
 def t59_callout_vs_ruling():
     """2026-11-23 Bexar run: "the court is finding violations ... and cause number 49 true" (a ruling inside the case) was
     taken for a new case being called (C-04) and the whole video failed. Only a real call-out counts now."""
@@ -3089,6 +3185,7 @@ def main():
     check(57, "ffmpeg / yt-dlp never wait on the console", t57_tools_never_read_console)
     check(58, "Studio Update button (restart + what changed)", t58_studio_update)
     check(59, "C-04: a ruling is not a new case; quiet Studio on closed tabs", t59_callout_vs_ruling)
+    check(60, "documentary styles hardening: weak brain replies, retry, case facts, chapters", t60_doc_styles_hardening)
     check(52, "documentary kit: music ducking, SFX, speaker captions, paper cards, stock library", t52_shared_doc_kit)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)

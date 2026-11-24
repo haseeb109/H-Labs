@@ -121,7 +121,33 @@ def _doc_fill_vo(v, cases):
             v["bridges"] = [x for x in v["bridges"] if x.get("after_case_id") != a["id"]] + [{"after_case_id": a["id"], "text": t, "auto": True}]
 
 
+# Documentary styles (renderer "doc"): the renderer only needs the case range, the hook window and text it can fall back from,
+# so the packaging rules written for the classic channels (VO word bands, title banks, chapters, quiz, thumbnail text,
+# overlay counts) are reported but never block a video there (2026-11-24: a 19 min case was lost after 9 brain calls over
+# "vo1 is 20 words"). What still blocks: the case itself (range, call-out, ruling) and a video that points at the wrong case.
+_DOC_HARD_VIDEO = re.compile(r"needs 1-5 cases|unknown/invalid case ids|only 'used' cases|is already in video|"
+                             r"V-01 mode all = exactly one case|names '.*' who is NOT in this video")
+
+
+def doc_split(errs):
+    """-> (blocking, not blocking) for the documentary renderer."""
+    hard, soft = [], []
+    for e in errs:
+        video_level = re.match(r"video \S+:", e) and not _DOC_HARD_VIDEO.search(e)
+        overlay = re.search(r"\boverlay\b.*: O-0\d|: O-0\d ", e)
+        (soft if video_level or overlay else hard).append(e)
+    return hard, soft
+
+
 def validate(plan, stream_len, segs=None, cfg=None):
+    E, W = _validate(plan, stream_len, segs, cfg)
+    if (cfg or {}).get("_renderer") == "doc":
+        E, soft = doc_split(E)
+        W = W + [f"(documentary style - not blocking) {e}" for e in soft]
+    return E, W
+
+
+def _validate(plan, stream_len, segs=None, cfg=None):
     cfg = cfg or {}
     mode = cfg.get("mode")
     v10_titles = cfg.get("title_system", "v10") == "v10"

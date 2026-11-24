@@ -403,6 +403,8 @@ def stage_info(R):
     from ucf import dossier as _DOS
     R.cfg["_upload"] = R.upload
     R.cfg["_hearing_date"] = _DOS.nice_date(R.upload) if R.meta.get("upload_date") else ""
+    from ucf.casedoc import court_from_title as _cft
+    R.cfg["_court_line"] = _cft(R.meta.get("title"))          # documentary title card / case document: "187TH DISTRICT COURT"
     if R.a.dossier:
         R.cfg["_dossier"] = R.a.dossier
         _eh = _DOS.earlier(R.a.dossier, R.upload, R.state)
@@ -616,11 +618,35 @@ def stage_plan(R):
             sys.exit(f"STOP: {R.plan_path} is not valid JSON ({e}) - fix the file or delete it so the brain plans again")
         # shape check first (a missing "in" used to surface as a KeyError in the middle of the render), rules after
         from ucf import schema
+        if R.cfg.get("_renderer") == "doc":       # documentary: repair the video objects first (ucf/doc_pack.py)
+            from ucf import doc_pack as DP
+            _cs = {c.get("id"): c for c in R.plan.get("cases", []) if isinstance(c, dict)}
+            for _v in R.plan.get("videos", []) or []:
+                _c = _cs.get((_v.get("case_ids") or [None])[0]) if isinstance(_v, dict) else None
+                try:
+                    if _c:
+                        for _n in DP.sanitize(_v, _c, list(_cs.values()), R.segs, R.cfg):
+                            ui(f"  video {_v.get('n')}: {_n}")
+                except (KeyError, TypeError, ValueError):
+                    pass                         # the shape check below names what is wrong
         bad = schema.check_plan(R.plan)
         if bad:
             sys.exit(f"STOP: the plan {R.plan_path} has the wrong shape:\n  " + "\n  ".join(b.removeprefix("ERROR: ") for b in bad[:12])
                      + "\n  -> fix the file (or delete it so the brain plans again); send work/" + f"{R.sid}/run_log.txt if unsure")
         R.plan["source_file"] = R.plan.get("source_file") or R.source_file
+        review = [c for c in R.plan.get("cases", []) if c.get("needs_review")]
+        if R.mode == "all" and not R.a.plan and review and lines and R.cfg["brain"] != "manual":
+            # Retry of a run that set cases aside: package those cases again (the saved plan alone would make 0 videos again)
+            from ucf import mode_all
+            R.cfg["_source_file"] = R.source_file
+            ui(f"{len(review)} case(s) the last run set aside (needs review) - packaging them again: "
+               + ", ".join(c.get("name", "?") for c in review))
+            try:
+                got = mode_all.repackage(R.plan, R.segs, lines, R.stream_len, R.cfg, ui, R.work)
+            except brain.BrainStop as e:
+                sys.exit(f"BRAIN STOPPED: {e}\n  replies: work/{R.sid}/brain_reply_*.txt")
+            ui(f"  {got} of {len(review)} now have a video")
+            save_json(R.plan_path, R.plan)
         errs, warns = VAL.validate(R.plan, R.stream_len, R.segs, R.cfg)
     R.plan["source_file"] = R.source_file if R.plan.get("source_file") != R.source_file else R.plan["source_file"]
     # bundle modes: boundary refinement applies too (spec 7), but reverts if it breaks validation
@@ -704,6 +730,14 @@ def stage_render(R):
     _jn = neutralize(R.plan, judge_names(R.plan.get("judge_name"), R.cfg.get("judge_name"), R.meta.get("title")))
     if _jn:
         ui(f"judge-neutral: {_jn} voice-over / on-screen text(s) now say 'the judge' instead of the name")
+    if R.cfg.get("_renderer") == "doc":            # documentary styles: every video is safe to render + describe (ucf/doc_pack.py)
+        from ucf import doc_pack as DP
+        _cases = {c["id"]: c for c in R.plan["cases"]}
+        for v in R.plan["videos"]:
+            _c = _cases.get((v.get("case_ids") or [None])[0])
+            if _c:
+                for note in DP.sanitize(v, _c, R.plan["cases"], R.segs, R.cfg):
+                    ui(f"  video {v.get('n')}: {note}")
     only = {int(x) for x in R.a.only.split(",")} if R.a.only else None
     if os.environ.get("HL_STUDIO"):
         print(f"@@videos {sum(1 for v in R.plan['videos'] if not only or v['n'] in only)}", flush=True)
@@ -840,7 +874,8 @@ def stage_render(R):
                 notes.append("thumbnail skipped: " + cause(e))
             tl = res["timeline"]
             (folder / "edit_sheet.txt").write_text(sheets.edit_sheet(R.plan, v, tl, res["durs"]), encoding="utf-8")
-            md, chs = sheets.metadata(R.plan, v, tl, R.cfg, R.url)
+            _rch = res.get("chapters")                 # documentary styles: chapters from the pieces the renderer made
+            md, chs = sheets.metadata(R.plan, v, tl, R.cfg, R.url, **({"chs": _rch} if _rch is not None else {}))
             (folder / "metadata.txt").write_text(md, encoding="utf-8")
             rn.write_footage_log(folder / "footage_log.csv")
             try:
@@ -934,8 +969,9 @@ def stage_render(R):
                       ok=n_ok == len(summary) and not failed_videos)
     if R.cfg.get("open_output_after_run", True):
         FINISH.open_folder(outroot)
-    if failed_videos:
-        ui(f"downloaded stream kept for the rerun ({len(failed_videos)} video(s) failed) - cleanup skipped")
+    if failed_videos or n_rev:
+        ui(f"downloaded stream kept for the rerun ({len(failed_videos)} video(s) failed, {n_rev} case(s) need review)"
+           " - cleanup skipped")
     else:
         FINISH.cleanup(R.cfg, R.work, outroot, R.a.video_file, ui)
     if failed_videos and not summary:              # nothing was made: a bulk queue counts this stream as failed

@@ -21,7 +21,7 @@ from . import paper
 
 FIELDS = [  # key, label, how it is shown
     ("defendant", "DEFENDANT"), ("age", "AGE"), ("cause_no", "CAUSE NO."), ("court", "COURT"),
-    ("charges", "CHARGE"), ("offense_date", "OFFENSE DATE"), ("hearing_date", "HEARING"), ("bond", "BOND"),
+    ("charges", "CHARGE"), ("facing", "FACING"), ("offense_date", "OFFENSE DATE"), ("hearing_date", "HEARING"), ("bond", "BOND"),
     ("plea", "PLEA"), ("state_asked", "STATE ASKED"), ("defense_asked", "DEFENSE ASKED"), ("result", "RESULT"),
     ("sentence", "SENTENCE"), ("conditions", "CONDITIONS"), ("next_date", "NEXT DATE"),
 ]
@@ -36,13 +36,60 @@ def _norm(t):
     return re.sub(r"\s+", " ", t).strip()
 
 
+_UNITS = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
+                                     "fifteen sixteen seventeen eighteen nineteen".split())}
+_TENS = {w: 10 * i for i, w in enumerate("_ _ twenty thirty forty fifty sixty seventy eighty ninety".split()) if i > 1}
+_SCALE = {"hundred": 100, "thousand": 1000, "million": 1000000}
+# court words the brain shortens on the card (2026-11-24: "4 years TDCJ" was dropped against "four years in the Texas
+# Department of Criminal Justice")
+ABBREV = {"tdcj": "texas department of criminal justice", "safp": "substance abuse felony punishment",
+          "dwi": "driving while intoxicated", "dui": "driving under the influence", "pr": "personal recognizance",
+          "cps": "child protective services", "gps": "monitor", "ada": "district attorney", "da": "district attorney",
+          "sjf": "state jail", "ui": "under the influence"}
+
+
+def _digits(text):
+    """'eight years ... one hundred twelve days ... fifty thousand dollars' -> '8 years ... 112 days ... 50000 dollars'."""
+    out, cur, total, inside = [], 0, 0, False
+    for w in text.split():
+        k = w.replace("-", " ").split()
+        if k and all(x in _UNITS or x in _TENS or x in _SCALE or x == "and" for x in k) and not (k == ["and"] and not inside):
+            for x in k:
+                if x in _UNITS:
+                    cur += _UNITS[x]
+                elif x in _TENS:
+                    cur += _TENS[x]
+                elif x == "hundred":
+                    cur = max(cur, 1) * 100
+                elif x in _SCALE:
+                    total += max(cur, 1) * _SCALE[x]
+                    cur = 0
+            inside = True
+            continue
+        if inside:
+            out.append(str(total + cur))
+            cur, total, inside = 0, 0, False
+        out.append(w)
+    if inside:
+        out.append(str(total + cur))
+    return " ".join(out)
+
+
 def _tokens_ok(value, evidence):
-    """Every number and every capitalised word of the value must be in the evidence quote."""
-    ev = _norm(evidence)
+    """Every number and every capitalised word of the value must be in the evidence quote (numbers may be written as
+    words there - whisper writes "eight years" - and court abbreviations may be spelled out)."""
+    ev = _norm(str(evidence or "").replace(",", ""))
+    evd = _digits(ev)
     for tok in re.findall(r"\$?\d[\d,.]*|[A-Z][a-zA-Z'-]+", str(value)):
-        n = _norm(tok).replace(",", "")
-        if n and n not in ev.replace(",", ""):
-            return False
+        n = _norm(tok.replace(",", ""))
+        if not n:
+            continue
+        num = n.lstrip("$").rstrip(".")
+        if n in ev or (num and re.search(r"(?<![\d.])" + re.escape(num) + r"(?![\d])", evd)):
+            continue
+        if n in ABBREV and ABBREV[n] in ev:
+            continue
+        return False
     return True
 
 
@@ -72,14 +119,43 @@ def verify(case_doc, transcript_text):
 
 
 def from_case(case):
-    """Fallback facts from the plan's own case fields (already validated by the plan validator)."""
+    """Fallback facts from the plan's own case fields (already validated by the plan validator).
+    "facing" is the punishment RANGE ("Up to 10 years") - shown as FACING, never as the sentence (2026-11-24). The v10
+    "result" is {"sentence", "conditions"} (it used to be printed as "{'SENTENCE': ...}" on the card)."""
     out = {}
-    for src, dst in (("name", "defendant"), ("defendant", "defendant"), ("charge", "charges"), ("result", "result"),
-                     ("court", "court"), ("hearing_date", "hearing_date"), ("date", "hearing_date"), ("facing", "sentence")):
+    res = case.get("result")
+    if isinstance(res, dict):
+        for k in ("sentence", "conditions"):
+            v = str(res.get(k) or "").strip()
+            if v and v.lower() not in ("none", "n/a", "-", "null"):
+                out[k] = v
+        res = None
+    for src, dst in (("name", "defendant"), ("defendant", "defendant"), ("cause_no", "cause_no"), ("charge", "charges"),
+                     ("facing", "facing"), ("court", "court"), ("hearing_date", "hearing_date"), ("date", "hearing_date")):
         v = case.get(src)
-        if v and dst not in out:
-            out[dst] = str(v)
+        if isinstance(v, (str, int, float)) and str(v).strip() and dst not in out:
+            out[dst] = str(v).strip()
+    if isinstance(res, str) and res.strip():
+        out.setdefault("result", res.strip())
+    elif case.get("ends_on") and "sentence" not in out:
+        out.setdefault("result", _short_line(case["ends_on"]))
     return out
+
+
+def _short_line(t, n=70):
+    t = re.sub(r"\s+", " ", str(t)).strip().rstrip(".")
+    return t if len(t) <= n else t[:n - 1].rsplit(" ", 1)[0] + "…"
+
+
+_COURT = re.compile(r"(\d{1,3}(?:st|nd|rd|th)\s+(?:judicial\s+)?district\s+court|county\s+(?:criminal\s+)?court\s+at\s+law"
+                    r"(?:\s*(?:no\.?|#)?\s*\d+)?|criminal\s+district\s+court(?:\s*(?:no\.?|#)?\s*\d+)?|municipal\s+court|"
+                    r"justice\s+of\s+the\s+peace(?:\s*(?:precinct|pct\.?)\s*\d+)?)", re.I)
+
+
+def court_from_title(title):
+    """'WED., NOV 18, 2026/JUDGE X/187TH DISTRICT COURT /MORNING DOCKET' -> '187TH DISTRICT COURT' ('' if none)."""
+    m = _COURT.search(str(title or ""))
+    return re.sub(r"\s+", " ", m.group(1)).strip().upper() if m else ""
 
 
 def build_facts(case, transcript_text, meta=None):

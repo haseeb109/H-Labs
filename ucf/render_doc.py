@@ -46,6 +46,34 @@ MOODS = {
 DEFAULT_BROLL = ["courthouse_stone", "case_folder", "gavel", "courtroom_empty", "police_car_night", "documents_desk"]
 
 
+def _chap(title, default):
+    """Chapter name for YouTube from a card title: 'THE PLEA' -> 'The Plea'; generic 'PART n' -> default."""
+    t = re.sub(r"\s+", " ", str(title or "")).strip()
+    if not t or re.fullmatch(r"PART \d+", t.upper()):
+        return default
+    return t.title() if t.isupper() else t
+
+
+def youtube_chapters(rows, total):
+    """[(start s, label)] from the pieces the renderer made: starts at 0:00, >= 10 s apart, none in the last 60 s
+    (YouTube needs 3+ chapters to show them; the QC flags a chapter in the final minute)."""
+    out = []
+    for i, r in enumerate(rows):
+        lab = r.get("chapter") or ("The moment" if i == 0 else "")
+        if not lab:
+            continue
+        t = 0.0 if not out else r["start"]
+        if out and t > total - 60:
+            continue
+        if out and t - out[-1][0] < 10:
+            # a short piece (penalty card) before a chapter card: the chapter wins; at 0:00 only over the default name
+            if len(out) > 1 or not rows[0].get("chapter"):
+                out[-1] = (out[-1][0], lab)
+            continue
+        out.append((t, lab))
+    return out
+
+
 def _short(t, n=60):
     t = re.sub(r"\s+", " ", str(t or "")).strip()
     return t if len(t) <= n else t[:n - 1].rsplit(" ", 1)[0] + "…"
@@ -90,6 +118,39 @@ class DocRenderer(Renderer):
 
     def png(self, name):
         return self.work / "gfx" / name
+
+    def portrait(self):
+        """The defendant's face for the polaroid / profile (2026-11-24: it showed the whole 4-tile Zoom grid). Frames from
+        where the DEFENDANT speaks (doc.turns), then across the case; the biggest clear face, cropped to the photo shape.
+        No face detector / no face -> the plain frame, as before."""
+        from . import faces
+        out = self.png("face.jpg")
+        if out.exists():
+            return out
+        times = []
+        for tu in self.doc.get("turns") or []:
+            try:
+                if str(tu.get("who", "")).upper().startswith("DEF"):
+                    a, b = parse_tc(tu["from"]), parse_tc(tu["to"])
+                    times += [a + (b - a) * k for k in (0.3, 0.7)]
+            except (KeyError, ValueError, TypeError, AttributeError):
+                continue
+        times += [self.case_a + x for x in (8, 25, 45, 75)]
+        times = [t for t in times if self.case_a <= t < self.case_b][:6]
+        best = None
+        if faces.available():
+            for t in times:
+                f = self.frame(t, self.png(f"pf_{int(t)}.jpg"))
+                fs = faces.detect(f)
+                if fs and (best is None or fs[0]["w"] * fs[0]["h"] * fs[0]["score"] > best[1]["w"] * best[1]["h"] * best[1]["score"]):
+                    best = (f, fs[0])
+        if not best:
+            return self.frame(self.case_a + 8, out)
+        from PIL import Image
+        with Image.open(best[0]) as im:
+            x, y, w, h = faces.face_crop_box(best[1], im.width, im.height, scale=2.6, aspect=460 / 520)
+            im.convert("RGB").crop((x, y, x + w, y + h)).save(out, quality=92)
+        return out
 
     # ================================================================== segment encoders
     def seg_court(self, a, b, out, date="", tag="", beats=(), punch=(), bw=False, speed=1.0, extra=(), captions=True,
@@ -262,7 +323,7 @@ class DocRenderer(Renderer):
         a, b = parse_tc(self.case["in"]), parse_tc(self.case["out"])
         self.case_a, self.case_b = a, b
         text = " ".join(s["text"] for s in self.segs if a - 30 <= s["start"] <= b + 30)
-        meta = {"court": self.cfg.get("court_line_plain") or plan.get("court") or "", "date": self.doc.get("date") or plan.get("date", "") or self.cfg.get("_hearing_date", "")}
+        meta = {"court": self.cfg.get("court_line_plain") or plan.get("court") or self.cfg.get("_court_line") or "", "date": self.doc.get("date") or plan.get("date", "") or self.cfg.get("_hearing_date", "")}
         self.facts, dropped = casedoc.build_facts(dict(self.case, case_doc=self.doc.get("case_doc")), text, meta)
         for k, why in dropped:
             self.ui(f"  case document: '{k}' left out ({why})")
@@ -282,14 +343,31 @@ class DocRenderer(Renderer):
                 out.append((a, b, m.get("label", "")))
         if not out:
             out.append((*self.hook, self.doc.get("hook_label", "")))
-            ph = (self.case.get("phases") or {}).get("ruling") or {}
-            try:
-                r = parse_tc(ph.get("tc") or ph.get("in"))
-                if abs(r - self.hook[0]) > 20 and self.case_a < r < self.case_b:
-                    out.append((max(self.case_a, r - 4), min(self.case_b, r + 14), ""))
-            except (ValueError, TypeError):
-                pass
+            r = self.ruling_tc()
+            if r is not None and abs(r - self.hook[0]) > 20 and self.case_a < r < self.case_b:
+                out.append((max(self.case_a, r - 4), min(self.case_b, r + 14), ""))
         return out[:n]
+
+    def ruling_tc(self):
+        """Stream seconds of the ruling: phases is a LIST of {"phase", "tc"} in the v10 plan (2026-11-24: read as a dict,
+        Verdict First crashed on every real plan), else ruling_tc, else doc.rulings[0]. None when unknown."""
+        ph = self.case.get("phases")
+        cands = []
+        if isinstance(ph, list):
+            cands += [p.get("tc") for p in ph if isinstance(p, dict) and p.get("phase") == "ruling"]
+        elif isinstance(ph, dict):
+            r = ph.get("ruling") or {}
+            cands.append(r.get("tc") or r.get("in") if isinstance(r, dict) else r)
+        cands.append(self.case.get("ruling_tc"))
+        cands += [r.get("tc") for r in self.doc.get("rulings") or [] if isinstance(r, dict)]
+        for c in cands:
+            try:
+                t = parse_tc(c)
+            except (ValueError, TypeError, AttributeError, KeyError):
+                continue
+            if self.case_a <= t <= self.case_b:
+                return t
+        return None
 
     def parts(self):
         return TL.case_parts(self.case, self.cfg.get("cut_pad_out", 0.0))
@@ -303,6 +381,10 @@ class DocRenderer(Renderer):
                 named.append((parse_tc(ch["at"]), _short(ch.get("title", ""), 28).upper()))
             except (KeyError, ValueError, TypeError):
                 continue
+        if not named:       # no chapters from the brain: the hearing, then the ruling (YouTube shows 3+ chapters only)
+            r = self.ruling_tc() if not self._earlier else None
+            if r is not None:
+                named = [(parts[0][0], "THE HEARING"), (max(parts[0][0], r - 12), "THE RULING")]
         out = []
         for a, b in parts:
             cuts = sorted(t for t, _ in named if a + 20 < t < b - 20)
@@ -369,13 +451,25 @@ class DocRenderer(Renderer):
             out.append((p, bt["start"], bt["end"]))
         return out, punch
 
-    def court_block(self, a, b, tag, out_name, **kw):
+    def court_block(self, a, b, tag, out_name, chapter=None, **kw):
+        """Court footage a..b. A long block is made in pieces of ~4 min (2026-11-24): one ffmpeg call per piece keeps the
+        command under the Windows limit (a 40 min block had ~130 beat PNG inputs) and the beat schedule per piece."""
+        span = float(self.cfg.get("court_chunk_s", 240.0))
+        if kw.get("speed", 1.0) == 1.0 and b - a > span * 1.25:
+            n = int((b - a) // span) + (1 if (b - a) % span > span * 0.25 else 0)
+            edges = [a + (b - a) * k / n for k in range(n + 1)]
+            for k, (x, y) in enumerate(zip(edges, edges[1:])):
+                self._court_piece(x, y, tag, out_name.replace(".mp4", f"_{k}.mp4"), chapter if k == 0 else None, **kw)
+            return
+        self._court_piece(a, b, tag, out_name, chapter, **kw)
+
+    def _court_piece(self, a, b, tag, out_name, chapter=None, **kw):
         beats, punch = self.beats_for(a, b, kw.get("speed", 1.0))
         out = self.work / out_name
         if not out.exists():
             self.seg_court(a, b, out, date=self.date, tag=tag, beats=beats, punch=punch,
                            turns=None if self._earlier else self.doc.get("turns"), **kw)
-        self.add("court", out, a=a, b=b)
+        self.add("court", out, a=a, b=b, **({"chapter": chapter} if chapter else {}))
 
     def doc_steps(self, name, per=0.9, last=2.5):
         pngs = casedoc.summary_card(self.facts, self.png(name), self.pal)
@@ -384,6 +478,8 @@ class DocRenderer(Renderer):
     # ================================================================== timeline bookkeeping
     def add(self, role, path, mood=None, sfx=None, **meta):
         """role: court | cold | story | bridge | end (music + chapters), sfx at the start of the piece."""
+        if role == "court":
+            meta.setdefault("src", self.srcname)      # an earlier hearing's clip while using() is active
         self.pieces.append((role, Path(path), mood, sfx, meta))
 
     # ================================================================== recipes
@@ -400,7 +496,7 @@ class DocRenderer(Renderer):
         if len(m) > 1:
             self.court_block(m[1][0], m[1][1], "", "c02_open2.mp4")
             self.role_last("cold")
-        prof = self.frame(self.case_a + 8, self.png("face.jpg"))
+        prof = self.portrait()
         story = f"This is the full story of {self.name}."
         p = self.work / "c03_story.mp4"
         if not p.exists():
@@ -422,19 +518,15 @@ class DocRenderer(Renderer):
         if not p.exists():
             steps = [(title, 3.5)] + [(x, 1.4) for x in prof_steps] + self.doc_steps("sum.png")
             self.seg_cards(steps, p)
-        self.add("story", p, mood="story", sfx="brass_hit")
+        self.add("story", p, mood="story", sfx="brass_hit", chapter="The case file")
         self.backstory("c06")
         self.penalty("c07")
         self.hearings(numbered=True)
         self.ending()
 
     def recipe_verdict_first(self, video):
-        ph = (self.case.get("phases") or {}).get("ruling") or {}
-        try:
-            r = parse_tc(ph.get("tc") or ph.get("in"))
-            a, b = max(self.case_a, r - 6), min(self.case_b, r + 12)
-        except (ValueError, TypeError):
-            a, b = self.hook
+        r = self.ruling_tc()
+        a, b = (max(self.case_a, r - 6), min(self.case_b, r + 12)) if r is not None else self.hook
         self.court_block(a, b, "THE SENTENCE", "v00_sentence.mp4")
         self.role_last("cold")
         big = self.doc.get("verdict_big") or self.facts.get("sentence") or self.facts.get("result") or "THE VERDICT"
@@ -456,7 +548,7 @@ class DocRenderer(Renderer):
         if not p.exists():
             self.seg_cards([(paper.paper_card("THREE QUESTIONS", "BY THE END YOU WILL KNOW", [_short(q, 60) for q in qs[:3]],
                                               self.png("q.png"), self.pal), 5.0)], p)
-        self.add("story", p, mood="story", sfx="paper_rustle")
+        self.add("story", p, mood="story", sfx="paper_rustle", chapter="Three questions")
         chs = self.chapters()
         for i, (a, b, t) in enumerate(chs):
             left = len(chs) - i
@@ -464,9 +556,18 @@ class DocRenderer(Renderer):
             if not p.exists():
                 lab = f"{left} DECISION{'S' if left > 1 else ''} EARLIER" if left > 1 else "THE DECISION"
                 self.seg_blur(paper.big_text(lab, self.png(f"cd{i}.png"), self.pal, sub=t), "", p, f"cd{i}", t0=a, min_dur=2.6)
-            self.add("bridge", p, mood="bridge", sfx="whoosh")
+            self.add("bridge", p, mood="bridge", sfx="whoosh", chapter=_chap(t, f"Decision {i + 1}"))
             self.court_block(a, b, t, f"v2{i:02d}_court.mp4")
-        self.ending(answers=qs)
+        ans = [a for a in self.doc.get("answers") or [] if isinstance(a, str) and a.strip()]
+        if len(ans) >= min(3, len(qs)):
+            lines = [f"{_short(q, 34)} — {_short(a, 40)}" for q, a in zip(qs, ans)]
+        else:      # no answers from the brain: the facts that answer them (2026-11-24: the card repeated the questions)
+            f = self.facts
+            lines = [x for x in (f.get("charges") and f"WHY: {f['charges']}",
+                                 f.get("state_asked") and f"THE STATE ASKED: {f['state_asked']}",
+                                 f.get("defense_asked") and f"THE DEFENSE ASKED: {f['defense_asked']}",
+                                 (f.get("sentence") or f.get("result")) and f"THE OUTCOME: {f.get('sentence') or f.get('result')}") if x][:3]
+        self.ending(answers=lines)
 
     def recipe_emotional(self, video):
         q = self.doc.get("impact_quote") or {}
@@ -487,7 +588,7 @@ class DocRenderer(Renderer):
         p = self.work / "e03_doc.mp4"
         if not p.exists():
             self.seg_cards(self.doc_steps("sum.png", 1.1, 3.0), p)
-        self.add("story", p, mood="story", sfx="paper_rustle")
+        self.add("story", p, mood="story", sfx="paper_rustle", chapter="The case file")
         self.backstory("e04", bw=True)
         self.hearings(numbered=False)
         self.ending(slow=True)
@@ -510,25 +611,32 @@ class DocRenderer(Renderer):
         p = self.work / "b01_board.mp4"
         if not p.exists():
             self.seg_cards(steps, p)
-        self.add("cold", p, mood="cold", sfx="stamp_thud")
+        self.add("cold", p, mood="cold", sfx="stamp_thud", chapter="The evidence board")
         intro = self.doc.get("tease") or f"Every piece of this case is on this board. Let's connect them."
         vo, vd = self.voice(intro + " " + (self.doc.get("backstory_text") or video.get("vo1", {}).get("text", "")), "board")
-        n = len(items)
+        chs = self.chapters()
+        # the last items are kept back: each later chapter pins one of them (2026-11-24: every pin went up at once and the
+        # "NEW EVIDENCE" card showed the same full board again)
+        k_new = max(0, min(len(items) - 3, len(chs) - 1))
+        n = len(items) - k_new
         per = max(1.6, (vd + 0.8) / max(1, n))
         steps = [(paper.board(items, links, self.png(f"bd{i}.png"), self.pal, reveal=i, master=master), per) for i in range(1, n + 1)]
         p = self.work / "b02_pins.mp4"
         if not p.exists():
             self.seg_cards(steps, p, vo=vo)
-        self.add("story", p, mood="story", sfx="pop_click")
-        chs = self.chapters()
+        self.add("story", p, mood="story", sfx="pop_click", chapter="Connecting the pieces")
         for i, (a, b, t) in enumerate(chs):
             if i:
                 p = self.work / f"b1{i:02d}_pin.mp4"
                 if not p.exists():
-                    self.seg_cards([(paper.board(items, links, self.png(f"bdn{i}.png"), self.pal, master=master,
-                                                 stamp_text="NEW EVIDENCE" if i == 1 else t), 2.4)], p)
-                self.add("bridge", p, mood="bridge", sfx="stamp_thud")
-            self.court_block(a, b, t, f"b2{i:02d}_court.mp4")
+                    new = i <= k_new
+                    self.seg_cards([(paper.board(items, links, self.png(f"bdn{i}a.png"), self.pal, master=master,
+                                                 reveal=n + i - 1), 0.9),
+                                    (paper.board(items, links, self.png(f"bdn{i}.png"), self.pal, master=master,
+                                                 reveal=min(len(items), n + i),
+                                                 stamp_text="NEW EVIDENCE" if new else _short(t, 22)), 2.6)], p)
+                self.add("bridge", p, mood="bridge", sfx="stamp_thud", chapter=_chap(t, f"Part {i + 1}"))
+            self.court_block(a, b, t, f"b2{i:02d}_court.mp4", chapter=None if i else _chap(t, "The hearing"))
         self.ending()
 
     def recipe_instant_replay(self, video):
@@ -550,11 +658,11 @@ class DocRenderer(Renderer):
         p = self.work / "r02_impact.mp4"
         if not p.exists():
             self.seg_cards(self.doc_steps("sum.png", 0.7, 2.6), p)
-        self.add("story", p, mood="story", sfx="paper_rustle")
+        self.add("story", p, mood="story", sfx="paper_rustle", chapter="The case file")
         self.backstory("r03")
         k = 0
         for i, (ca, cb, t) in enumerate(self.chapters()):
-            self.court_block(ca, cb, t, f"r1{i:02d}_court.mp4")
+            self.court_block(ca, cb, t, f"r1{i:02d}_court.mp4", chapter=_chap(t, f"Part {i + 1}"))
             for ra, rb, r in reps[1:]:
                 if ca <= ra < cb:
                     k += 1
@@ -608,7 +716,7 @@ class DocRenderer(Renderer):
             p = self.work / "s00_prev.mp4"
             if not p.exists():
                 self.seg_broll(["courtroom_empty", "documents_desk", "calendar_pages"], txt, p, "prev", pills=pills)
-            self.add("cold", p, mood="cold", sfx="whoosh")
+            self.add("cold", p, mood="cold", sfx="whoosh", chapter="Previously")
         a, b, _ = self.moments(1)[0]
         self.court_block(a, b, "", "s01_open.mp4")
         self.role_last("cold")
@@ -617,7 +725,7 @@ class DocRenderer(Renderer):
         if not p.exists():
             self.seg_cards([(paper.episode_card(ep, title, self.png("ep.png"), self.pal, sub=self.date), 3.0)]
                            + self.doc_steps("sum.png", 0.7, 2.4), p)
-        self.add("story", p, mood="story", sfx="brass_hit")
+        self.add("story", p, mood="story", sfx="brass_hit", chapter=f"Episode {ep} · {title.title()}")
         if ep == 1:
             self.backstory("s03")
         self.hearings(numbered=False)
@@ -661,7 +769,7 @@ class DocRenderer(Renderer):
             p = self.work / f"{name}_{i}.mp4"
             if not p.exists():
                 self.seg_broll(tags, bt["text"], p, f"{name}_{i}", pills=pills, bw=bw)
-            self.add("story", p, mood="story", sfx="whoosh" if i == 0 else None)
+            self.add("story", p, mood="story", sfx="whoosh" if i == 0 else None, **({"chapter": "The backstory"} if i == 0 else {}))
 
     def penalty(self, name):
         lvl = (self.doc.get("charge_level") or "").strip()
@@ -670,7 +778,7 @@ class DocRenderer(Renderer):
             p = self.work / f"{name}_pen.mp4"
             if not p.exists():
                 self.seg_cards([(png, 4.0)], p)
-            self.add("story", p, mood="story", sfx="stamp_thud")
+            self.add("story", p, mood="story", sfx="stamp_thud", chapter="What the law allows")
 
     def earlier(self):
         """Earlier hearings of this defendant from the dossier (tools/dossier.py), oldest first."""
@@ -703,9 +811,9 @@ class DocRenderer(Renderer):
                 if not p.exists():
                     self.seg_blur(paper.chapter_card(kick, h.get("date") or " ", "EARLIER HEARING", self.png(f"gch{i}.png"), self.pal),
                                   bridges[i] if i < len(bridges) else "", p, f"gch{i}", t0=min(5, d / 3), min_dur=3.0)
-                self.add("bridge", p, mood="bridge", sfx="riser")
+                self.add("bridge", p, mood="bridge", sfx="riser",
+                         chapter=f"{kick.title()} · {h.get('date') or 'earlier hearing'}".strip())
                 self.court_block(0.0, d, "EARLIER HEARING", f"g{i:02d}_court.mp4")
-                self.pieces[-1][4]["src"] = Path(h["path"]).name
             finally:
                 self.restore(old)
             if True:                                   # a time jump after every earlier hearing
@@ -721,30 +829,37 @@ class DocRenderer(Renderer):
         n0 = self.earlier_hearings(1, numbered)
         chs = self.chapters()
         for i, (a, b, t) in enumerate(chs):
-            kick = f"HEARING {n0 + i + 1}" if numbered else f"PART {i + 1}"
+            # one hearing's chapters are parts of THAT hearing (2026-11-24: they read "HEARING 2, 3, 4" on one date)
+            if numbered and n0:
+                kick = f"HEARING {n0 + 1}" + (f" · PART {i + 1}" if len(chs) > 1 else "")
+            else:
+                kick = f"CHAPTER {i + 1}" if numbered else f"PART {i + 1}"
             p = self.work / f"h{i:02d}_ch.mp4"
             if not p.exists():
                 self.seg_blur(paper.chapter_card(kick, self.date or " ", t, self.png(f"ch{i}.png"), self.pal),
                               (self.doc.get("bridges") or [""] * 99)[i] if i < len(self.doc.get("bridges") or []) else "",
                               p, f"ch{i}", t0=a, min_dur=3.0)
-            self.add("bridge", p, mood="bridge", sfx="riser")
+            self.add("bridge", p, mood="bridge", sfx="riser", chapter=f"{kick.title()} · {_chap(t, 'The hearing')}")
             self.court_block(a, b, t, f"h{i:02d}_court.mp4")
 
     def ending(self, answers=None, slow=False, extra_card=None):
         txt = self.video.get("vo_final", {}).get("text", "")
         steps = self.doc_steps("end.png", 0.5, 2.0)
+        k = len(steps) - 1                         # the finished document
         if answers:
-            steps.append((paper.paper_card("THE ANSWERS", "", [_short(a, 60) for a in answers[:3]], self.png("ans.png"), self.pal), 4.0))
+            steps.append((paper.paper_card("THE ANSWERS", "", [_short(a, 78) for a in answers[:3]], self.png("ans.png"), self.pal), 4.5))
         if extra_card:
             steps.append((extra_card, 3.0))
         vo, vd = self.voice(txt, "final")
         if vo and vd + 1.0 > sum(d for _, d in steps):
-            k = (vd + 1.0) / sum(d for _, d in steps)
-            steps = [(p, d * k) for p, d in steps]
+            # the rows keep their quick reveal; the finished document (last step of it) holds while the line is read
+            # (2026-11-24: stretched evenly, the sentence row appeared only in the last seconds)
+            extra = vd + 1.0 - sum(d for _, d in steps)
+            steps[k] = (steps[k][0], steps[k][1] + extra)
         p = self.work / "z99_end.mp4"
         if not p.exists():
             self.seg_cards(steps, p, vo=vo, push=not slow)
-        self.add("end", p, mood="end", sfx="paper_rustle")
+        self.add("end", p, mood="end", sfx="paper_rustle", chapter="The outcome")
 
     # ================================================================== one video
     def render_video(self, plan, video, outdir, tts_cache, ui=print):
@@ -826,4 +941,6 @@ class DocRenderer(Renderer):
         (outdir / "case_document.json").write_text(json.dumps(self.facts, indent=1, ensure_ascii=False), encoding="utf-8")
         durs = {"hook": sum(r["dur"] for r in rows if r["kind"] == "cold"), "intro": 0.0, "vo1": 0.0, "bridge": [],
                 "final": rows[-1]["dur"] if rows else 0.0}
-        return {"final": final, "timeline": tl, "rows": rows, "durs": durs, "measured_total": probe_dur(final), "work": self.work}
+        measured = probe_dur(final)
+        return {"final": final, "timeline": tl, "rows": rows, "durs": durs, "measured_total": measured, "work": self.work,
+                "chapters": youtube_chapters(rows, measured)}

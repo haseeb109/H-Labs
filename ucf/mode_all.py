@@ -352,7 +352,7 @@ def _pass_b_loop(c, pb, prompt_b, plan, judge, stream_len, segs, cfg, ui, work, 
     """Pass B for one case on ONE provider: fresh attempts (config brain_attempts) around the validator repair rounds.
     A case that still fails is marked needs_review by the caller; it never stops the other cases."""
     attempts = 1 if pb.get("brain") == "mock" else max(1, int(cfg.get("brain_attempts", 2)))
-    vobj, berrs = None, []
+    best = (None, ["no reply"])
     for att in range(attempts):
         if att:
             ui(f"  {c.get('name', '')}: fresh attempt {att + 1}/{attempts} on {pb.get('brain')}...")
@@ -360,7 +360,10 @@ def _pass_b_loop(c, pb, prompt_b, plan, judge, stream_len, segs, cfg, ui, work, 
                                    tag=f"{tag}try{att + 1}_" if att else tag)
         if vobj is not None and not berrs:
             return vobj, []
-    return vobj, berrs
+        # keep the best reply of all attempts (a later repair round is sometimes worse: vo1 empty again)
+        if vobj is not None and (best[0] is None or len(berrs) < len(best[1])):
+            best = (vobj, berrs)
+    return best
 
 
 def _pass_b_once(c, pb, prompt_b, plan, judge, stream_len, segs, cfg, ui, work, tag=""):
@@ -386,6 +389,9 @@ def _pass_b_once(c, pb, prompt_b, plan, judge, stream_len, segs, cfg, ui, work, 
             vobj, berrs = None, [f"Pass B: not valid JSON ({e})"]
             msgs_b = [msgs_b[0], {"role": "assistant", "content": txt}, {"role": "user", "content": berrs[0]}]
             continue
+        if cfg.get("_renderer") == "doc":         # documentary: fill / drop what the brain got wrong before judging it
+            from . import doc_pack as DP
+            DP.sanitize(vobj, c, plan["cases"], segs, cfg)
         probe = {"n": c["rank"], "schema": "v10", **vobj, "case_ids": [c["id"]], "bridges": vobj.get("bridges", [])}
         _fill_titles(probe)          # title/backup_title exist in the final plan, so check them here (thumbnail rule)
         # Judge THIS case only: its overlays come from this reply (the overlay rules read case.overlays), and
@@ -409,6 +415,38 @@ def _pass_b_once(c, pb, prompt_b, plan, judge, stream_len, segs, cfg, ui, work, 
                   {"role": "user", "content": "The validator rejected this video. Fix EVERY item and return the "
                     "COMPLETE corrected {\"video\": {...}} JSON:\n- " + "\n- ".join(berrs[:40])}]
     return vobj, berrs
+
+
+def _package_case(c, plan, judge, lines, stream_len, segs, cfg, ui, work, pass_b_brain, par=1):
+    """Pass B for one used case (+ the fallback brain; documentary styles never lose the case). -> (video, errs, brain)."""
+    cui = ui if par == 1 else (lambda *m: ui(f"  [#{c['rank']} {c['name'][:16]}]", *m))
+    cui(f"  PASS B (packaging) #{c['rank']} {c['name']}...")
+    pb = _provider_cfg(cfg, pass_b_brain)
+    a, b = parse_tc(c["in"]), parse_tc(c["out"])
+    prompt_b = case_prompt(c, pb, judge) + "\n\n" + "═" * 64 + \
+        "\n TRANSCRIPT SLICE (this case only)\n" + "═" * 64 + "\n" + "\n".join(case_slice_lines(lines, a, b))
+    brain_used = pass_b_brain
+    vobj, berrs = _pass_b_loop(c, pb, prompt_b, plan, judge, stream_len, segs, cfg, cui, work)
+    fb = _fallback_for(cfg, pass_b_brain)
+    if (vobj is None or berrs) and fb:
+        cui(f"  {c['name']}: {pass_b_brain} could not pass the validator -> retrying this case on {fb}")
+        vobj, berrs = _pass_b_loop(c, _provider_cfg(cfg, fb), prompt_b, plan, judge, stream_len, segs, cfg,
+                                   cui, work, tag="fb_")
+        brain_used = fb
+    if pb.get("_renderer") == "doc" and (vobj is None or berrs):
+        # documentary styles never lose a validated case to its packaging: the renderer builds every part from the
+        # case itself (the case range / call-out / ruling already passed Pass A). Titles etc. are marked for a check.
+        from . import doc_pack as DP
+        why = (berrs or ["no reply"])[0]
+        vobj = vobj if vobj is not None else DP.minimal(c)
+        DP.sanitize(vobj, c, plan["cases"], segs, cfg)
+        vobj.setdefault("_pack_notes", []).insert(0, f"packaging incomplete ({str(why)[:120]}) - made from the case")
+        cui(f"  {c['name']}: packaging incomplete ({str(why)[:90]}) - the video is made from the case document; "
+            "check its title / description before upload")
+        berrs = []
+    if vobj is not None and not berrs:
+        cui(f"  #{c['rank']} {c['name']}: packaging done")
+    return vobj, berrs, brain_used
 
 
 def build_plan(segs, lines, scan_text, stream_len, cfg, ui=print, work=None, scan_rep=None, video_path=None):
@@ -489,23 +527,7 @@ def build_plan(segs, lines, scan_text, stream_len, cfg, ui=print, work=None, sca
     par = 1 if pass_b_brain in ("mock", "manual") else max(1, int(cfg.get("brain_parallel_b", 3)))
 
     def package(c):
-        cui = ui if par == 1 else (lambda *m: ui(f"  [#{c['rank']} {c['name'][:16]}]", *m))
-        cui(f"  PASS B (packaging) #{c['rank']} {c['name']}...")
-        pb = _provider_cfg(cfg, pass_b_brain)
-        a, b = parse_tc(c["in"]), parse_tc(c["out"])
-        prompt_b = case_prompt(c, pb, judge) + "\n\n" + "═" * 64 + \
-            "\n TRANSCRIPT SLICE (this case only)\n" + "═" * 64 + "\n" + "\n".join(case_slice_lines(lines, a, b))
-        brain_used = pass_b_brain
-        vobj, berrs = _pass_b_loop(c, pb, prompt_b, plan, judge, stream_len, segs, cfg, cui, work)
-        fb = _fallback_for(cfg, pass_b_brain)
-        if (vobj is None or berrs) and fb:
-            cui(f"  {c['name']}: {pass_b_brain} could not pass the validator -> retrying this case on {fb}")
-            vobj, berrs = _pass_b_loop(c, _provider_cfg(cfg, fb), prompt_b, plan, judge, stream_len, segs, cfg,
-                                       cui, work, tag="fb_")
-            brain_used = fb
-        if vobj is not None and not berrs:
-            cui(f"  #{c['rank']} {c['name']}: packaging done")
-        return vobj, berrs, brain_used
+        return _package_case(c, plan, judge, lines, stream_len, segs, cfg, ui, work, pass_b_brain, par)
 
     if par > 1 and len(used) > 1:
         from concurrent.futures import ThreadPoolExecutor
@@ -515,27 +537,55 @@ def build_plan(segs, lines, scan_text, stream_len, cfg, ui=print, work=None, sca
     else:
         results = [package(c) for c in used]
 
-    videos = []
+    plan["videos"] = []
     for c, (vobj, berrs, brain_used) in zip(used, results):
-        c["packaged_by"] = brain_used
-        if vobj is None or berrs:
-            ui(f"  ! {c['name']} stays unrendered (needs_review) - see brain_reply_B_{c['id']}_*.txt")
-            c["needs_review"] = True
-            c["status"] = "skipped"
-            c["reject_reason"] = "packaging failed validation - needs review"
-            continue
-        c["overlays"] = vobj.get("overlays") or []      # Pass B owns the final overlay list
-        vobj.setdefault("case_ids", [c["id"]])
-        vobj["n"] = c["rank"]
-        vobj["rank"] = c["rank"]
-        vobj["bridges"] = []
-        _fill_titles(vobj)
-        videos.append(vobj)
+        apply_package(plan, c, vobj, berrs, brain_used, ui)
     plan["schema"] = "v10"
     plan["mode"] = "all"
     plan["judge_name"] = judge
-    plan["videos"] = sorted(videos, key=lambda v: v["rank"])
     return plan, []
+
+
+def apply_package(plan, c, vobj, berrs, brain_used, ui=print):
+    """Put one Pass B result into the plan (a video), or set the case aside (needs_review)."""
+    c["packaged_by"] = brain_used
+    if vobj is None or berrs:
+        ui(f"  ! {c['name']} stays unrendered (needs_review) - see brain_reply_B_{c['id']}_*.txt")
+        c["needs_review"] = True
+        c["status"] = "skipped"
+        c["reject_reason"] = "packaging failed validation - needs review"
+        return None
+    c.pop("needs_review", None)
+    c.pop("reject_reason", None)
+    c["status"] = "used"
+    c["overlays"] = vobj.get("overlays") or []      # Pass B owns the final overlay list
+    vobj.setdefault("case_ids", [c["id"]])
+    vobj["n"] = c["rank"]
+    vobj["rank"] = c["rank"]
+    vobj["bridges"] = []
+    _fill_titles(vobj)
+    if vobj.get("_pack_notes"):
+        ui(f"  {c['name']}: " + "; ".join(vobj["_pack_notes"][:6]))
+    plan["videos"] = sorted([v for v in plan.get("videos", []) if c["id"] not in (v.get("case_ids") or [])] + [vobj],
+                            key=lambda v: v.get("rank", v.get("n", 0)))
+    return vobj
+
+
+def repackage(plan, segs, lines, stream_len, cfg, ui=print, work=None):
+    """Retry of a mode-all run: the cases the last run set aside (needs_review) get a fresh Pass B; the rest of the
+    saved plan (Pass A + the finished packaging) is kept. -> number of cases that now have a video."""
+    todo = [c for c in plan.get("cases", []) if c.get("needs_review") and c.get("rank")]
+    if not todo:
+        return 0
+    judge = plan.get("judge_name") or cfg.get("judge_name", "the judge")
+    pass_b_brain = cfg.get("brain_pass_b") or cfg.get("brain", "anthropic")
+    n = 0
+    for c in todo:
+        c["status"] = "used"
+        c["_dur"] = c.get("_dur") or (parse_tc(c["out"]) - parse_tc(c["in"]))
+        vobj, berrs, brain_used = _package_case(c, plan, judge, lines, stream_len, segs, cfg, ui, work, pass_b_brain)
+        n += apply_package(plan, c, vobj, berrs, brain_used, ui) is not None
+    return n
 
 
 def write_ranking(plan, outroot, cfg, sid):
