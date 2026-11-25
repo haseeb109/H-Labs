@@ -270,9 +270,25 @@ def comparison(left, right, out, palette=None):
     return render(inner, out, p, transparent=False)
 
 
-def chapter_card(kicker, date, keyword, out, palette=None):
-    """HEARING 6 / JANUARY 28, 2025 / [THE BOND] - transparent; the renderer puts it on blurred footage."""
+def chapter_card(kicker, date, keyword, out, palette=None, variant="card"):
+    """HEARING 6 / JANUARY 28, 2025 / [THE BOND] - transparent; the renderer puts it on blurred footage.
+    variant: card (dark box + pill) | minimal (Emotional Cut: serif words between two thin lines, no box) |
+    episode (Docu-Series: left-aligned, big title, accent bar, like a streaming episode card)."""
     p = _pal(palette)
+    if variant == "minimal":
+        inner = (f'<div class="a" style="left:0;right:0;top:50%;transform:translateY(-50%);text-align:center;color:#EDE6D6">'
+                 f'<div style="width:220px;height:2px;background:{p["accent"]};margin:0 auto 26px"></div>'
+                 f'<div style="font-family:{p["serif"]};font-weight:700;font-size:30px;letter-spacing:10px;opacity:.75;text-transform:uppercase">{esc(kicker)}</div>'
+                 f'<div style="font-family:{p["serif"]};font-weight:700;font-size:92px;margin:14px 0 8px;text-transform:uppercase">{esc(keyword)}</div>'
+                 f'<div style="font-family:{p["serif"]};font-weight:700;font-size:28px;letter-spacing:6px;opacity:.7">{esc(date)}</div>'
+                 f'<div style="width:220px;height:2px;background:{p["accent"]};margin:26px auto 0"></div></div>')
+        return render(inner, out, p)
+    if variant == "episode":
+        inner = (f'<div class="a" style="left:150px;top:50%;transform:translateY(-50%);border-left:12px solid {p["accent"]};padding-left:44px">'
+                 f'<div style="font-family:{p["mono"]};font-size:28px;letter-spacing:8px;color:{p["accent"]};text-transform:uppercase">{esc(kicker)}</div>'
+                 f'<div class="big" style="font-size:130px;margin:10px 0 6px;color:#fff;text-shadow:0 10px 40px rgba(0,0,0,.6)">{esc(keyword)}</div>'
+                 f'<div style="font-family:{p["mono"]};font-size:30px;letter-spacing:4px;color:#d8f3f0">{esc(date)}</div></div>')
+        return render(inner, out, p)
     inner = (f'<div class="card a" style="left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;min-width:900px;padding:50px 80px">'
              f'<div style="font-family:{p["mono"]};font-size:30px;letter-spacing:8px;color:{p["muted"]};text-transform:uppercase">{esc(kicker)}</div>'
              f'<div class="big" style="font-size:96px;margin:14px 0 22px">{esc(date)}</div>'
@@ -427,3 +443,73 @@ def penalty_card(charge, level, out, palette=None):
              f'<div class="a" style="right:300px;bottom:180px;background:{p["danger"]};color:{p["white"]};font-family:{p["head"]};'
              f'font-weight:700;font-size:80px;padding:10px 40px;border:6px solid {p["white"]};transform:rotate(-3deg)">{PENALTY[level]}</div>')
     return render(inner, out, p, transparent=False)
+
+
+# ---------------------------------------------------------------- court frames per style (2026-11-25: the 6 documentary
+# styles looked the same for 80% of the video - the court footage had one frame for all)
+def scorebug(left, mid, right, out, palette=None, sub=""):
+    """Instant Replay: sports-broadcast bug top-left (replaces the date pill): [COURT][STATE v. REED][● LIVE] + a line."""
+    p = _pal(palette)
+    inner = (f'<div class="a" style="left:40px;top:28px;font-family:{p["sans"]};font-weight:800;text-transform:uppercase;'
+             f'filter:drop-shadow(0 8px 18px rgba(0,0,0,.45))"><div style="display:flex;align-items:stretch">'
+             f'<div style="background:{p["accent"]};color:{p["accent_ink"]};padding:8px 16px;font-size:25px;letter-spacing:1px">{esc(left)}</div>'
+             f'<div style="background:rgba(8,12,20,.93);color:#fff;padding:8px 18px;font-size:25px">{esc(mid)}</div>'
+             + (f'<div style="background:{p["danger"]};color:#fff;padding:8px 14px;font-size:21px;display:flex;align-items:center">'
+                f'● {esc(right)}</div>' if right else "")
+             + "</div>"
+             + (f'<div style="display:inline-block;background:rgba(8,12,20,.80);color:{p["accent"]};padding:5px 16px;font-size:19px;'
+                f'letter-spacing:2px;margin-top:3px">{esc(sub)}</div>' if sub else "")
+             + "</div>")
+    return render(inner, out, p)
+
+
+def corner_chip(kicker, text, out, palette=None):
+    """Verdict First: the outcome stays on screen for the whole video (top-right, under the footage badge)."""
+    p = _pal(palette)
+    inner = (f'<div class="a" style="right:40px;top:84px;background:rgba(10,10,12,.88);border-right:9px solid {p["danger"]};'
+             f'padding:10px 20px 12px;box-shadow:0 8px 22px rgba(0,0,0,.45);text-align:right">'
+             f'<div style="font-family:{p["mono"]};font-size:17px;letter-spacing:4px;color:#bdbdbd;text-transform:uppercase">{esc(kicker)}</div>'
+             f'<div class="big" style="font-family:{p["head"]};font-size:46px;color:#fff;margin-top:2px">{esc(text)}</div></div>')
+    return render(inner, out, p)
+
+
+def cork(out, palette=None):
+    """Evidence Board: the cork board behind the court footage."""
+    p = _pal(palette)
+    inner = ('<div class="a" style="inset:0;background:radial-gradient(circle at 40% 40%,#8a6440,#4a3220 75%)"></div>'
+             '<div class="a" style="inset:0;opacity:.18;background-image:radial-gradient(#000 1px,transparent 1.6px);'
+             'background-size:7px 7px"></div>')
+    return render(inner, out, p, transparent=False)
+
+
+def pinned_overlay(box, out, palette=None, note="EXHIBIT · COURT RECORDING"):
+    """Evidence Board court frame: push pins + tape on the photo of the footage, a small paper note. box = (x, y, w, h)."""
+    p = _pal(palette)
+    x, y, w, h = box
+    pin = (f'width:30px;height:30px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#ff6b6b,{p["danger"]} 60%,#5a0d14);'
+           f'box-shadow:0 5px 8px rgba(0,0,0,.55)')
+    tape = 'width:170px;height:44px;background:rgba(240,230,200,.72);box-shadow:0 2px 4px rgba(0,0,0,.25)'
+    inner = (f'<div class="a" style="left:{x + 70}px;top:{y - 16}px;{pin}"></div>'
+             f'<div class="a" style="left:{x + w - 100}px;top:{y - 16}px;{pin}"></div>'
+             f'<div class="a" style="left:{x - 60}px;top:{y + h - 34}px;transform:rotate(-38deg);{tape}"></div>'
+             f'<div class="a" style="left:{x + w - 110}px;top:{y + h - 30}px;transform:rotate(36deg);{tape}"></div>'
+             f'<div class="a" style="left:{x + w - 330}px;top:{y + h + 8}px;background:{p["paper"]};color:{p["ink"]};'
+             f'font-family:{p["mono"]};font-weight:700;font-size:20px;letter-spacing:2px;padding:6px 14px;transform:rotate(-2deg);'
+             f'box-shadow:0 6px 12px rgba(0,0,0,.45)">{esc(note)}</div>')
+    return render(inner, out, p)
+
+
+def look_layer(kind, out, palette=None):
+    """The style's grade as ONE transparent PNG on top of the footage (2026-11-25: the vignette / noise filters made a
+    render 2.5x slower): cinema = film letterbox + warm tint + vignette; episode = teal tint + vignette. None otherwise."""
+    p = _pal(palette)
+    vig = '<div class="a" style="inset:0;background:radial-gradient(ellipse at center,rgba(0,0,0,0) 52%,rgba(0,0,0,.55) 100%)"></div>'
+    if kind == "cinema":
+        inner = ('<div class="a" style="inset:0;background:rgba(120,80,30,.10)"></div>' + vig +
+                 '<div class="a" style="left:0;right:0;top:0;height:118px;background:#000"></div>'
+                 '<div class="a" style="left:0;right:0;bottom:0;height:118px;background:#000"></div>')
+    elif kind == "episode":
+        inner = '<div class="a" style="inset:0;background:rgba(20,120,125,.09)"></div>' + vig
+    else:
+        return None
+    return render(inner, out, p)

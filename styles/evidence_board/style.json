@@ -23,6 +23,23 @@
       "accent": "#F2C14E",
       "danger": "#C1121F",
       "paper": "#F7F1E3"
-    }
+    },
+    "court_frame": "pinned",
+    "caption_look": {
+      "font": "Courier New",
+      "size": 32,
+      "text": "#1B1B1B",
+      "box": "#F7F1E3",
+      "box_alpha": 20,
+      "margin_v": 28,
+      "default_speaker": "#C1121F",
+      "speaker_colours": {
+        "JUDGE": "#C1121F",
+        "DEFENDANT": "#1D4E89",
+        "LAWYER": "#6A3D9A",
+        "STATE": "#8A5A00"
+      }
+    },
+    "beat_gap_court": 18
   }
 }

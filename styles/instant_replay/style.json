@@ -20,8 +20,28 @@
     "hook_min": 10.0,
     "hook_max": 30.0,
     "palette": {
-      "accent": "#FFD23F",
-      "danger": "#EF233C"
-    }
+      "accent": "#00B4FF",
+      "accent_ink": "#03131F",
+      "danger": "#FF2E4C",
+      "card": "rgba(6,12,22,.88)",
+      "mono": "Sans",
+      "radius": "2px"
+    },
+    "court_frame": "broadcast",
+    "caption_look": {
+      "font": "Arial",
+      "size": 36,
+      "text": "#FFFFFF",
+      "box": "#061626",
+      "box_alpha": 25,
+      "default_speaker": "#00B4FF",
+      "speaker_colours": {
+        "JUDGE": "#00B4FF",
+        "DEFENDANT": "#FFD23F",
+        "LAWYER": "#7CFFB2",
+        "STATE": "#FF8FA3"
+      }
+    },
+    "beat_gap_court": 12
   }
 }

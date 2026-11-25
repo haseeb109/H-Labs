@@ -89,6 +89,11 @@ class DocRenderer(Renderer):
         self.pal = cfg.get("palette") or {}
         self.moods = dict(MOODS.get(self.style, MOODS["case_file"]), **(cfg.get("music_moods") or {}))
         self.libass = libass_ffmpeg(cfg)
+        # full | cinema (letterbox + film grade) | episode (teal grade + EP bug) | broadcast (scorebug) | verdict (outcome
+        # chip) | pinned (photo on cork)
+        self.frame_kind = str(cfg.get("court_frame") or "full")
+        self.verdict_text = self.bug_text = self.bug_sub = self.ep_label = ""
+        self.card_variant = {"cinema": "minimal", "episode": "episode"}.get(self.frame_kind, "card")
 
     # ================================================================== small helpers
     def _out(self, out):
@@ -153,30 +158,75 @@ class DocRenderer(Renderer):
         return out
 
     # ================================================================== segment encoders
+    # ---- the style's own court frame (2026-11-25: one frame for all six styles made 80% of every video look the same)
+    PIN_BOX = (224, 110, 1472, 828)              # Evidence Board: where the footage "photo" hangs on the cork
+
+    def grade_tail(self):
+        """The cheap part of the style's grade (a filter on the footage); tint, vignette and letterbox come from look_png()."""
+        return {"cinema": "hue=s=0.55"}.get(self.frame_kind, "")
+
+    def look_png(self):
+        """Letterbox / tint / vignette as one PNG laid over court, B-roll and chapter cards (None for plain styles)."""
+        return paper.look_layer(self.frame_kind, self.png("look.png"), self.pal)
+
+    def frame_layers(self, date, tag, dur):
+        """Always-on graphics of a court block: date bar / scorebug / episode bug, verdict chip, pins. -> [(png, 0, dur)]."""
+        f, L = self.frame_kind, [self.look_png()]
+        if f == "broadcast":
+            rep = tag.upper().startswith("REPLAY")
+            L.append(paper.scorebug("REPLAY ×0.5" if rep else "COURT", self.bug_text, "" if rep else "REAL FOOTAGE",
+                                    self.png("bug.png"), self.pal, sub=_short(tag if tag and not rep else self.bug_sub, 40)))
+        elif f == "episode" and self.ep_label and not self._earlier:
+            L.append(paper.top_bar(self.ep_label, self.png("top.png"), self.pal, tag=tag))
+        elif date or tag:
+            L.append(paper.top_bar(date or "", self.png("top.png"), self.pal, tag=tag))
+        if f == "verdict" and self.verdict_text and not self._earlier:
+            L.append(paper.corner_chip("THE OUTCOME", self.verdict_text, self.png("vchip.png"), self.pal))
+        if f == "pinned":
+            L.append(paper.pinned_overlay(self.PIN_BOX, self.png("pins.png"), self.pal))
+        return [(p, 0.0, dur) for p in L if p]
+
     def seg_court(self, a, b, out, date="", tag="", beats=(), punch=(), bw=False, speed=1.0, extra=(), captions=True,
                   turns=None):
-        """Court footage a..b (source seconds): fitted on its own blurred copy, top bar, engagement beat PNGs, punch-ins,
-        speaker captions; bw / slow motion for replays and the emotional style. extra = [(png, start, end)] (local s)."""
+        """Court footage a..b (source seconds) in the style's frame (full / cinema letterbox / episode grade / broadcast bug /
+        verdict chip / pinned photo on cork), engagement beat PNGs, punch-ins, speaker captions; bw / slow motion for
+        replays and the emotional style. extra = [(png, start, end)] (local s)."""
         dur = (b - a) / speed
+        f = self.frame_kind
         ins = ["-ss", f"{a:.3f}", "-t", f"{b - a:.3f}", "-i", self.srcp]
-        fc = [f"[0:v]setpts=(PTS-STARTPTS)/{speed},fps=30,split=2[s0][s1]",
-              "[s0]scale=480:270,boxblur=8:2,scale=1920:1080,setsar=1,eq=brightness=-0.18[bg]",
-              "[s1]scale=1920:1080:force_original_aspect_ratio=decrease,setsar=1[fg]"]
-        if punch:
-            fc.append("[fg]split=2[fga][fgb]")
-            fc.append("[fgb]scale=iw*1.22:ih*1.22,crop=iw/1.22:ih/1.22[fgp]")
-            fc.append("[bg][fga]overlay=(W-w)/2:(H-h)/2[c0]")
-            en = "+".join(f"between(t,{s:.2f},{e:.2f})" for s, e in punch)
-            fc.append(f"[c0][fgp]overlay=(W-w)/2:(H-h)/2:enable='{en}'[c1]")
-            last = "c1"
+        en = "+".join(f"between(t,{s:.2f},{e:.2f})" for s, e in punch)
+        if f == "pinned":
+            x, y, w, h = self.PIN_BOX
+            ins += ["-i", str(paper.cork(self.png("cork.png"), self.pal))]
+            fc = [f"[0:v]setpts=(PTS-STARTPTS)/{speed},fps=30,scale={w}:{h}:force_original_aspect_ratio=decrease,"
+                  f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1[ph]", still(1, dur, "ck")]
+            if punch:
+                fc += ["[ph]split=2[pha][phb]", f"[phb]scale=iw*1.22:ih*1.22,crop={w}:{h}[php]",
+                       f"[pha][php]overlay=0:0:enable='{en}'[ph2]"]
+                ph = "ph2"
+            else:
+                ph = "ph"
+            fc += [f"[{ph}]pad={w + 28}:{h + 28}:14:14:color=0xF4F1EA[phf]", f"[ck][phf]overlay={x - 14}:{y - 14}[c1]"]
         else:
-            fc.append("[bg][fg]overlay=(W-w)/2:(H-h)/2[c1]")
-            last = "c1"
-        layers = []
-        if date or tag:
-            layers.append((paper.top_bar(date or "", self.png("top.png"), self.pal, tag=tag), 0.0, dur))
+            fc = [f"[0:v]setpts=(PTS-STARTPTS)/{speed},fps=30,split=2[s0][s1]",
+                  "[s0]scale=480:270,boxblur=8:2,scale=1920:1080,setsar=1,eq=brightness=-0.18[bg]",
+                  "[s1]scale=1920:1080:force_original_aspect_ratio=decrease,setsar=1[fg]"]
+            if punch:
+                fc.append("[fg]split=2[fga][fgb]")
+                fc.append("[fgb]scale=iw*1.22:ih*1.22,crop=iw/1.22:ih/1.22[fgp]")
+                fc.append("[bg][fga]overlay=(W-w)/2:(H-h)/2[c0]")
+                fc.append(f"[c0][fgp]overlay=(W-w)/2:(H-h)/2:enable='{en}'[c1]")
+            else:
+                fc.append("[bg][fg]overlay=(W-w)/2:(H-h)/2[c1]")
+        last = "c1"
+        if self.grade_tail():
+            fc.append(f"[c1]{self.grade_tail()}[cg]")
+            last = "cg"
+        layers = self.frame_layers(date, tag, dur)
         layers += [(p, s, e) for p, s, e in list(beats) + list(extra) if p]
-        for k, (p, s, e) in enumerate(layers, 1):
+        k0 = 1 if f != "pinned" else 2                    # inputs before the layers: the footage (+ the cork)
+        for j, (p, s, e) in enumerate(layers):
+            k = k0 + j
             ins += ["-i", str(p)]
             fc.append(still(k, dur, f"l{k}", "yuva420p"))
             fc.append(f"[{last}][l{k}]overlay=0:0:enable='between(t,{s:.2f},{e:.2f})'[o{k}]")
@@ -263,6 +313,11 @@ class DocRenderer(Renderer):
                       f"eq=brightness=-0.12,format=yuv420p[bv]")
             k0 = 1
         last = "bv"
+        if self.grade_tail():
+            fc.append(f"[bv]{self.grade_tail()}[bvg]")
+            last = "bvg"
+        lk = self.look_png()
+        pills = ([(lk, 0.0, dur + 1)] if lk else []) + list(pills)
         for j, (p, s, e) in enumerate(pills):
             idx = k0 + j
             ins += ["-i", str(p)]
@@ -288,15 +343,22 @@ class DocRenderer(Renderer):
         dur = max(min_dur, vd + lead + 0.4)
         t0 = self.case_a + 3 if t0 is None else t0
         ins = ["-ss", f"{max(0, t0):.2f}", "-t", f"{dur:.3f}", "-i", self.srcp, "-i", str(png)]
+        tail = ("," + self.grade_tail()) if self.grade_tail() else ""
         fc = [f"[0:v]setpts=PTS-STARTPTS,fps=30,scale=480:270,boxblur=8:2,scale=1920:1080,setsar=1,eq=brightness=-0.25"
-              + (",hue=s=0" if bw else "") + "[bg]", still(1, dur, "c", "yuva420p"), "[bg][c]overlay=0:0,format=yuv420p[v]"]
+              + (",hue=s=0" if bw else "") + tail + "[bg]", still(1, dur, "c", "yuva420p"), "[bg][c]overlay=0:0,format=yuv420p[v]"]
+        lk = self.look_png()
+        if lk:                                     # the style's letterbox / tint under the card
+            ins += ["-i", str(lk)]
+            fc[-1] = "[bg][lk]overlay=0:0[bgl];[bgl][c]overlay=0:0,format=yuv420p[v]"
+            fc.insert(2, still(2, dur, "lk", "yuva420p"))
+        ai = 3 if lk else 2                        # audio input index (footage, card[, look], voice)
         if vo:
             ins += ["-i", str(vo)]
             ms = int(lead * 1000)
-            fc.append(f"[2:a]adelay={ms}|{ms},apad,{AUDIO_NORM}[a]")
+            fc.append(f"[{ai}:a]adelay={ms}|{ms},apad,{AUDIO_NORM}[a]")
         else:
             ins += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
-            fc.append(f"[2:a]{AUDIO_NORM}[a]")
+            fc.append(f"[{ai}:a]{AUDIO_NORM}[a]")
         run(["ffmpeg", "-y", "-loglevel", "error", *ins, "-filter_complex", ";".join(fc), "-map", "[v]", "-map", "[a]",
              "-t", f"{dur:.3f}", *self._out(out)])
         return dur
@@ -330,6 +392,11 @@ class DocRenderer(Renderer):
         self.date = self.doc.get("date") or self.facts.get("hearing_date", "") or self.cfg.get("_hearing_date", "")
         self.name = self.facts.get("defendant") or self.case.get("name", "")
         self.hook = (parse_tc(video["hook"]["in"]), parse_tc(video["hook"]["out"]))
+        # what the style's court frame keeps on screen
+        self.verdict_text = _short(self.doc.get("verdict_big") or self.facts.get("sentence") or self.facts.get("result") or "", 22).upper()
+        last = (self.name.split() or ["THE DEFENDANT"])[-1].upper()
+        self.bug_text = _short(f"STATE v. {last}", 28)
+        self.bug_sub = _short(self.facts.get("charges", ""), 40).upper()
 
     def moments(self, n=2):
         """Cold-open moments: brain picks (doc.cold_open) inside the case, else the hook + the ruling phase."""
@@ -700,6 +767,8 @@ class DocRenderer(Renderer):
         sid = Path(self.srcname).stem
         prev = [e for e in hist["episodes"] if e.get("stream") != sid]
         ep = next((i + 1 for i, e in enumerate(hist["episodes"]) if e.get("stream") == sid), len(hist["episodes"]) + 1)
+        self.ep_label = "EP {} · {}".format(ep, _short(self.doc.get("episode_title") or (self.chapters()[0][2] if self.chapters()
+                                                                                       else "THE HEARING"), 24).upper())
         if prev:
             for i, e in enumerate(prev[-3:]):            # real footage of the earlier episodes (kept in state/series/)
                 clip = sdir / key / e.get("clip", "")
@@ -721,6 +790,7 @@ class DocRenderer(Renderer):
         self.court_block(a, b, "", "s01_open.mp4")
         self.role_last("cold")
         title = _short(self.doc.get("episode_title") or (self.chapters()[0][2] if self.chapters() else "THE HEARING"), 24).upper()
+        self.ep_label = f"EP {ep} · {title}"
         p = self.work / "s02_ep.mp4"
         if not p.exists():
             self.seg_cards([(paper.episode_card(ep, title, self.png("ep.png"), self.pal, sub=self.date), 3.0)]
@@ -809,7 +879,8 @@ class DocRenderer(Renderer):
                 kick = f"HEARING {start_n + i}" if numbered else f"EARLIER · {start_n + i}"
                 p = self.work / f"g{i:02d}_ch.mp4"
                 if not p.exists():
-                    self.seg_blur(paper.chapter_card(kick, h.get("date") or " ", "EARLIER HEARING", self.png(f"gch{i}.png"), self.pal),
+                    self.seg_blur(paper.chapter_card(kick, h.get("date") or " ", "EARLIER HEARING", self.png(f"gch{i}.png"), self.pal,
+                                                     variant=self.card_variant),
                                   bridges[i] if i < len(bridges) else "", p, f"gch{i}", t0=min(5, d / 3), min_dur=3.0)
                 self.add("bridge", p, mood="bridge", sfx="riser",
                          chapter=f"{kick.title()} · {h.get('date') or 'earlier hearing'}".strip())
@@ -836,7 +907,7 @@ class DocRenderer(Renderer):
                 kick = f"CHAPTER {i + 1}" if numbered else f"PART {i + 1}"
             p = self.work / f"h{i:02d}_ch.mp4"
             if not p.exists():
-                self.seg_blur(paper.chapter_card(kick, self.date or " ", t, self.png(f"ch{i}.png"), self.pal),
+                self.seg_blur(paper.chapter_card(kick, self.date or " ", t, self.png(f"ch{i}.png"), self.pal, variant=self.card_variant),
                               (self.doc.get("bridges") or [""] * 99)[i] if i < len(self.doc.get("bridges") or []) else "",
                               p, f"ch{i}", t0=a, min_dur=3.0)
             self.add("bridge", p, mood="bridge", sfx="riser", chapter=f"{kick.title()} · {_chap(t, 'The hearing')}")

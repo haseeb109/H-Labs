@@ -899,7 +899,7 @@ def t10_end_to_end():
     if not (FIX / "r1.mp4").exists():
         return "SKIPPED (test clips tests/fixtures/rv_clips are not in the repo - Mac dev machine only)"
     out_root = ROOT / "output"
-    for old in out_root.glob("2026-*_lVQ79x0Hd_w"):
+    for old in out_root.glob("2026-*_lVQ79x0Hd_w*"):
         shutil.rmtree(old)                     # cached parts would fake a pass
     for old in (ROOT / "work" / "lVQ79x0Hd_w").glob("*.mp4"):
         old.unlink()
@@ -916,7 +916,7 @@ def t10_end_to_end():
            "--plan", str(PLAN_FILE), "--brain", "manual", "--tts", "dummy", "--confirm-tts"]
     r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=2400)
     assert r.returncode == 0, f"run_stream exited {r.returncode}:\n...{r.stdout[-1500:]}\n{r.stderr[-500:]}"
-    folders = list(out_root.glob("2026-*_lVQ79x0Hd_w/Video_01_*"))
+    folders = list(out_root.glob("2026-*_lVQ79x0Hd_w_*/Video_01_*"))
     assert folders, f"no video folder:\n{r.stdout[-800:]}"
     d = folders[0]
     qc = json.loads((d / "qc.json").read_text(encoding="utf-8"))
@@ -2418,7 +2418,7 @@ def t49_resume_and_checks():
     rs.sheets.edit_sheet = lambda *a: "sheet"
     rs.sheets.metadata = lambda *a: ("meta", [])
     rs.tts.chars_needed = lambda *a, **k: 0
-    outroot = tmp / "out" / "2026-11-16_sid49"
+    outroot = tmp / "out" / "2026-11-16_sid49_trial_tales_30"      # one output folder per stream + style / mode
     pf = tmp / "work" / "sid49" / "progress_trial_tales_30.json"
 
     def plan_of(tag=""):
@@ -2877,10 +2877,24 @@ def t55_doc_styles():
         hist = json.loads((tmp / "state" / "series" / "jo_test.json").read_text())
         assert [e["n"] for e in hist["episodes"]] == [1], "the same stream again is the same episode, not a new one"
         assert any(r["kind"] == "court" for r in res["rows"]) and res["timeline"]["segments"][0]["kind"] == "hook"
+        # every style's own court frame renders (2026-11-25: all six had one frame and looked the same)
+        frames = {}
+        for sid in ids:
+            cfg = config.load(style=sid)
+            cfg.update(cfgb, media_library="")
+            rn = DocRenderer(cfg, {"s.mp4": {"path": str(src), "url": ""}}, ROOT)
+            rn.work, rn.srcp, rn.segs, rn._earlier, rn.pal = tmp / f"fr_{sid}", str(src), [], False, cfg["palette"]
+            (rn.work / "gfx").mkdir(parents=True)
+            rn.verdict_text, rn.bug_text, rn.bug_sub, rn.ep_label = "4 YEARS", "STATE v. TEST", "THEFT", "EP 1 · TEST"
+            rn.case_a = 5.0
+            o = rn.work / "c.mp4"
+            assert rn.seg_court(5.0, 7.0, o, date="MAY 1, 2025", tag="THE PLEA", punch=[(0.5, 1.2)]) == 2.0 and o.exists(), sid
+            frames[rn.frame_kind] = sid
+        assert set(frames) == {"full", "verdict", "cinema", "pinned", "broadcast", "episode"}, frames
     finally:
         tts.synth = real
         shutil.rmtree(tmp, ignore_errors=True)
-    return "6 packs load unbranded; video made from a bare plan with the case document; own-folder B-roll; series memory"
+    return "6 packs load unbranded, each with its own court frame; video from a bare plan with the case document; own B-roll; series memory"
 
 
 def t56_dossier():

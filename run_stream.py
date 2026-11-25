@@ -759,7 +759,9 @@ def stage_render(R):
         sys.exit(f"STOP: {need} characters of TTS is over the {R.cfg['tts_confirm_chars']} limit. "
                  f"Confirm with Sardar in chat, then rerun with --confirm-tts.")
     stamp = f"{R.upload[:4]}-{R.upload[4:6]}-{R.upload[6:8]}" if len(R.upload) == 8 else R.upload
-    outroot = R.root / R.cfg["output_dir"] / f"{stamp}_{R.sid}"
+    # one folder per stream AND style / mode (2026-11-25: six documentary styles of one stream wrote into the same folder,
+    # each video.mp4 replaced the last one and every job showed the same video)
+    outroot = R.root / R.cfg["output_dir"] / f"{stamp}_{R.sid}_{run_file_stem(R.cfg)}"
     outroot.mkdir(parents=True, exist_ok=True)
     by_id = {c["id"]: c for c in R.plan["cases"]}
     _sj = json.loads((config.style_path(R.cfg) / "style.json").read_text(encoding="utf-8"))
