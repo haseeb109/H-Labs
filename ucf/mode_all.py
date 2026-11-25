@@ -360,6 +360,8 @@ def _pass_b_loop(c, pb, prompt_b, plan, judge, stream_len, segs, cfg, ui, work, 
                                    tag=f"{tag}try{att + 1}_" if att else tag)
         if vobj is not None and not berrs:
             return vobj, []
+        if vobj is None:              # the brain itself failed (timeout / empty / no JSON): say why, the log showed nothing
+            ui(f"  {c.get('name', '')}: attempt {att + 1} gave no usable reply - {str((berrs or ['?'])[0])[:160]}")
         # keep the best reply of all attempts (a later repair round is sometimes worse: vo1 empty again)
         if vobj is not None and (best[0] is None or len(berrs) < len(best[1])):
             best = (vobj, berrs)

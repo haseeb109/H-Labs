@@ -199,6 +199,13 @@ const PREVIEW = {
   trial_tales: ["#16161A", '<i style="left:10px;top:10px;width:46px;height:7px;background:#E2761B"></i><i style="left:10px;right:10px;top:24px;height:34px;background:#3B3D45"></i><i style="left:10px;bottom:9px;width:70px;height:6px;background:#F4F4F4"></i>'],
   overruled: ["#1B2A44", '<i style="left:10px;top:12px;width:62px;height:46px;background:#4A5C7C"></i><i style="right:10px;top:12px;width:44px;height:46px;background:#F3EEE3"></i><i style="left:10px;bottom:9px;width:96px;height:6px;background:#B4232C"></i>'],
   court_beacon: ["#050608", '<i style="left:0;right:0;top:0;height:9px;background:#121722"></i><i style="left:10px;right:10px;top:16px;height:44px;background:#2E3440"></i><i style="right:10px;bottom:8px;width:22px;height:12px;background:#5B8DEF"></i><i style="right:36px;bottom:8px;width:22px;height:12px;background:#5B8DEF"></i>'],
+  // documentary styles: their court frame at a glance (2026-11-25)
+  case_file_doc: ["#1C1C1F", '<i style="left:10px;right:10px;top:10px;height:50px;background:#3B3D45"></i><i style="left:14px;top:14px;width:40px;height:7px;background:#F5C518"></i><i style="right:14px;bottom:8px;width:34px;height:24px;background:#F4F1EA;transform:rotate(-4deg)"></i>'],
+  verdict_first: ["#141012", '<i style="left:10px;right:10px;top:10px;height:50px;background:#3B3D45"></i><i style="left:14px;top:14px;width:40px;height:7px;background:#E63946"></i><i style="right:14px;top:14px;width:30px;height:14px;background:#0E0E10;border-right:3px solid #E63946"></i>'],
+  emotional_cut: ["#000", '<i style="left:0;right:0;top:12px;height:46px;background:#4A453E"></i><i style="left:30%;right:30%;bottom:4px;height:4px;background:#D9C5A0"></i>'],
+  evidence_board: ["#6B4A2E", '<i style="left:22px;right:22px;top:9px;height:46px;background:#3B3D45;border:3px solid #F4F1EA"></i><i style="left:30px;top:6px;width:7px;height:7px;border-radius:50%;background:#C1121F"></i><i style="right:30px;top:6px;width:7px;height:7px;border-radius:50%;background:#C1121F"></i>'],
+  instant_replay: ["#0B1220", '<i style="left:10px;right:10px;top:10px;height:50px;background:#3B3D45"></i><i style="left:14px;top:14px;width:16px;height:8px;background:#00B4FF"></i><i style="left:30px;top:14px;width:30px;height:8px;background:#061626"></i><i style="left:60px;top:14px;width:12px;height:8px;background:#FF2E4C"></i>'],
+  docu_series: ["#06181A", '<i style="left:10px;right:10px;top:10px;height:50px;background:#2F4446"></i><i style="left:14px;top:14px;width:44px;height:7px;background:#2EC4B6"></i>'],
   justice_served: ["#121417", '<i style="left:8px;top:8px;width:92px;height:10px;background:#1C2026;border-left:3px solid #FFB000"></i><i style="left:8px;top:24px;width:64px;height:38px;background:#343A44"></i><i style="right:8px;top:24px;width:34px;height:38px;background:#1C2026"></i><i style="left:8px;bottom:6px;width:54px;height:8px;background:#FFB000"></i>'],
 };
 // one item per line: a YouTube link, or the path of your own video file / folder (D:\Streams\x.mp4, \\server\share, /home/...)
@@ -396,7 +403,7 @@ function renderSettings() {
       <div class="seg" role="radiogroup" aria-label="B-roll source" style="margin-top:8px">${[["auto", "Both (API first, then my folder)"], ["api", "Pexels / Pixabay only"], ["folder", "My folder only"]].map(([k, t]) =>
         `<button type="button" role="radio" aria-checked="${st.broll_source === k}" onclick="saveBroll({broll_source:'${k}'})">${t}</button>`).join("")}</div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px">
-        <input id="brollpath" style="flex:1;min-width:260px" placeholder="Your B-roll folder, e.g. D:\\Stock Footage" value="${esc(st.broll_folder || "")}">
+        <input id="brollpath" type="text" style="flex:1;min-width:260px" placeholder="Your B-roll folder, e.g. D:\\Stock Footage" value="${esc(st.broll_folder || "")}">
         <button class="btn" onclick="pickBroll()">${ICON.folder || ""}Choose folder</button>
         <button class="btn primary" onclick="saveBroll({broll_folder:$('brollpath').value.trim()})">Save</button></div>
       <div class="small muted" style="margin-top:8px">${st.broll_folder ? `<b>${st.broll_folder_clips}</b> video clip(s) found in your folder (sub-folders too). Clips are picked at random; a file whose name matches the scene (e.g. <span class="mono">police car.mp4</span>) is picked first.` : "Attach a folder with your own B-roll clips (any names, any sub-folders). The styles pick clips from it at random."}</div>
@@ -485,7 +492,7 @@ function renderLibrary() {
   $("view").innerHTML = `
   <header class="top"><h1>Library</h1>
     <div role="tablist" aria-label="Filter" class="actions" style="justify-content:flex-start;margin-left:12px">${tab("ready", "Ready to upload")}${tab("uploaded", "Uploaded")}${tab("review", "Needs review")}${tab("clips", "Clips")}${tab("all", "All")}</div>
-    <label class="spacer muted" style="display:flex;align-items:center;gap:8px">Template <select onchange="LIBF.style=this.value;renderLibrary()" style="height:34px;border:1px solid #D6D9DF;border-radius:7px;padding:0 8px;background:#fff">
+    <label class="spacer muted" style="display:flex;align-items:center;gap:8px">Template <select onchange="LIBF.style=this.value;renderLibrary()" style="height:34px;border:1px solid var(--line);border-radius:7px;padding:0 8px">
       <option value="">All templates</option>${styles.map((s) => `<option ${LIBF.style === s ? "selected" : ""}>${esc(s)}</option>`).join("")}</select></label>
     <button class="btn" onclick="loadLibrary()">Refresh</button></header>
   <div class="content">
@@ -540,7 +547,7 @@ function updateCard() {
     ${v.can_update && !v.restart_ok ? `<div class="small" style="color:var(--warn-ink)">This Studio was not opened with <b>H Labs Studio.bat</b> (or menu 0): close it and open it that way once, then this button works.</div>` : ""}
     ${c ? (c.ok ? (c.behind ? `<div style="margin-top:10px"><b>${c.behind} new change${c.behind > 1 ? "s" : ""}</b> waiting${c.remote_version ? ` (v${esc(c.remote_version)})` : ""}:</div>${changes(c.changes)}`
       : `<div class="small good" style="margin-top:8px">✓ This PC has the newest code.</div>`) : `<div class="small badtext" style="margin-top:8px">${esc(c.error)}</div>`) : ""}
-    ${last ? `<div class="lastupd"><b>Last update (${esc(last.finished || "")}):</b> ${last.changed ? `v${esc(last.from_version)} (${esc(last.from_commit)}) → <b>v${esc(last.to_version)} (${esc(last.to_commit)})</b>` : `no new code - already up to date (v${esc(last.to_version)})`}
+    ${last ? `<div class="lastupd"><b>Last update (${esc(last.finished || "")}):</b> ${last.not_applied ? `<span class="badtext">did NOT apply - still ${last.not_applied.behind} change(s) behind${(last.not_applied.edited || []).length ? " (edited here: " + last.not_applied.edited.map(esc).join(", ") + ")" : ""}</span>` : last.changed ? `v${esc(last.from_version)} (${esc(last.from_commit)}) → <b>v${esc(last.to_version)} (${esc(last.to_commit)})</b>` : `no new code - already up to date (v${esc(last.to_version)})`}
       ${last.smoke ? (last.smoke.fails.length ? `<div class="small badtext">Smoke test: FAILED ${esc(last.smoke.fails.join(", "))} - see the Studio window</div>` : '<div class="small good">Smoke test passed - this PC makes videos.</div>') : ""}
       ${changes(last.changes)}</div>` : ""}
   </section>`;
@@ -582,7 +589,11 @@ async function waitBack() {
 }
 function showUpdateResult(u) {
   let o = $("updlayer"); if (!o) { o = document.createElement("div"); o.id = "updlayer"; document.body.appendChild(o); }
-  o.innerHTML = `<div class="updbox"><h2>${u.changed ? "✓ H Labs updated" : "Already up to date"}</h2>
+  const na = u.not_applied;
+  o.innerHTML = `<div class="updbox"><h2${na ? ' class="badtext"' : ""}>${na ? "✗ The update did NOT apply" : u.changed ? "✓ H Labs updated" : "Already up to date"}</h2>
+    ${na ? `<p class="badtext">This PC is still ${na.behind} change(s) behind GitHub. ${(na.edited || []).length
+      ? `These files of the H Labs folder were edited on this PC and block the update: <b>${na.edited.map(esc).join(", ")}</b>. Undo those edits (own settings belong in config.local.json) and press Update again.`
+      : "GitHub could not be reached or git stopped - check the internet and press Update again."} The Studio window shows git's own message.</p>` : ""}
     <p style="font-size:18px">${u.changed ? `v${esc(u.from_version)} <span class="mono">(${esc(u.from_commit)})</span> → <b>v${esc(u.to_version)} <span class="mono">(${esc(u.to_commit)})</span></b>` : `v${esc(u.to_version)} (${esc(u.to_commit)})`}</p>
     ${u.smoke ? (u.smoke.fails.length ? `<p class="badtext">Smoke test FAILED: ${esc(u.smoke.fails.join(", "))}. The Studio window says how to fix it (Settings → Undo is menu u in H Labs.bat).</p>` : '<p class="good">Smoke test passed - this PC makes videos.</p>') : ""}
     ${(u.changes || []).length ? `<div style="text-align:left"><b>What changed:</b><ul class="chg">${u.changes.map((x) => `<li>${esc(x.text)}</li>`).join("")}</ul></div>` : ""}

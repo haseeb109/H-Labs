@@ -418,6 +418,26 @@ def stage_info(R):
 
 
 
+UPGRADE_RETRY_H = 6.0       # a stream whose full quality YouTube refused is not tried again for this long (each try ~5 min)
+
+
+def _upgrade_failed(work, why):
+    try:
+        save_json(Path(work) / "upgrade_failed.json", {"at": time.time(), "why": why})
+    except OSError:
+        pass
+
+
+def _upgrade_failed_age(work):
+    """Hours since the last failed full-quality download of this stream, or None (never / long ago -> try again)."""
+    d = load_json(Path(work) / "upgrade_failed.json", {})
+    try:
+        age = (time.time() - float(d["at"])) / 3600
+    except (KeyError, TypeError, ValueError):
+        return None
+    return age if 0 <= age < UPGRADE_RETRY_H else None
+
+
 def stage_download(R):
     """The source video: download, or the saved / own file (re-download when a better copy exists)."""
     # ---------------- download ----------------
@@ -428,9 +448,16 @@ def stage_download(R):
         CLOCK.stage("download")
         ui("downloading stream (this is the slow part)...")
         R.video_path = download.fetch_video(R.url, R.sid, R.work, R.cfg, R.meta)
+        if download.worse_than_available(R.video_path, R.meta, int(R.cfg.get("min_height", 720))):
+            _upgrade_failed(R.work, "the full quality could not be downloaded")   # the next job of this stream does not retry at once
     elif R.video_path.exists() and R.upto >= 1:
         ui(download.describe(R.video_path)[0])       # cached download: show its quality (an old one may be the starved H.264 copy)
         why = "" if R.a.video_file else download.worse_than_available(R.video_path, R.meta, int(R.cfg.get("min_height", 720)))
+        age = _upgrade_failed_age(R.work)
+        if why and R.url and age is not None:
+            ui(f"the saved download is {why}; a better copy could not be downloaded {age:.1f} h ago - using the saved copy "
+               f"(delete work\\{R.sid}\\upgrade_failed.json to try again now)")
+            why = ""
         if why and R.url:
             # an older run downloaded a worse copy (360p / starved H.264): get the real quality, keep the old file if that fails
             CLOCK.stage("download")
@@ -443,6 +470,7 @@ def stage_download(R):
                 old.unlink()
             except (RuntimeError, OSError) as e:
                 os.replace(old, R.video_path)
+                _upgrade_failed(R.work, str(e).splitlines()[0][:200] if str(e) else repr(e))
                 if download.probe_video(R.video_path)[0] < int(R.cfg.get("min_height", 720)) - 10:
                     sys.exit(f"STOP: the saved copy is below {R.cfg.get('min_height', 720)}p and a better one could not be downloaded:\n"
                              f"  {str(e).splitlines()[0][:300]}")

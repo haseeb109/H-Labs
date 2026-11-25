@@ -9,11 +9,18 @@ from . import zoom
 
 WRAP_UP = [r"you'?re free to go", r"that'?ll be all", r"good luck", r"anything further", r"we'?re adjourned",
            r"you'?re excused", r"sign the paperwork", r"right to appeal", r"taken into custody", r"see you on",
-           r"thank you,? counsel"]
+           r"thank you,? counsel", r"\bdeput(?:y|ies),? (?:please )?(?:take|escort)", r"\bwe'?re done (?:here|on this)"]
 RULING = [r"I sentence you", r"sentenced? to", r"I find you guilty", r"finds you guilty", r"probation is revoked",
           r"I'?m going to give you", r"the court finds", r"\bdismissed\b", r"reset to", r"we'?ll see you on",
           r"find you", r"sentence you to", r"probation is (?:granted|continued|reinstated)", r"adjudication is withheld",
-          r"imposition of sentence", r"court will find you", r"grants? you deferred"]
+          r"imposition of sentence", r"court will find you", r"grants? you deferred",
+          # Texas revocation / sentencing wording the list missed (2026-11-25 laptop run: 57 min docket, 0 rulings found for
+          # "the court is finding violations ... true")
+          r"\bcourt (?:is )?finding\b", r"\bfinds? (?:the )?(?:allegations?|violations?|paragraphs?)\b[^.]{0,60}\btrue\b",
+          r"\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|twelve|fifteen|twenty|thirty|forty|fifty|ninety) "
+          r"(?:years?|months?|days?) (?:in|at) (?:the )?(?:tdcj|texas department|state jail|county jail|institutional division)",
+          r"\bcontinue you on (?:probation|community supervision)",            # the judge to the defendant, not a request
+          r"\brevok(?:e|ing) your (?:probation|community supervision|bond)"]
 
 
 def _find(segs, patterns):

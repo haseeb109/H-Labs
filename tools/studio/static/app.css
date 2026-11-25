@@ -126,7 +126,7 @@ textarea.links,select,input[type=text]{background:rgba(255,255,255,.05);border-c
 tr.failed{background:rgba(248,113,113,.07)}td{border-top-color:var(--line2)}
 .toast{background:#1b1640;border:1px solid var(--line)}
 .banner{background:var(--warn-bg);color:var(--warn-ink)}
-.thumb{background:#14122b}.thumb .rank{background:#ecebff}
+.thumb{background:#14122b}.thumb .rank{background:#ecebff;color:#14122b}
 
 /* shimmer: a soft band of light sweeps across each card, staggered */
 .card,.kpi,.vcard{position:relative;overflow:hidden}
@@ -174,3 +174,4 @@ tr.failed{background:rgba(248,113,113,.07)}td{border-top-color:var(--line2)}
 .chg{margin:8px 0 0 18px;padding:0;font-size:13px;line-height:1.6;max-height:260px;overflow:auto}
 .lastupd{margin-top:12px;padding:10px 12px;border-radius:10px;background:rgba(255,255,255,.05)}
 .updpill{display:inline-block;margin-top:6px;font-size:12px;padding:3px 8px;border-radius:12px;background:#a78bfa33;color:#ddd6fe;text-decoration:none}
+select option{background:#1A1C21;color:#E8E8EE}

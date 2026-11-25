@@ -173,6 +173,11 @@ class Studio:
             brain = b if b in ("hive", "manual") else "hive"
         except OSError:
             pass
+        # the same stream waits in the queue again (another style / mode): keep its download for that job instead of deleting
+        # it and downloading it again (2026-11-25: six styles of one stream = six downloads); the last job cleans up as usual
+        if any(x is not j and x.get("status") == "queued" and x.get("url") == j["url"] and x.get("mode") not in ("download", "dossier")
+               for x in self.jobs):
+            o = dict(o, cleanup=False)
         from ucf.runspec import build_run_command
         return build_run_command(sys.executable, j["url"], j["style"], j["mode"], dict(o, brain=brain, queued=True, only=j.get("only")),
                                  script=ROOT / "run_stream.py")
@@ -808,6 +813,12 @@ def finish_update():
     res = {"from_version": p.get("version"), "from_commit": p.get("commit"), "to_version": _ver(), "to_commit": now_c,
            "changed": now_c != p.get("commit"), "changes": [dict(zip(("commit", "text"), ln.split("\t", 1))) for ln in log[:40]],
            "smoke": smoke, "started": p.get("at"), "finished": _now(), "seen": False}
+    # the pull can fail (a file of the H Labs folder edited on this PC, no internet): the code is still behind GitHub.
+    # Say so instead of "already up to date" (2026-11-25: a PC kept running an old build after pressing Update).
+    behind = _git("rev-list", "--count", "HEAD..origin/main").stdout.strip()
+    if behind.isdigit() and int(behind) > 0:
+        edited = [ln[3:].strip() for ln in _git("status", "--porcelain", "--untracked-files=no").stdout.splitlines() if ln.strip()]
+        res["not_applied"] = {"behind": int(behind), "edited": edited[:12]}
     UPD_RESULT.write_text(json.dumps(res, indent=1, ensure_ascii=False), encoding="utf-8")
     UPD_PENDING.unlink(missing_ok=True)
     _upd["check"] = None

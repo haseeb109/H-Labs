@@ -1141,7 +1141,18 @@ def t29_download_quality():
         assert low and "LOW bitrate" in line, line
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    return "picks 609+140 (VP9 1.7 Mbps) over 136 (H.264 0.47 Mbps), AV1 skipped; low-bitrate source is flagged"
+    # a refused full-quality download is not retried by every queued job of the same stream (2026-11-25: ~5 min each)
+    import run_stream as RS
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        assert RS._upgrade_failed_age(tmp) is None
+        RS._upgrade_failed(tmp, "The page needs to be reloaded.")
+        assert 0 <= RS._upgrade_failed_age(tmp) < 0.1
+        (tmp / "upgrade_failed.json").write_text(json.dumps({"at": time.time() - 7 * 3600, "why": "x"}))
+        assert RS._upgrade_failed_age(tmp) is None, "after 6 h the better copy is tried again"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return "picks 609+140 (VP9 1.7 Mbps) over 136 (H.264 0.47 Mbps), AV1 skipped; low-bitrate source is flagged; failed upgrade not retried for 6 h"
 
 
 def t30_windows_run_fixes():
@@ -1621,6 +1632,11 @@ def t42_studio():
             loc = st.add([r"D:\Streams\case one"], "overruled", "all", {"min_case": "5"})[0]
             cmd = st._command(st._job(loc))
             assert cmd[2:4] == ["--local", r"D:\Streams\case one"] and cmd[cmd.index("--min-case") + 1] == "5", cmd
+            # one stream queued in two styles: the first run keeps the download for the second (no second download)
+            a1, a2 = st.add(["https://youtu.be/same1"], "case_file_doc", "all", {}) + st.add(["https://youtu.be/same1"], "verdict_first", "all", {})
+            assert "--keep-source" in st._command(st._job(a1)), "the same stream waits again: keep its download"
+            st._job(a1)["status"] = "done"
+            assert "--keep-source" not in st._command(st._job(a2)), "the last job of that stream cleans up as usual"
         finally:
             httpd.shutdown()
     finally:
@@ -2209,7 +2225,7 @@ def t48_smoke_test():
     for c in j["checks"]:
         assert set(c) >= {"name", "ok", "skipped", "msg", "seconds"}, c
     assert r.returncode == j["fails"] == sum(1 for c in j["checks"] if not c["ok"]), (r.returncode, j["fails"])
-    for name in ("imports", "ffmpeg", "encoder", "render", "disk"):
+    for name in ("imports", "ffmpeg", "encoder", "render", "documentary styles", "disk"):
         assert by[name]["ok"], f"{name}: {by[name]['msg']}"
     for name in ("download", "ai33 + Hive reachable"):
         assert by[name]["skipped"] and "--offline" in by[name]["msg"], by[name]
@@ -3010,6 +3026,24 @@ def t58_studio_update():
         assert SV.version_info()["last_update"]["seen"] is False
         SV.mark_update_seen()
         assert SV.version_info()["last_update"]["seen"] is True
+        assert "not_applied" not in r
+        # the pull failed (a file edited on this PC): the page must say the update did NOT apply, and name the file
+        real_git = SV._git
+
+        def fake_git(*a, **k):
+            if a[:2] == ("rev-list", "--count"):
+                return subprocess.CompletedProcess(a, 0, "3\n", "")
+            if a[:1] == ("status",):
+                return subprocess.CompletedProcess(a, 0, " M config.json\n", "")
+            return real_git(*a, **k)
+        SV._git = fake_git
+        try:
+            SV.UPD_PENDING.write_text(json.dumps({"version": "2026.01.01", "commit": head[:7], "commit_full": head}))
+            r2 = SV.finish_update()
+        finally:
+            SV._git = real_git
+        assert r2["not_applied"] == {"behind": 3, "edited": ["config.json"]} and not r2["changed"], r2
+        assert "did NOT apply" in (ROOT / "tools" / "studio" / "static" / "app.js").read_text(encoding="utf-8")
         assert first
         bat = (ROOT / "H Labs Studio.bat").read_bytes()
         assert b"studio.ps1" in bat and b"\r\n" in bat and b"\n" not in bat.replace(b"\r\n", b"")
@@ -3141,6 +3175,14 @@ def t59_callout_vs_ruling():
         raise ConnectionAbortedError(10053, "aborted")
     except ConnectionAbortedError:
         srv.handle_error(None, ("127.0.0.1", 1))          # must not print a traceback
+    # boundary evidence knows Texas ruling wording (2026-11-25: a 57 min docket gave "0 rulings"); requests are not rulings
+    from ucf.evidence import _find, RULING
+    hit = lambda t: bool(_find([{"start": 0, "end": 1, "text": t}], RULING))   # noqa: E731
+    for t in ("the court is finding violations of two and two ending and cause number 49 true", "four years in the Texas Department",
+              "180 days in county jail", "I'll continue you on probation", "I am revoking your probation"):
+        assert hit(t), t
+    for t in ("the State asks to revoke his probation", "we ask that you continue him on probation", "he was on deferred adjudication"):
+        assert not hit(t), t
     return "a ruling that names a cause number is not a call-out; closed browser tabs are not tracebacks"
 
 
