@@ -312,38 +312,6 @@ def c_render():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def c_doc():
-    """Documentary styles: a paper card (Playwright + Chromium) and 3 s of court footage in a style frame with speaker
-    captions (libass) - the parts the classic render check does not touch (2026-11-25)."""
-    from ucf import config, render as R
-    from ucf.render_doc import DocRenderer
-    cfg = config.load(style="evidence_board")              # the pinned frame: cork card + photo + pins = the most graphics
-    tmp = Path(tempfile.mkdtemp(prefix="smoke_doc_"))
-    try:
-        src = tmp / "src.mp4"
-        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=s=1280x720:r=30:d=4", "-f", "lavfi",
-                        "-i", "sine=f=440:d=4", "-shortest", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
-                        str(src)], check=True, timeout=120)
-        rn = DocRenderer(cfg, {"s.mp4": {"path": str(src)}}, ROOT)
-        rn.enc = R.pick_encoder(cfg)
-        rn.work = tmp / "_work"
-        (rn.work / "gfx").mkdir(parents=True)
-        rn.srcp, rn.segs, rn._earlier, rn.case_a = str(src), [{"start": 0.5, "end": 2.5, "text": "Smoke test, Your Honor."}], False, 0.0
-        out = tmp / "court.mp4"
-        try:
-            rn.seg_court(0.0, 3.0, out, date="SMOKE TEST", tag="CHECK", turns=[{"from": "0:00:00", "to": "0:00:03", "who": "JUDGE"}])
-        except Exception as e:  # noqa: BLE001
-            raise RuntimeError(f"documentary render failed: {_err(e)} -> run {SETUP} again (it installs the card browser); "
-                               "send this check to the owner")
-        d = R.probe_dur(out)
-        if not (2.5 <= d <= 3.5):
-            raise RuntimeError(f"the documentary test clip is {d:.1f} s instead of 3 s -> send this check to the owner")
-        cap = "speaker captions on" if rn.libass else "[WARN] captions OFF - this ffmpeg has no libass (run Setup again)"
-        return f"paper card + 3 s court frame rendered with {rn.enc}, {cap}"
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-
-
 def c_disk():
     free = shutil.disk_usage(ROOT).free / 1e9
     if free < 5:
@@ -353,7 +321,7 @@ def c_disk():
 
 CHECKS = [("imports", c_imports), ("imports: whisper + download engines", c_imports_engines), ("ffmpeg", c_ffmpeg),
           ("encoder", c_encoder), ("whisper", c_whisper), ("keys", c_keys), ("ai33 + Hive reachable", c_hosts),
-          ("download", c_download), ("render", c_render), ("documentary styles", c_doc), ("disk", c_disk)]
+          ("download", c_download), ("render", c_render), ("disk", c_disk)]
 
 
 def _version():

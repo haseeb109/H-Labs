@@ -175,10 +175,6 @@ def chars_needed(plan, only=None, tt=False):
     for v in plan.get("videos", []):
         if only and v["n"] not in only:
             continue
-        if isinstance(v.get("doc"), dict):            # documentary styles narrate more than vo1 / vo_final
-            from .doc_pack import tts_chars
-            n += tts_chars(v)
-            continue
         n += len((v.get("vo_final") or {}).get("text", "")) + sum(len(b.get("text", "")) for b in v.get("bridges", []))
         if not tt:
             n += len((v.get("vo1") or {}).get("text", ""))

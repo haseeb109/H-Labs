@@ -2225,7 +2225,7 @@ def t48_smoke_test():
     for c in j["checks"]:
         assert set(c) >= {"name", "ok", "skipped", "msg", "seconds"}, c
     assert r.returncode == j["fails"] == sum(1 for c in j["checks"] if not c["ok"]), (r.returncode, j["fails"])
-    for name in ("imports", "ffmpeg", "encoder", "render", "documentary styles", "disk"):
+    for name in ("imports", "ffmpeg", "encoder", "render", "disk"):
         assert by[name]["ok"], f"{name}: {by[name]['msg']}"
     for name in ("download", "ai33 + Hive reachable"):
         assert by[name]["skipped"] and "--offline" in by[name]["msg"], by[name]
@@ -2837,152 +2837,6 @@ d=P.PdfDocument(doc); d.save({str(pdf)!r})
     return "facts need transcript evidence, document always made, PDF highlight + auto redaction, no screen gap over limit"
 
 
-def t55_doc_styles():
-    """Documentary styles (2026-11-23): the 6 style packs load (no channel name / watermark / logo), the doc renderer makes a
-    real video from a plan that has NO doc fields at all (fallbacks) with the case document in it, B-roll comes from the
-    owner's folder when there is no API library, and a docu-series remembers the episode number per defendant."""
-    import os
-    from ucf import config, tts, stock
-    from ucf.render_doc import DocRenderer
-    ids = ["case_file_doc", "verdict_first", "emotional_cut", "evidence_board", "instant_replay", "docu_series"]
-    for sid in ids:
-        c = config.load(style=sid)
-        assert c["_renderer"] == "doc" and c["watermark"] is False and not c.get("channel_name"), sid
-        assert "doc" in (ROOT / "styles" / sid / "prompts" / "extra.md").read_text().lower()
-    tmp = Path(tempfile.mkdtemp())
-    real = tts.synth
-    try:
-        src = tmp / "s.mp4"
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=640x360:d=50:r=30", "-f", "lavfi",
-                        "-i", "sine=f=300:d=50", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(src)], check=True)
-        bf = tmp / "myclips" / "night"
-        bf.mkdir(parents=True)
-        for n in ("police car.mp4", "street.mp4"):
-            subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=s=640x360:d=6:r=30", "-c:v", "libx264",
-                            "-preset", "ultrafast", str(bf / n)], check=True)
-        cfgb = {"broll_source": "folder", "broll_folder": str(tmp / "myclips")}
-        got = stock.pick_broll(cfgb, "police_car_night", 1, set())
-        assert got and got[0].name == "police car.mp4", got
-        assert len(stock.pick_broll(cfgb, "gavel", 3, set())) == 2
-        work = tmp / "work"
-        (work / "tts").mkdir(parents=True)
-        (work / "transcript.json").write_text(json.dumps([{"start": 8, "end": 11, "text": "Do you understand the charges?"},
-                                                          {"start": 20, "end": 23, "text": "Bond is set at $3,000."}]))
-
-        def fake(text, cache, cfg):
-            p = Path(cache) / f"v{abs(hash(text)) % 10**7}.wav"
-            if not p.exists():
-                subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=f=500:d=1.5", "-ar", "48000", str(p)], check=True)
-            return p
-        tts.synth = fake
-        case = {"id": 1, "name": "Jo Test", "in": "0:00:05", "out": "0:00:40", "status": "used", "charge": "Theft"}
-        video = {"n": 1, "case_ids": [1], "hook": {"in": "0:00:20", "out": "0:00:26", "headline": "x"},
-                 "vo1": {"text": "A short story."}, "vo_final": {"text": "The end."}}
-        plan = {"source_file": "s.mp4", "cases": [case], "videos": [video]}
-        for sid in ("docu_series", "docu_series"):
-            cfg = config.load(style=sid)
-            cfg.update(cfgb, media_library="", state_dir=str(tmp / "state"))
-            rn = DocRenderer(cfg, {"s.mp4": {"path": str(src), "url": ""}}, ROOT)
-            out = tmp / "out"
-            shutil.rmtree(out, ignore_errors=True)
-            out.mkdir()
-            res = rn.render_video(plan, video, out, work / "tts", ui=lambda *m: None)
-            assert res["measured_total"] > 20 and (out / "case_document.json").exists()
-        facts = json.loads((out / "case_document.json").read_text())
-        assert facts["defendant"] == "Jo Test" and facts["charges"] == "Theft"
-        hist = json.loads((tmp / "state" / "series" / "jo_test.json").read_text())
-        assert [e["n"] for e in hist["episodes"]] == [1], "the same stream again is the same episode, not a new one"
-        assert any(r["kind"] == "court" for r in res["rows"]) and res["timeline"]["segments"][0]["kind"] == "hook"
-        # every style's own court frame renders (2026-11-25: all six had one frame and looked the same)
-        frames = {}
-        for sid in ids:
-            cfg = config.load(style=sid)
-            cfg.update(cfgb, media_library="")
-            rn = DocRenderer(cfg, {"s.mp4": {"path": str(src), "url": ""}}, ROOT)
-            rn.work, rn.srcp, rn.segs, rn._earlier, rn.pal = tmp / f"fr_{sid}", str(src), [], False, cfg["palette"]
-            (rn.work / "gfx").mkdir(parents=True)
-            rn.verdict_text, rn.bug_text, rn.bug_sub, rn.ep_label = "4 YEARS", "STATE v. TEST", "THEFT", "EP 1 · TEST"
-            rn.case_a = 5.0
-            o = rn.work / "c.mp4"
-            assert rn.seg_court(5.0, 7.0, o, date="MAY 1, 2025", tag="THE PLEA", punch=[(0.5, 1.2)]) == 2.0 and o.exists(), sid
-            frames[rn.frame_kind] = sid
-        assert set(frames) == {"full", "verdict", "cinema", "pinned", "broadcast", "episode"}, frames
-    finally:
-        tts.synth = real
-        shutil.rmtree(tmp, ignore_errors=True)
-    return "6 packs load unbranded, each with its own court frame; video from a bare plan with the case document; own B-roll; series memory"
-
-
-def t56_dossier():
-    """Dossier (2026-11-23): the defendant's part of an earlier stream is found by name (biggest cluster, ends at the next
-    case call) and cut without re-encode; earlier hearings come first in the documentary as dated chapters; the brain gets
-    their text; Studio builds one tools/dossier.py command; a docu-series' next episode shows the earlier episode's footage."""
-    from ucf import config, dossier as D, tts
-    from ucf.render_doc import DocRenderer
-    from ucf.runspec import build_run_command
-    segs = [{"start": 5, "end": 8, "text": "calling cause number 1"}, {"start": 30, "end": 33, "text": "Mr. Brown please"},
-            {"start": 400, "end": 403, "text": "Summer Diaz is here"}, {"start": 430, "end": 433, "text": "Ms. Diaz, sit down"},
-            {"start": 470, "end": 473, "text": "Diaz, you are on probation"}, {"start": 520, "end": 523, "text": "calling the next case"},
-            {"start": 900, "end": 903, "text": "Diaz mentioned once"}]
-    a, b, n = D.find_window(segs, "Summer Diaz")
-    assert n == 3 and a == 380 and b == 518, (a, b, n)
-    assert D.find_window(segs, "Nobody Smith") is None
-    assert D.nice_date("20230515") == "MAY 15, 2023"
-    cmd = build_run_command("py", "u3", "case_file_doc", "dossier", {"urls": ["u1", "u2", "u3"], "name": "Summer Diaz", "queued": True})
-    assert cmd[1].endswith("dossier.py") and cmd[2:5] == ["u1", "u2", "u3"] and "--name" in cmd and "--queued" in cmd, cmd
-    tmp = Path(tempfile.mkdtemp())
-    real = tts.synth
-    try:
-        state = tmp / "state"
-        old = tmp / "old.mp4"
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=640x360:d=40:r=30", "-f", "lavfi",
-                        "-i", "sine=f=200:d=40", "-c:v", "libx264", "-preset", "ultrafast", "-g", "30", "-c:a", "aac", str(old)], check=True)
-        osegs = [{"start": 6, "end": 9, "text": "Jo Test, you are charged"}, {"start": 20, "end": 23, "text": "Test, sit down"}]
-        h = D.add_hearing("Jo Test", old, osegs, "20220101", "https://x", "old hearing", state_dir=state)
-        assert h["date"] == "JAN 01, 2022" and (D.folder("Jo Test", state) / h["file"]).exists()
-        eh = D.earlier("Jo Test", "20230101", state)
-        assert len(eh) == 1 and not D.earlier("Jo Test", "20210101", state)
-        assert "HEARING 1 - JAN 01, 2022" in D.prompt_block(eh)
-        src = tmp / "s.mp4"
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=s=640x360:d=45:r=30", "-f", "lavfi",
-                        "-i", "sine=f=300:d=45", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", str(src)], check=True)
-        work = tmp / "work"
-        (work / "tts").mkdir(parents=True)
-        (work / "transcript.json").write_text(json.dumps([{"start": 8, "end": 11, "text": "Jo Test, bond is revoked."}]))
-
-        def fake(text, cache, cfg):
-            p = Path(cache) / f"v{abs(hash(text)) % 10**7}.wav"
-            if not p.exists():
-                subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=f=500:d=1.2", "-ar", "48000", str(p)], check=True)
-            return p
-        tts.synth = fake
-        case = {"id": 1, "name": "Jo Test", "in": "0:00:05", "out": "0:00:35", "status": "used", "charge": "Theft"}
-        video = {"n": 1, "case_ids": [1], "hook": {"in": "0:00:10", "out": "0:00:18", "headline": "x"},
-                 "vo1": {"text": "Story."}, "vo_final": {"text": "End."}}
-        plan = {"source_file": "s.mp4", "cases": [case], "videos": [video]}
-        cfg = config.load(style="case_file_doc")
-        cfg.update(media_library="", state_dir=str(state), _dossier="Jo Test", _upload="20230601", _hearing_date="JUN 01, 2023")
-        out = tmp / "o1"
-        out.mkdir()
-        rn = DocRenderer(cfg, {"s.mp4": {"path": str(src), "url": ""}}, ROOT)
-        res = rn.render_video(plan, video, out, work / "tts", ui=lambda *m: None)
-        names = [p.name for _, p, *_ in rn.pieces]
-        assert names.index("g00_court.mp4") < names.index("h00_court.mp4"), names
-        assert any(r.get("src") == h["file"] for r in res["rows"]), "the earlier hearing must be in the footage log"
-        for k, up in enumerate(("20230601", "20230901")):   # docu-series: episode 2 shows episode 1's footage
-            c2 = config.load(style="docu_series")
-            c2.update(media_library="", state_dir=str(state), _upload=up)
-            o2 = tmp / f"ds{k}"
-            o2.mkdir()
-            rn2 = DocRenderer(c2, {f"s{k}.mp4": {"path": str(src), "url": ""}}, ROOT)
-            rn2.render_video(dict(plan, source_file=f"s{k}.mp4"), video, o2, work / "tts", ui=lambda *m: None)
-        assert "s00_prev0.mp4" in [p.name for _, p, *_ in rn2.pieces], "episode 2 must open with episode 1's real footage"
-    finally:
-        tts.synth = real
-        shutil.rmtree(tmp, ignore_errors=True)
-    return "defendant found + cut by name, earlier hearings first as chapters, brain context, Studio command, series footage"
-
-
 def t57_tools_never_read_console():
     """2026-11-23 laptop smoke test: a key pressed during setup put ffmpeg into its "Enter command:" mode and the whisper /
     download checks timed out. ffmpeg / ffprobe / yt-dlp started by H Labs now get an empty input; Python children keep it."""
@@ -3053,111 +2907,6 @@ def t58_studio_update():
         SV.UPD_PENDING, SV.UPD_RESULT, SV.QFILE = old
         shutil.rmtree(tmp, ignore_errors=True)
     return "version shown, refused while a stream runs, queue held + released, old -> new + change list after restart"
-
-
-def t60_doc_styles_hardening():
-    """Documentary styles, deep check 2026-11-24 (a real Case File run made 0 videos): a weak / broken Pass B reply never
-    costs the case (sanitised + made from the case), a retry repackages set-aside cases, case-document facts survive
-    number words ("eight years") and TDCJ, the v10 result dict / facing are shown right, phases as a LIST give the ruling
-    (Verdict First crashed), doc text is judge-neutral, the TTS count includes narration, chapters come from the render."""
-    import copy
-    import json as _json
-    from ucf import mode_all, config as CFG, casedoc, doc_pack as DP, validate as VAL, sheets, judge_neutral as JN, tts
-    from ucf.render_doc import DocRenderer, youtube_chapters
-
-    # 1) case document: number words, abbreviations, v10 result / facing
-    assert casedoc._tokens_ok("8 years TDCJ", "asking for eight years in the Texas Department of Criminal Justice")
-    assert casedoc._tokens_ok("$50,000", "bond is fifty thousand dollars") and casedoc._tokens_ok("112 days", "one hundred twelve days")
-    assert not casedoc._tokens_ok("$3,000", "bond set at five thousand") and not casedoc._tokens_ok("19 years", "she is nine")
-    f = casedoc.from_case({"name": "Jo Test", "charge": "Theft", "facing": "Up to 2 years", "cause_no": "2024CR1",
-                           "result": {"sentence": "180 days jail", "conditions": "none"}})
-    assert f == {"sentence": "180 days jail", "defendant": "Jo Test", "cause_no": "2024CR1", "charges": "Theft",
-                 "facing": "Up to 2 years"}, f
-
-    # 2) Pass B: a reply that breaks the classic rules + a reply that is not JSON -> both cases still get a video
-    segs, lines, caseA, caseB, caseC, passA, video_obj = _t12_fixtures()
-    tmp = Path(tempfile.mkdtemp())
-    try:
-        cfg = CFG.load(style="case_file_doc")
-        cfg.update({"brain": "mock", "mode": "all", "title_system": "v10", "_mode_source": "cli", "brain_fallback": "",
-                    "max_repair_rounds": 0, "_source_file": "mock.mp4"})
-        weak = {"hook": {"in": "0:45:00", "out": "0:45:12"}, "vo1": {"text": ""}, "titles": [],
-                "doc": {"impact_quote": "I was terrified of prison", "bridges": [{"text": "x"}], "backstory": "One beat.",
-                        "chapters": [{"tc": "0:12:00", "label": "THE PLEA"}]},
-                "overlays": [{"tc": "0:11:30", "kind": "fact", "text": "Not said", "evidence": "a quote nobody said"}]}
-        (tmp / "a.json").write_text(_json.dumps(passA), encoding="utf-8")
-        (tmp / "b1.json").write_text(_json.dumps({"video": weak}), encoding="utf-8")
-        (tmp / "b2.json").write_text("sorry, I cannot produce JSON today", encoding="utf-8")
-        cfg["mock_passA_replies"] = [str(tmp / "a.json")]
-        cfg["mock_passB_replies"] = [str(tmp / "b1.json"), str(tmp / "b2.json")]
-        work = tmp / "w"
-        work.mkdir()
-        plan, errs = mode_all.build_plan(segs, lines, "SCAN", 3300, cfg, lambda *m: None, work)
-        assert not errs and len(plan["videos"]) == 2, (errs, len(plan.get("videos", [])))
-        assert not any(c.get("needs_review") for c in plan["cases"])
-        e2, w2 = VAL.validate(plan, 3300, segs, cfg)
-        assert not e2, e2[:3]
-        assert any("documentary style - not blocking" in w for w in w2)
-        # the 2026-11-25 laptop run: 5 titles where one breaks the title banks ("video 1 [karma]: T-04 ...") must not block
-        bad = copy.deepcopy(plan)
-        vt = video_obj(caseA, 1, "a", "13")["titles"]
-        vt[0]["text"] = vt[0]["text"].replace("REFUSES", "SLAPS")
-        bad["videos"] = [dict(v, titles=vt) if v["case_ids"] == [1] else v for v in bad["videos"]]
-        e3, w3 = VAL.validate(bad, 3300, segs, cfg)
-        assert not e3 and any("[karma]: T-04" in w for w in w3), (e3[:3], [w for w in w3 if "T-0" in w][:3])
-        for v in plan["videos"]:
-            c = next(x for x in plan["cases"] if x["id"] == v["case_ids"][0])
-            a, b = parse_tc(c["in"]), parse_tc(c["out"])
-            assert a <= parse_tc(v["hook"]["in"]) < parse_tc(v["hook"]["out"]) <= b, "hook must be THIS case's footage"
-            assert v["vo1"]["text"] and v["vo_final"]["text"] and v["title"] and v["quiz"]["options"]["C"]
-            assert not v["overlays"], "an overlay whose quote is not in the transcript is left out"
-            tl = {"segments": [], "total": 600.0, "seams": []}
-            md, chs = sheets.metadata(plan, v, tl, dict(cfg, base_tags=["court"]), "", chs=[(0.0, "The moment"), (50.0, "The case file")])
-            assert "TITLE" in md and chs[1][1] == "The case file"
-        v1 = next(v for v in plan["videos"] if v["case_ids"] == [1])
-        assert v1["doc"]["impact_quote"] == {"text": "I was terrified of prison"} and v1["doc"]["bridges"] == ["x"]
-        assert v1["doc"]["chapters"][0]["at"] == "0:12:00" and v1["doc"]["backstory"] == [{"text": "One beat."}]
-
-        # 3) retry: a case the last run set aside is packaged again (the saved plan alone made 0 videos)
-        p2 = copy.deepcopy(plan)
-        c2 = next(c for c in p2["cases"] if c["id"] == 2)
-        c2.update(status="skipped", needs_review=True, reject_reason="packaging failed validation - needs review")
-        p2["videos"] = [v for v in p2["videos"] if v["case_ids"] != [2]]
-        (tmp / "b3.json").write_text(_json.dumps({"video": video_obj(caseB, 2, "b", "6")}), encoding="utf-8")
-        cfg["mock_passB_replies"] = [str(tmp / "b3.json")]
-        cfg["_mock_queue"] = [str(tmp / "b3.json")]
-        assert mode_all.repackage(p2, segs, lines, 3300, cfg, lambda *m: None, work) == 1
-        assert len(p2["videos"]) == 2 and c2["status"] == "used" and not c2.get("needs_review")
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-
-    # 4) the ruling from phases as a LIST (and the doc renderer's helpers)
-    rn = DocRenderer.__new__(DocRenderer)
-    rn.case, rn.case_a, rn.case_b, rn.doc = caseA, 600.0, 1170.0, {}
-    assert rn.ruling_tc() == 1080.0
-    rn.case = dict(caseA, phases={"ruling": {"tc": "0:17:00"}})
-    assert rn.ruling_tc() == 1020.0
-    rows = [{"start": 0, "chapter": None}, {"start": 30, "chapter": "The case file"}, {"start": 60, "chapter": "What the law allows"},
-            {"start": 64, "chapter": "Chapter 1 · The Plea"}, {"start": 400, "chapter": "The outcome"}]
-    assert youtube_chapters(rows, 430) == [(0.0, "The moment"), (30, "The case file"), (60, "Chapter 1 · The Plea")]
-    assert youtube_chapters([{"start": 0}, {"start": 9, "chapter": "Previously"}, {"start": 40, "chapter": "Episode 2"},
-                             {"start": 90, "chapter": "Part 1"}], 300)[0] == (0.0, "Previously")
-
-    # 5) judge-neutral narration / pills, TTS count, blocking vs not blocking
-    p3 = {"videos": [{"doc": {"tease": "Judge Test has heard it all.", "backstory": [{"text": "Judge Test gave him a chance.",
-                                                                                     "pills": ["JUDGE TEST · 2022"]}],
-                              "case_doc": {"defendant": {"value": "Jo", "evidence": "judge test said jo"}}}}], "cases": []}
-    assert JN.neutralize(p3, ["Test"]) == 3 and p3["videos"][0]["doc"]["case_doc"]["defendant"]["evidence"] == "judge test said jo"
-    assert tts.chars_needed({"videos": [{"n": 1, "vo1": {"text": "abc"}, "vo_final": {"text": "de"},
-                                         "doc": {"backstory": [{"text": "x" * 100}]}}]}) >= 105
-    assert tts.chars_needed({"videos": [{"n": 1, "vo_final": {"text": "de"}}]}) == 2, "a missing vo1 is no crash"
-    hard, soft = VAL.doc_split(["video 1: vo1 is empty", "video 1: needs 1-5 cases, has 0",
-                                "case 1 overlay 0:01:00 (fact): O-06 evidence quote not found in the case transcript",
-                                "case 1 (X): ruling_tc missing (or set ruling_deferred true)",
-                                "video 1 [karma]: T-03 judge name 'Judge Boyd' must appear exactly once, found 0: \"x\"",
-                                "video 1 [karma]: T-04 CAPS word SLAPS is not in this style pack's banks"])
-    assert len(hard) == 2 and len(soft) == 4, (hard, soft)
-    return "weak + non-JSON Pass B -> 2 videos; retry repackages; 8 years/TDCJ kept; phases list; neutral doc; TTS count"
 
 
 def t59_callout_vs_ruling():
@@ -3245,12 +2994,9 @@ def main():
     check(51, "download only (best quality, batch)", t51_download_only)
     check(53, "Studio settings: API keys + media library", t53_studio_settings)
     check(54, "case document + retention scheduler", t54_casedoc_and_engage)
-    check(55, "documentary styles: 6 packs, doc renderer, own B-roll folder, series memory", t55_doc_styles)
-    check(56, "dossier: several hearings of one defendant + series footage", t56_dossier)
     check(57, "ffmpeg / yt-dlp never wait on the console", t57_tools_never_read_console)
     check(58, "Studio Update button (restart + what changed)", t58_studio_update)
     check(59, "C-04: a ruling is not a new case; quiet Studio on closed tabs", t59_callout_vs_ruling)
-    check(60, "documentary styles hardening: weak brain replies, retry, case facts, chapters", t60_doc_styles_hardening)
     check(52, "documentary kit: music ducking, SFX, speaker captions, paper cards, stock library", t52_shared_doc_kit)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)

@@ -31,16 +31,6 @@ def build_run_command(python, url_or_path, style, mode, options=None, script=Non
     if mode == "download":                     # download only (tools/download_only.py): no style, brain or render options
         return ([str(python), str(ROOT / "tools" / "download_only.py"), str(url_or_path)] + (["--queued"] if o.get("queued") else [])
                 + (["--max-height", str(int(o["max_height"]))] if str(o.get("max_height", "")).isdigit() else []))
-    if mode == "dossier":                      # several hearings of ONE defendant -> one documentary (tools/dossier.py)
-        urls = [str(u) for u in (o.get("urls") or [url_or_path]) if str(u).strip()]
-        cmd = [str(python), str(ROOT / "tools" / "dossier.py"), *urls, "--name", str(o.get("name") or ""), "--style", str(style)]
-        if o.get("brain"):
-            cmd += ["--brain", str(o["brain"])]
-        if o.get("queued"):
-            cmd.append("--queued")
-        if o.get("voice", True):
-            cmd.append("--confirm-tts")
-        return cmd
     cmd = [str(python), str(script or (ROOT / "run_stream.py"))]
     cmd += [str(url_or_path)] if is_link(url_or_path) else ["--local", str(url_or_path)]
     if o.get("brain"):

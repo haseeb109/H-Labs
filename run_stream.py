@@ -646,17 +646,6 @@ def stage_plan(R):
             sys.exit(f"STOP: {R.plan_path} is not valid JSON ({e}) - fix the file or delete it so the brain plans again")
         # shape check first (a missing "in" used to surface as a KeyError in the middle of the render), rules after
         from ucf import schema
-        if R.cfg.get("_renderer") == "doc":       # documentary: repair the video objects first (ucf/doc_pack.py)
-            from ucf import doc_pack as DP
-            _cs = {c.get("id"): c for c in R.plan.get("cases", []) if isinstance(c, dict)}
-            for _v in R.plan.get("videos", []) or []:
-                _c = _cs.get((_v.get("case_ids") or [None])[0]) if isinstance(_v, dict) else None
-                try:
-                    if _c:
-                        for _n in DP.sanitize(_v, _c, list(_cs.values()), R.segs, R.cfg):
-                            ui(f"  video {_v.get('n')}: {_n}")
-                except (KeyError, TypeError, ValueError):
-                    pass                         # the shape check below names what is wrong
         bad = schema.check_plan(R.plan)
         if bad:
             sys.exit(f"STOP: the plan {R.plan_path} has the wrong shape:\n  " + "\n  ".join(b.removeprefix("ERROR: ") for b in bad[:12])
@@ -758,14 +747,6 @@ def stage_render(R):
     _jn = neutralize(R.plan, judge_names(R.plan.get("judge_name"), R.cfg.get("judge_name"), R.meta.get("title")))
     if _jn:
         ui(f"judge-neutral: {_jn} voice-over / on-screen text(s) now say 'the judge' instead of the name")
-    if R.cfg.get("_renderer") == "doc":            # documentary styles: every video is safe to render + describe (ucf/doc_pack.py)
-        from ucf import doc_pack as DP
-        _cases = {c["id"]: c for c in R.plan["cases"]}
-        for v in R.plan["videos"]:
-            _c = _cases.get((v.get("case_ids") or [None])[0])
-            if _c:
-                for note in DP.sanitize(v, _c, R.plan["cases"], R.segs, R.cfg):
-                    ui(f"  video {v.get('n')}: {note}")
     only = {int(x) for x in R.a.only.split(",")} if R.a.only else None
     if os.environ.get("HL_STUDIO"):
         print(f"@@videos {sum(1 for v in R.plan['videos'] if not only or v['n'] in only)}", flush=True)
@@ -799,9 +780,6 @@ def stage_render(R):
         _mod = importlib.util.module_from_spec(_spec)
         _spec.loader.exec_module(_mod)
         rn = getattr(_mod, _sj.get("renderer_class", "Renderer"))(R.cfg, R.sources, R.root)
-    elif R.cfg.get("_renderer") == "doc":
-        from ucf.render_doc import DocRenderer
-        rn = DocRenderer(R.cfg, R.sources, R.root)
     elif R.cfg.get("_look") == "ov":
         from ucf.render_ov import OVRenderer
         rn = OVRenderer(R.cfg, R.sources, R.root)

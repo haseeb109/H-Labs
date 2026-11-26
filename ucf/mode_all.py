@@ -391,9 +391,6 @@ def _pass_b_once(c, pb, prompt_b, plan, judge, stream_len, segs, cfg, ui, work, 
             vobj, berrs = None, [f"Pass B: not valid JSON ({e})"]
             msgs_b = [msgs_b[0], {"role": "assistant", "content": txt}, {"role": "user", "content": berrs[0]}]
             continue
-        if cfg.get("_renderer") == "doc":         # documentary: fill / drop what the brain got wrong before judging it
-            from . import doc_pack as DP
-            DP.sanitize(vobj, c, plan["cases"], segs, cfg)
         probe = {"n": c["rank"], "schema": "v10", **vobj, "case_ids": [c["id"]], "bridges": vobj.get("bridges", [])}
         _fill_titles(probe)          # title/backup_title exist in the final plan, so check them here (thumbnail rule)
         # Judge THIS case only: its overlays come from this reply (the overlay rules read case.overlays), and
@@ -435,17 +432,6 @@ def _package_case(c, plan, judge, lines, stream_len, segs, cfg, ui, work, pass_b
         vobj, berrs = _pass_b_loop(c, _provider_cfg(cfg, fb), prompt_b, plan, judge, stream_len, segs, cfg,
                                    cui, work, tag="fb_")
         brain_used = fb
-    if pb.get("_renderer") == "doc" and (vobj is None or berrs):
-        # documentary styles never lose a validated case to its packaging: the renderer builds every part from the
-        # case itself (the case range / call-out / ruling already passed Pass A). Titles etc. are marked for a check.
-        from . import doc_pack as DP
-        why = (berrs or ["no reply"])[0]
-        vobj = vobj if vobj is not None else DP.minimal(c)
-        DP.sanitize(vobj, c, plan["cases"], segs, cfg)
-        vobj.setdefault("_pack_notes", []).insert(0, f"packaging incomplete ({str(why)[:120]}) - made from the case")
-        cui(f"  {c['name']}: packaging incomplete ({str(why)[:90]}) - the video is made from the case document; "
-            "check its title / description before upload")
-        berrs = []
     if vobj is not None and not berrs:
         cui(f"  #{c['rank']} {c['name']}: packaging done")
     return vobj, berrs, brain_used
