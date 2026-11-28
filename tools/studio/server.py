@@ -612,6 +612,8 @@ KEY_SPECS = [
      "help": "Only if you switch the brain to Anthropic."},
     {"id": "deepseek", "label": "DeepSeek (optional brain)", "file": "deepseek.env", "var": "DEEPSEEK_API_KEY", "need": False, "help": ""},
     {"id": "openai", "label": "OpenAI (optional brain)", "file": "openai.env", "var": "OPENAI_API_KEY", "need": False, "help": ""},
+    {"id": "github", "label": "GitHub (send to developer)", "file": "github.env", "var": "GITHUB_REPORT_TOKEN", "need": False,
+     "help": "Fine-grained token: only the reports repo, Issues read + write."},
 ]
 KEY_DIR = Path.home() / ".config" / "umf"
 STOCK_LOG = STATE / "stock_fetch.log"
@@ -631,6 +633,105 @@ def key_is_set(spec):
         if k.strip() == spec["var"] and v.strip().strip("'\""):
             return True
     return False
+
+
+# ---------------------------------------------------------------- send to developer (2026-11-28)
+# Failed / empty runs go to GitHub Issues of a PRIVATE reports repo in one click: the PC's own facts (name, GPU, encoder,
+# version, last smoke test) + every selected job's error and log tail, with keys and tokens removed. The developer reads
+# them per PC: the same failure on several PCs = a tool bug (fixed, PCs update); on one PC only = a fix for that PC.
+REPORT_DIR = STATE / "reports"
+_SECRET = re.compile(r"(?i)((?:api[_-]?key|token|secret|authorization|bearer|password)\W{0,3})[A-Za-z0-9_\-.:/+=]{8,}|"
+                     r"\b(?:sk|ghp|github_pat|gho|xox[bp])[-_][A-Za-z0-9_\-]{10,}")
+_PC_HINTS = re.compile(r"(?i)no module named|is not recognized|not found on this pc|no space|disk|permission denied|access is denied|"
+                       r"winerror|nvenc|cuda|cudnn|driver|vram|out of memory|getaddrinfo|timed out|connection (?:reset|refused|aborted)|"
+                       r"ssl|proxy|missing key|key (?:missing|refused)|401|403 forbidden")
+
+
+def _redact(t):
+    return _SECRET.sub(lambda m: (m.group(1) or "") + "[removed]", str(t))
+
+
+def _shown(p):
+    try:
+        return str(Path(p).relative_to(ROOT))
+    except ValueError:
+        return str(p)
+
+
+def report_repo():
+    try:
+        r = json.loads((ROOT / "config.json").read_text(encoding="utf-8-sig")).get("report_repo")
+    except (OSError, ValueError):
+        r = None
+    return str(r or "haseeb109/hlabs-reports")
+
+
+def guess_kind(text):
+    """'pc' when the failure reads like this PC (package, disk, GPU, network, key), else 'tool'."""
+    return "pc" if _PC_HINTS.search(text or "") else "tool"
+
+
+def build_report(studio, jobs):
+    """-> (title, markdown body, labels) for the selected jobs."""
+    import platform
+    import socket
+    pc = (os.environ.get("COMPUTERNAME") or socket.gethostname() or "pc")[:40]
+    m = studio.machine or {}
+    try:
+        sm = json.loads((STATE / "smoke_last.json").read_text(encoding="utf-8"))
+        smoke = f"{sm.get('date', '?')}: " + (", ".join(c["name"] for c in sm.get("checks", []) if not c.get("ok")) or "all ok")
+    except (OSError, ValueError, KeyError):
+        smoke = "never run"
+    kinds = []
+    parts = [f"**PC:** `{pc}`  |  **H Labs:** v{_ver()} ({_git('rev-parse', '--short', 'HEAD').stdout.strip()})  |  "
+             f"**OS:** {platform.platform()}  |  **Python:** {platform.python_version()}",
+             f"**Encoder:** {m.get('encoder', '?')}  |  **Decode:** {m.get('decode', '?')}  |  **Smoke test:** {smoke}", ""]
+    for j in jobs:
+        log = studio.job_log(j["id"])
+        k = guess_kind(" ".join([j.get("error", "")] + log[-60:]))
+        kinds.append(k)
+        parts += [f"---\n### {j.get('style')} · {j.get('mode')} · {j.get('status')} · guess: {k.upper()}",
+                  f"**Stream:** {j.get('title') or ''} {j.get('url')}", f"**Error:** {_redact(j.get('error') or '-')}",
+                  "<details><summary>log (last 200 lines)</summary>\n\n```", _redact("\n".join(log[-200:]))[-60000:], "```\n</details>"]
+    kind = "pc" if kinds and all(x == "pc" for x in kinds) else "tool"
+    errs = "; ".join(sorted({(j.get("error") or j.get("status") or "")[:60] for j in jobs}))[:120]
+    return f"[{pc}] {len(jobs)} failed run(s): {errs}", "\n".join(parts), [f"pc:{pc}", f"guess:{kind}", f"v{_ver()}"]
+
+
+def send_report(studio, ids):
+    """GitHub issue in the reports repo; without a token (or offline) the report is saved in state/reports/ instead."""
+    jobs = [j for j in studio.jobs if j["id"] in set(ids or [])] or \
+           [j for j in studio.jobs if j.get("status") in ("failed", "partial", "nothing")][-10:]
+    if not jobs:
+        return {"ok": False, "message": "no failed run to send"}
+    title, body, labels = build_report(studio, jobs)
+    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    local = REPORT_DIR / f"report_{time.strftime('%Y%m%d_%H%M%S')}.md"
+    local.write_text(f"# {title}\n\n{body}\n", encoding="utf-8")
+    tok = ""
+    for ln in _key_lines(next(k for k in KEY_SPECS if k["id"] == "github")):
+        a, _, v = ln.partition("=")
+        if a.strip() == "GITHUB_REPORT_TOKEN":
+            tok = v.strip().strip("'\"")
+    if not tok:
+        return {"ok": False, "saved": str(local), "message": "no GitHub token on this PC (Settings > API keys > GitHub) - "
+                "the report is saved in " + str(_shown(local))}
+    import urllib.request
+    req = urllib.request.Request(f"https://api.github.com/repos/{report_repo()}/issues", method="POST",
+                                 data=json.dumps({"title": title[:250], "body": body[:65000], "labels": labels}).encode(),
+                                 headers={"Authorization": f"Bearer {tok}", "Accept": "application/vnd.github+json",
+                                          "User-Agent": "hlabs-studio", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            url = json.loads(r.read()).get("html_url", "")
+    except Exception as e:  # noqa - the report stays saved locally; say why GitHub refused
+        why = getattr(e, "code", "") or str(e)[:120]
+        return {"ok": False, "saved": str(local), "message": f"GitHub refused the report ({why}) - check the token / repo "
+                f"{report_repo()}; the report is saved in {_shown(local)}"}
+    for j in jobs:
+        j["reported"] = url
+    studio.save()
+    return {"ok": True, "url": url, "count": len(jobs), "message": f"sent {len(jobs)} run(s) to the developer"}
 
 
 def keys_status():
@@ -980,6 +1081,8 @@ def make_handler(studio):
                         return self._send(200, settings_set(d))
                     except (ValueError, OSError) as e:
                         return self._send(400, {"error": str(e)[:200]})
+                if u.path == "/api/report":
+                    return self._send(200, send_report(studio, d.get("ids") or []))
                 if u.path == "/api/stock":
                     try:
                         return self._send(200, stock_start(d.get("tags"), d.get("count") or 8))

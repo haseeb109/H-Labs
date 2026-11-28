@@ -20,7 +20,7 @@ EXTRA_CONFIG_KEYS = {
     "provider_max_tokens", "send_temperature", "sting_audio_file", "thumb_min_face_px", "yt_dlp_extra_args",
     # documentary styles (ucf/render_doc.py)
     "doc_style", "palette", "music_moods", "mix", "caption_look", "speaker_names", "beat_gap_court", "court_line_plain",
-    "court_frame", "court_chunk_s",
+    "court_frame", "court_chunk_s", "report_repo",
 }
 KNOWN_CONFIG_KEYS = frozenset(DEFAULTS) | EXTRA_CONFIG_KEYS
 

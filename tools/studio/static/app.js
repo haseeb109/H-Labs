@@ -109,6 +109,9 @@ function jobRow(j) {
   let act = "";
   if (j.status === "queued") act = `<button class="btn sm" aria-label="Move up" onclick="jobAct('${j.id}','up')">Up</button><button class="btn sm" aria-label="Move down" onclick="jobAct('${j.id}','down')">Down</button><button class="btn sm" onclick="jobAct('${j.id}','remove')">Remove</button>`;
   else if (j.status !== "running") {
+    if (["failed", "partial", "nothing"].includes(j.status))
+      act += j.reported ? `<a class="btn sm" href="${esc(j.reported)}" target="_blank" rel="noopener">Sent ✓</a>`
+        : `<button class="btn sm" onclick="sendDev(['${j.id}'])">Send to developer</button>`;
     if (["failed", "partial", "stopped", "nothing"].includes(j.status))
       act += `<button class="btn sm accent" onclick="jobAct('${j.id}','retry')">${j.status === "partial" ? "Retry failed video" + ((j.failed_videos || []).length > 1 ? "s" : "") : "Retry"}</button>`;
     if (j.out_dir) act += `<button class="btn sm" onclick="openOut('${esc(j.out_dir.split(/[\\/]/).pop())}')">${ICON.folder}Open</button>`;
@@ -150,7 +153,7 @@ function renderQueue() {
         ${waiting.length ? `<div class="tablewrap"><table><thead><tr><th>Stream</th><th>Template</th><th>Output</th><th>Status</th><th>Action</th></tr></thead><tbody>${waiting.map(jobRow).join("")}</tbody></table></div>`
           : `<div class="empty">The queue is empty.</div>`}
       </article>
-      ${finished.length ? `<article class="card flush"><div class="cardhead"><h2>Finished</h2><span class="muted" style="font-size:13px">latest first</span></div>
+      ${finished.length ? `<article class="card flush"><div class="cardhead"><h2>Finished</h2><span class="muted" style="font-size:13px">latest first</span>${(() => { const bad = finished.filter((j) => ["failed", "partial", "nothing"].includes(j.status) && !j.reported); return bad.length ? `<button class="btn sm spacer" onclick='sendDev(${JSON.stringify(bad.map((j) => j.id))})'>Send all failed to developer (${bad.length})</button>` : ""; })()}</div>
         <div class="tablewrap"><table><thead><tr><th>Stream</th><th>Template</th><th>Output</th><th>Status</th><th>Action</th></tr></thead><tbody>${finished.map(jobRow).join("")}</tbody></table></div></article>` : ""}
     </section>
     <aside class="col-side">
@@ -180,6 +183,15 @@ async function openLog(id, events) {
   S.logFor = id; S.logEv = !!events; S.logText = (await api(`/api/log?id=${id}${events ? "&events=1" : ""}`)).log || [];
   if (!S.logText.length) S.logText = ["(no log lines kept for this stream - see work\\<stream id>\\run_log.txt on this PC)"];
   render(); const c = $("logcard"); if (c) c.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+// one click -> GitHub issue in the reports repo (this PC's facts + each run's error and log); saved locally without a token
+async function sendDev(ids) {
+  toast("Sending to the developer...");
+  let r;
+  try { r = await api("/api/report", { ids }); } catch (e) { r = { message: String(e) }; }
+  toast(r.message || (r.ok ? "Sent" : "Not sent"));
+  if (!r.ok && r.saved) alert(r.message);
+  await refresh();
 }
 // one click -> the whole log + what the job was, ready to paste into Claude ("what is this error, fix it")
 async function copyLog(id, events) {

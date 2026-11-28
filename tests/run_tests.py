@@ -2909,6 +2909,55 @@ def t58_studio_update():
     return "version shown, refused while a stream runs, queue held + released, old -> new + change list after restart"
 
 
+def t61_send_to_developer():
+    """Send to developer (2026-11-28): failed runs -> one GitHub issue in the private reports repo with this PC's facts and every
+    run's error + log, keys removed, a PC-or-tool guess; without a token the report is saved in state/reports/."""
+    sys.path.insert(0, str(ROOT / "tools" / "studio"))
+    import server as SV
+    import urllib.request
+    tmp = Path(tempfile.mkdtemp())
+    old = (SV.QFILE, SV.REPORT_DIR, SV.KEY_DIR, urllib.request.urlopen)
+    SV.QFILE, SV.REPORT_DIR, SV.KEY_DIR = tmp / "q.json", tmp / "reports", tmp / "keys"
+    try:
+        st = SV.Studio(command=lambda j: ["true"], autostart=False)
+        st.jobs = [{"id": "a1", "url": "https://youtu.be/x", "style": "trial_tales", "mode": "all", "status": "failed",
+                    "error": "mode-all plan failed: C-04", "log": ["HIVE_API_KEY=abcd1234efgh5678 sent", "Traceback ...", "C-04 at 50:13"]},
+                   {"id": "a2", "url": "https://youtu.be/y", "style": "overruled", "mode": "30", "status": "failed",
+                    "error": "ModuleNotFoundError: No module named 'av'", "log": ["No module named 'av'"]},
+                   {"id": "a3", "url": "https://youtu.be/z", "style": "overruled", "mode": "30", "status": "done", "log": []}]
+        assert SV.guess_kind("No module named 'av'") == "pc" and SV.guess_kind("C-04 at 50:13") == "tool"
+        title, body, labels = SV.build_report(st, st.jobs[:2])
+        assert "abcd1234efgh5678" not in body and "[removed]" in body, "keys never leave the PC"
+        assert "2 failed run(s)" in title and any(x.startswith("pc:") for x in labels) and "guess:tool" in labels, (title, labels)
+        r = SV.send_report(st, ["a1"])                          # no token: saved locally, says how to set it
+        assert not r["ok"] and Path(r["saved"]).exists() and "GitHub" in r["message"], r
+        (SV.KEY_DIR).mkdir()
+        (SV.KEY_DIR / "github.env").write_text("GITHUB_REPORT_TOKEN=tok_test_123\n")
+        sent = {}
+
+        class Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return b'{"html_url": "https://github.com/o/r/issues/7"}'
+
+        def fake(req, timeout=0):
+            sent["url"], sent["auth"], sent["data"] = req.full_url, req.headers.get("Authorization"), json.loads(req.data)
+            return Resp()
+        urllib.request.urlopen = fake
+        r = SV.send_report(st, [])                              # no selection = every failed run
+        assert r["ok"] and r["count"] == 2 and sent["url"].endswith(f"/repos/{SV.report_repo()}/issues"), (r, sent)
+        assert sent["auth"] == "Bearer tok_test_123" and st._job("a1")["reported"] == "https://github.com/o/r/issues/7"
+    finally:
+        SV.QFILE, SV.REPORT_DIR, SV.KEY_DIR, urllib.request.urlopen = old
+        shutil.rmtree(tmp, ignore_errors=True)
+    return "failed runs -> one issue (PC facts + logs, keys removed, PC/tool guess); saved locally without a token"
+
+
 def t59_callout_vs_ruling():
     """2026-11-23 Bexar run: "the court is finding violations ... and cause number 49 true" (a ruling inside the case) was
     taken for a new case being called (C-04) and the whole video failed. Only a real call-out counts now."""
@@ -2997,6 +3046,7 @@ def main():
     check(57, "ffmpeg / yt-dlp never wait on the console", t57_tools_never_read_console)
     check(58, "Studio Update button (restart + what changed)", t58_studio_update)
     check(59, "C-04: a ruling is not a new case; quiet Studio on closed tabs", t59_callout_vs_ruling)
+    check(61, "Studio: send failed runs to the developer (GitHub issue)", t61_send_to_developer)
     check(52, "documentary kit: music ducking, SFX, speaker captions, paper cards, stock library", t52_shared_doc_kit)
     bad = [r for r in RESULTS if not r[2]]
     print("\n" + "=" * 60)
