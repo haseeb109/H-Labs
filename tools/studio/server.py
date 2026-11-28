@@ -1020,6 +1020,9 @@ def make_handler(studio):
                     return self._send(200, library())
                 if u.path == "/api/settings":
                     return self._send(200, settings_get())
+                if u.path == "/api/access":
+                    from ucf import access
+                    return self._send(200, access.status())
                 if u.path == "/api/version":
                     return self._send(200, version_info())
                 if u.path == "/api/stock":
@@ -1065,6 +1068,15 @@ def make_handler(studio):
             try:
                 if u.path == "/api/update-check":
                     return self._send(200, update_check())
+                if u.path == "/api/access":            # this PC's key to the private repo: make it / test it
+                    from ucf import access
+                    try:
+                        if d.get("action") == "make":
+                            access.make_key()
+                        ok, msg = access.test()
+                    except RuntimeError as e:
+                        ok, msg = False, str(e)
+                    return self._send(200, dict(access.status(), ok=ok, message=msg))
                 if u.path == "/api/update":
                     ok, msg = start_update(studio)
                     return self._send(200 if ok else 409, {"ok": ok, "message": msg} if ok else {"error": msg})

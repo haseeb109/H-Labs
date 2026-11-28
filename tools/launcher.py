@@ -398,6 +398,12 @@ def ensure_main():
     """Before an update: a PC sitting on an old branch (justice-served, quality-fix, stable ...) or on a detached build gets
     `git pull --ff-only` = "Already up to date" and keeps running old code while Setup says success. So: name the branch loudly
     and switch to the main branch when nothing is edited here. -> True when the pull can bring the newest code."""
+    try:                                   # private repo: this PC's own read-only key (ucf/access.py), when it has one
+        sys.path.insert(0, str(ROOT))
+        from ucf import access
+        access.use_key()
+    except Exception:  # noqa - updating a public repo works without it
+        pass
     main, cur = _main_branch(), _head_branch()
     if cur == main:
         return True

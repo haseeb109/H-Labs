@@ -2958,6 +2958,35 @@ def t61_send_to_developer():
     return "failed runs -> one issue (PC facts + logs, keys removed, PC/tool guess); saved locally without a token"
 
 
+def t62_private_repo_access():
+    """Private H-Labs (2026-11-28): each PC makes its own key (kept in the user folder, made once), the clone switches to SSH
+    over port 443 with that key, and the Studio / launcher keep using it for updates."""
+    from ucf import access as A
+    if not A._tool("ssh-keygen"):
+        return "SKIPPED (no ssh-keygen here - Git for Windows brings it)"
+    tmp = Path(tempfile.mkdtemp())
+    old = (A.ROOT, A.KEY)
+    try:
+        repo = tmp / "repo"
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", "https://github.com/haseeb109/H-Labs.git"], check=True)
+        A.ROOT, A.KEY = repo, tmp / "home" / "hlabs_github_key"
+        assert not A.status()["key"] and A.use_key() is False, "no key -> the clone is left as it is"
+        pub = A.make_key()
+        assert pub.startswith("ssh-ed25519 ") and "hlabs-" in pub and A.KEY.exists(), pub
+        assert A.make_key() == pub, "made once: the same key next time"
+        st = A.status()
+        assert st["remote"] == A.SSH_URL and ":443/" in st["remote"] and st["public_key"] == pub, st
+        cmd = subprocess.run(["git", "-C", str(repo), "config", "core.sshCommand"], capture_output=True, text=True).stdout
+        assert "IdentitiesOnly=yes" in cmd and str(A.KEY.as_posix()) in cmd and "BatchMode=yes" in cmd, cmd
+        assert "make_key" in (ROOT / "tools" / "studio" / "server.py").read_text(encoding="utf-8")
+        assert "access.use_key()" in (ROOT / "tools" / "launcher.py").read_text(encoding="utf-8"), "updates use the key"
+    finally:
+        A.ROOT, A.KEY = old
+        shutil.rmtree(tmp, ignore_errors=True)
+    return "own key per PC (made once, user folder), clone on SSH :443 with it, used by Studio + launcher updates"
+
+
 def t59_callout_vs_ruling():
     """2026-11-23 Bexar run: "the court is finding violations ... and cause number 49 true" (a ruling inside the case) was
     taken for a new case being called (C-04) and the whole video failed. Only a real call-out counts now."""
@@ -3046,6 +3075,7 @@ def main():
     check(57, "ffmpeg / yt-dlp never wait on the console", t57_tools_never_read_console)
     check(58, "Studio Update button (restart + what changed)", t58_studio_update)
     check(59, "C-04: a ruling is not a new case; quiet Studio on closed tabs", t59_callout_vs_ruling)
+    check(62, "private repo: each PC updates with its own key", t62_private_repo_access)
     check(61, "Studio: send failed runs to the developer (GitHub issue)", t61_send_to_developer)
     check(52, "documentary kit: music ducking, SFX, speaker captions, paper cards, stock library", t52_shared_doc_kit)
     bad = [r for r in RESULTS if not r[2]]

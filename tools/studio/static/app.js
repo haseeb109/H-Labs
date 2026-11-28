@@ -409,7 +409,7 @@ function renderSettings() {
   $("view").innerHTML = `
   <header class="top"><h1>Settings</h1><span class="muted small">Keys are saved only on this PC (your user folder, .config\\umf). They are never shown again, never sent anywhere else.</span></header>
   <div class="content"><section class="col-main">
-    ${updateCard()}
+    ${updateCard()}${accessCard()}
     <section class="card"><h2>API keys</h2>${st.keys.map(keyRow).join("")}</section>
     <section class="card"><h2 style="display:block;width:100%">B-roll source <span class="small muted">(stock footage for the documentary styles)</span></h2>
       <div class="seg" role="radiogroup" aria-label="B-roll source" style="margin-top:8px">${[["auto", "Both (API first, then my folder)"], ["api", "Pexels / Pixabay only"], ["folder", "My folder only"]].map(([k, t]) =>
@@ -548,6 +548,27 @@ async function refresh() {
 const UPD = { busy: false, since: 0, checking: false };
 async function loadVersion() { try { S.ver = await api("/api/version"); } catch (e) { /* server restarting */ } renderSide(); return S.ver; }
 function verLine(v) { return v ? `v${esc(v.version)} <span class="mono">(${esc(v.commit || "?")})</span>` : "…"; }
+// this PC's own read-only key to the private H-Labs repo (ucf/access.py)
+const ACC = { st: null, busy: false };
+function accessCard() {
+  if (!ACC.st && !ACC.busy) { ACC.busy = true; api("/api/access").then((r) => { ACC.st = r; ACC.busy = false; if (S.view === "settings") renderSettings(); }); }
+  const a = ACC.st || {};
+  return `<section class="card"><h2 style="display:block;width:100%">GitHub access (this PC: ${esc(a.pc || "...")})</h2>
+    <p class="small muted">H-Labs is private: every PC updates with its OWN key. Make it here once, then add the key on GitHub:
+      H-Labs &gt; Settings &gt; Deploy keys &gt; Add, title <b>${esc(a.pc || "")}</b>, <b>Allow write access OFF</b>.
+      A lost PC or someone who leaves: delete only that key on GitHub.</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0">
+      <button class="btn primary" onclick="accessAct('make')" ${ACC.busy ? "disabled" : ""}>${a.key ? "Use this PC's key" : "Make this PC's key"}</button>
+      <button class="btn" onclick="accessAct('test')" ${ACC.busy || !a.key ? "disabled" : ""}>Test access</button></div>
+    ${a.public_key ? `<div class="small muted">Key to paste on GitHub:</div><div class="titlebox"><span class="mono" style="word-break:break-all;font-size:12px">${esc(a.public_key)}</span>
+      <button class="btn sm" onclick='copy(${JSON.stringify(a.public_key)})'>Copy</button></div>` : ""}
+    ${a.message ? `<div class="small ${a.ok ? "good" : "badtext"}" style="margin-top:8px">${a.ok ? "✓ " : ""}${esc(a.message)}</div>` : ""}</section>`;
+}
+async function accessAct(action) {
+  ACC.busy = true; renderSettings();
+  try { ACC.st = await api("/api/access", { action }); } catch (e) { ACC.st = Object.assign(ACC.st || {}, { ok: false, message: String(e) }); }
+  ACC.busy = false; renderSettings();
+}
 function updateCard() {
   const v = S.ver || {}, c = v.check, last = v.last_update, running = S.snap && S.snap.running;
   const changes = (list) => (list || []).length ? `<ul class="chg">${list.map((x) => `<li><span class="mono">${esc(x.commit)}</span> ${esc(x.text)}</li>`).join("")}</ul>` : "";
